@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block body %}
+<section class="card">
+  <h1>心臟內科總醫師工作整合</h1>
+  <p class="subtitle">選擇要使用的功能 — 排班 / Key 班 / 入院清單</p>
+  <div class="feature-grid">
+
+    <a href="/sched" class="feature-card">
+      <div class="icon">📅</div>
+      <h2>排班</h2>
+      <p>產生當月 CV 值班表 — 五步驟：選月份 → 算 H/W → 設定展瀚 X → 收偏好 → 跑 solver → 寫入 Google Sheet。</p>
+      <span class="cta">進入排班 →</span>
+    </a>
+
+    <div class="feature-card disabled" title="Phase 2 — 待整合 Key-In-The-CVSchedule">
+      <div class="icon">⌨️</div>
+      <h2>Key 班</h2>
+      <p>把產出的班表 key 進醫院系統 — Phase 2 整合
+        <code>Key-In-The-CVSchedule</code> 後啟用。</p>
+      <span class="badge">即將推出</span>
+    </div>
+
+    <a href="/admission" class="feature-card">
+      <div class="icon">🩺</div>
+      <h2>入院清單</h2>
+      <p>每日住院病人六步驟工作流：截圖 OCR → 抽籤 → EMR 摘要 → 入院序 → 導管排程 → LINE 推播。</p>
+      <span class="cta">進入入院清單 →</span>
+    </a>
+
+  </div>
+</section>
+
+<section class="card">
+  <h2 style="font-size:15px">系統提示</h2>
+  <ul class="hint" style="margin: 6px 0; padding-left: 20px;">
+    <li>所有 Sheet 寫入會用設定頁的 Google service-account；同一帳號可同時存取排班表與入院表。</li>
+    <li>排班表分頁名 <code>YYYYMM</code>（例：202606），入院表分頁名 <code>YYYYMMDD</code>（例：20260420）。</li>
+    <li>LLM API key、SA JSON 都只存在本機 <code>app/data/config.json</code>，不上傳任何地方。</li>
+  </ul>
+</section>
+{% endblock %}

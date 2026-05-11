@@ -35,12 +35,22 @@
       </label>
       {% endif %}
       {% if bundled.sheet_id %}
-      <p class="hint">✓ Spreadsheet ID 已由系統內建（<code>{{ cfg.sheet_id }}</code>）。如需改用其他試算表，請聯絡維護者。</p>
+      <p class="hint">✓ 入院清單 Spreadsheet ID 已由系統內建（<code>{{ cfg.sheet_id }}</code>）。</p>
       <input type="hidden" name="sheet_id" value="{{ cfg.sheet_id }}">
       {% else %}
-      <label>Spreadsheet ID
+      <label>入院清單 Spreadsheet ID（Card 3）
         <input name="sheet_id" value="{{ cfg.sheet_id }}" placeholder="從試算表網址 /d/ 後面那一段">
       </label>
+      {% endif %}
+      {% if bundled.schedule_sheet_id %}
+      <p class="hint">✓ 排班 Spreadsheet ID 已由系統內建（<code>{{ cfg.schedule_sheet_id }}</code>）。</p>
+      <input type="hidden" name="schedule_sheet_id" value="{{ cfg.schedule_sheet_id }}">
+      {% else %}
+      <label>排班 Spreadsheet ID（Card 1）
+        <input name="schedule_sheet_id" value="{{ cfg.schedule_sheet_id }}" placeholder="排班用的試算表 ID（與入院清單可不同）">
+      </label>
+      {% endif %}
+      {% if not bundled.sheet_id or not bundled.schedule_sheet_id %}
       <p class="hint">服務帳號需要加入該試算表的編輯者。</p>
       {% endif %}
     </fieldset>

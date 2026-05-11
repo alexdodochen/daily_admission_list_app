@@ -64,7 +64,8 @@ class AppConfig:
 
     # Google Sheets
     google_creds_path: str = ""     # absolute path to service-account JSON
-    sheet_id: str = ""
+    sheet_id: str = ""              # admission/cathlab sheet (card 3)
+    schedule_sheet_id: str = ""     # CV duty-schedule sheet (card 1)
 
     # EMR (optional)
     emr_base_url: str = "http://hisweb.hosp.ncku/Emrquery/"
@@ -87,7 +88,7 @@ class AppConfig:
 _cached: Optional[AppConfig] = None
 
 # Fields that auto-populate from bundled defaults.json when missing.
-_BUNDLE_KEYS = ("sheet_id", "emr_base_url", "cathlab_base_url")
+_BUNDLE_KEYS = ("sheet_id", "schedule_sheet_id", "emr_base_url", "cathlab_base_url")
 
 
 def _load_bundled_defaults() -> dict:
@@ -122,10 +123,11 @@ def bundled_flags() -> dict:
     """
     defaults = _load_bundled_defaults()
     return {
-        "sheet_id":          "sheet_id" in defaults,
-        "emr_base_url":      "emr_base_url" in defaults,
-        "cathlab_base_url":  "cathlab_base_url" in defaults,
-        "google_creds_path": BUNDLED_SA.exists(),
+        "sheet_id":            "sheet_id" in defaults,
+        "schedule_sheet_id":   "schedule_sheet_id" in defaults,
+        "emr_base_url":        "emr_base_url" in defaults,
+        "cathlab_base_url":    "cathlab_base_url" in defaults,
+        "google_creds_path":   BUNDLED_SA.exists(),
     }
 
 

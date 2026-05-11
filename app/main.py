@@ -12,16 +12,23 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from datetime import date, datetime
+
 from . import config as appconfig
 from . import llm as llm_module
 from .services import sheet_service, ocr_service, lottery_service
 from .services import emr_service, ordering_service, line_service
 from .services import updater, cathlab_service, format_check_service, finalize_service
+from .services import cv_solver, scheduling_service
 
 BASE = Path(__file__).parent
-app = FastAPI(title="每日入院名單 本地版")
+app = FastAPI(title="心臟內科總醫師 — 本地版")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 templates = Jinja2Templates(directory=BASE / "templates")
+
+# In-memory cache: solve preview kept here so /write can use it without
+# re-running the solver. Single-user local app, so a plain dict is fine.
+_solve_cache: dict = {}
 
 
 def _ctx(request: Request, **kw):
@@ -40,7 +47,28 @@ async def home(request: Request):
     cfg = appconfig.load()
     if not cfg.is_ready():
         return RedirectResponse("/settings", status_code=302)
-    return _ctx(request, template="index.html")
+    return _ctx(request, template="home.html")
+
+
+@app.get("/admission", response_class=HTMLResponse)
+async def admission_page(request: Request):
+    cfg = appconfig.load()
+    if not cfg.is_ready():
+        return RedirectResponse("/settings", status_code=302)
+    return _ctx(request, template="admission.html")
+
+
+@app.get("/sched", response_class=HTMLResponse)
+async def sched_page(request: Request):
+    cfg = appconfig.load()
+    if not cfg.is_ready():
+        return RedirectResponse("/settings", status_code=302)
+    return _ctx(
+        request, template="schedule_gen.html",
+        doctors_cr=cv_solver.CRS,
+        doctors_vs=cv_solver.VS_LIST,
+        doctors_mid=cv_solver.INTER_MID,
+    )
 
 
 @app.get("/settings", response_class=HTMLResponse)
@@ -57,6 +85,7 @@ async def save_settings(
     llm_model: str = Form(""),
     google_creds_path: str = Form(""),
     sheet_id: str = Form(""),
+    schedule_sheet_id: str = Form(""),
     emr_base_url: str = Form(""),
     cathlab_base_url: str = Form(""),
     cathlab_user: str = Form(""),
@@ -71,6 +100,7 @@ async def save_settings(
     cfg.llm_model = llm_model.strip()
     cfg.google_creds_path = google_creds_path.strip()
     cfg.sheet_id = sheet_id.strip()
+    cfg.schedule_sheet_id = schedule_sheet_id.strip()
     if emr_base_url.strip():
         cfg.emr_base_url = emr_base_url.strip()
     if cathlab_base_url.strip():
@@ -83,13 +113,14 @@ async def save_settings(
     cfg.line_group_id = line_group_id.strip()
     appconfig.save(cfg)
     sheet_service.reset_cache()
+    scheduling_service.reset_cache()
     return {"ok": True}
 
 
 @app.get("/api/settings/test")
 async def test_settings():
     cfg = appconfig.load()
-    result = {"llm": None, "sheet": None}
+    result = {"llm": None, "sheet": None, "schedule_sheet": None}
     # LLM ping
     try:
         llm = llm_module.get_llm()
@@ -98,12 +129,19 @@ async def test_settings():
                          "reply": reply.strip()[:40]}
     except Exception as e:
         result["llm"] = {"ok": False, "error": str(e)}
-    # Sheet ping
+    # Admission sheet ping
     try:
         ok, msg = sheet_service.connection_check()
         result["sheet"] = {"ok": ok, "msg": msg}
     except Exception as e:
         result["sheet"] = {"ok": False, "msg": str(e)}
+    # Schedule sheet ping (only if configured)
+    if cfg.schedule_sheet_id:
+        try:
+            ok, msg = scheduling_service.connection_check()
+            result["schedule_sheet"] = {"ok": ok, "msg": msg}
+        except Exception as e:
+            result["schedule_sheet"] = {"ok": False, "msg": str(e)}
     return result
 
 
@@ -335,3 +373,151 @@ async def api_sheet_list():
         return {"ok": True, "sheets": sheet_service.list_sheets()}
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+# ------------------------------ Card 1 — 排班 ------------------------------
+
+def _parse_iso_date(s: str) -> date:
+    return datetime.strptime(s.strip(), "%Y-%m-%d").date()
+
+
+def _serialize_schedule(schedule: dict) -> list[dict]:
+    out = []
+    for d in sorted(schedule.keys()):
+        out.append({
+            "date": d.strftime("%Y-%m-%d"),
+            "day": d.day,
+            "weekday": d.weekday(),
+            "is_holiday": scheduling_service.is_taiwan_holiday(d),
+            "doctor": schedule[d],
+        })
+    return out
+
+
+@app.post("/api/sched/init")
+async def api_sched_init(payload: dict):
+    year = int(payload["year"])
+    month = int(payload["month"])
+    days = cv_solver.month_days(year, month)
+    H, W = cv_solver.month_h_w(year, month)
+    get_stat_type = scheduling_service.make_stat_type_fn(scheduling_service.is_taiwan_holiday)
+    calendar_info = [{
+        "date": d.strftime("%Y-%m-%d"),
+        "day": d.day,
+        "weekday": d.weekday(),
+        "is_holiday": scheduling_service.is_taiwan_holiday(d),
+        "stat_type": get_stat_type(d),
+    } for d in days]
+
+    try:
+        sheet = scheduling_service.get_sheet()
+        baseline = scheduling_service.load_cumulative_stats(sheet)
+        sheet_ok = True
+        sheet_err = ""
+    except Exception as e:
+        baseline = {n: {"平日": 0, "週五": 0, "週六": 0, "週日": 0, "假日": 0}
+                    for n in cv_solver.ALL_DOCTORS}
+        sheet_ok = False
+        sheet_err = str(e)
+
+    return {
+        "ok": True,
+        "year": year, "month": month, "H": H, "W": W,
+        "calendar": calendar_info,
+        "baseline": baseline,
+        "doctors": {
+            "cr": cv_solver.CRS,
+            "vs": cv_solver.VS_LIST,
+            "mid": cv_solver.INTER_MID,
+        },
+        "sheet_ok": sheet_ok,
+        "sheet_err": sheet_err,
+    }
+
+
+@app.post("/api/sched/compute")
+async def api_sched_compute(payload: dict):
+    year = int(payload["year"])
+    month = int(payload["month"])
+    X = int(payload["X"])
+    baseline = payload.get("baseline") or {}
+    targets = cv_solver.compute_initial_targets(year, month, X, baseline)
+    return {"ok": True, "targets": targets}
+
+
+@app.post("/api/sched/solve")
+async def api_sched_solve(payload: dict):
+    year = int(payload["year"])
+    month = int(payload["month"])
+    X = int(payload["X"])
+    fixed_in = payload.get("fixed", {})
+    avoid_in = payload.get("avoid", {})
+    baseline = payload.get("baseline") or {}
+    jk_target = payload.get("jk_target")
+
+    fixed = {_parse_iso_date(k): v for k, v in fixed_in.items() if v}
+    avoid = {n: [_parse_iso_date(d) for d in dates]
+             for n, dates in avoid_in.items() if dates}
+
+    result = cv_solver.solve_month(
+        year, month, X, fixed, avoid, baseline,
+        jk_target=int(jk_target) if jk_target is not None else None,
+    )
+    if result is None:
+        return {"ok": False, "error": "找不到可行排班，請放寬偏好或檢查 X / 預先指定的日期"}
+
+    cache_key = f"{year}{month:02d}"
+    _solve_cache[cache_key] = {
+        "year": year, "month": month, "X": X,
+        "schedule": result["schedule"],
+        "stats_rows": result["stats_rows"],
+        "monthly_stats_map": result["monthly_stats_map"],
+        "baseline": baseline,
+    }
+    return {
+        "ok": True,
+        "schedule": _serialize_schedule(result["schedule"]),
+        "stats_rows": result["stats_rows"],
+        "qod_violations": [
+            {"date": d.strftime("%Y-%m-%d"), "name": n}
+            for d, n in result["qod_violations"]
+        ],
+        "qod_relaxed": result["qod_relaxed"],
+        "targets": {
+            "cr_fri_target": result["targets"]["cr_fri_target"],
+            "cr_sat_target": result["targets"]["cr_sat_target"],
+            "cr_sun_target": result["targets"]["cr_sun_target"],
+        },
+    }
+
+
+@app.post("/api/sched/write")
+async def api_sched_write(payload: dict):
+    year = int(payload["year"])
+    month = int(payload["month"])
+    cache_key = f"{year}{month:02d}"
+    cached = _solve_cache.get(cache_key)
+    if cached is None:
+        return {"ok": False, "error": "請先按「solve」產生班表，再寫入"}
+
+    schedule = cached["schedule"]
+    stats_rows = cached["stats_rows"]
+    monthly_stats_map = cached["monthly_stats_map"]
+    baseline = cached["baseline"]
+    sheet_name = f"{year}{month:02d}"
+
+    try:
+        sheet = scheduling_service.get_sheet()
+        scheduling_service.write_calendar_sheet(
+            sheet, sheet_name, year, month, schedule,
+            scheduling_service.is_taiwan_holiday,
+        )
+        scheduling_service.write_monthly_stats(
+            sheet, f"{sheet_name} 班數統計", stats_rows,
+            headers=scheduling_service.DEFAULT_MONTHLY_HEADERS + ["QOD次數"],
+        )
+        scheduling_service.update_cumulative_stats(sheet, baseline, monthly_stats_map)
+    except Exception as e:
+        return {"ok": False, "error": f"寫入失敗：{e}"}
+
+    return {"ok": True, "sheet_name": sheet_name}
