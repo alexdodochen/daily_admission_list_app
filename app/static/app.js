@@ -2,33 +2,124 @@
 // Small vanilla JS app. No framework — keeps the local bundle zero-deps.
 // ========================================================================
 
-// ---------- Auto-update banner (runs on every page) ----------
+// ---------- Multi-source upstream check (runs on every page) ----------
+// 3 個來源：self（本 App）/ admission（入院清單上游）/ schedule（排班+Key 班上游）
+// 啟動時打 /api/update/check_all → 渲染 topbar 的 upstream panel；任一來源
+// 有更新時顯示 toggle 按鈕；點同步按鈕後在背景跑 /api/update/sync/<name>。
 (async function () {
-  try {
-    const r = await fetch('/api/update/check').then(x => x.json());
-    if (!r.available) return;
-    const badge = document.getElementById('update-badge');
-    const text = document.getElementById('update-text');
-    if (!badge) return;
-    const cur = (r.current && r.current.short) || '?';
-    const rem = (r.remote && r.remote.short) || '?';
-    text.textContent = `有新版本 ${cur} → ${rem}`;
-    text.title = (r.remote && r.remote.message) || '';
-    badge.hidden = false;
-    document.getElementById('update-btn').addEventListener('click', async () => {
-      if (!confirm(`確定更新到 ${rem}？\n${(r.remote && r.remote.message) || ''}`)) return;
+  const bar = document.getElementById('upstream-bar');
+  if (!bar) return;
+  const toggleBtn = document.getElementById('upstream-toggle');
+  const countEl   = document.getElementById('upstream-count');
+  const panel     = document.getElementById('upstream-panel');
+
+  toggleBtn.addEventListener('click', () => {
+    panel.hidden = !panel.hidden;
+  });
+
+  function setRowStatus(name, htmlFrag, hasUpdate, info) {
+    const row = bar.querySelector(`.upstream-row[data-source="${name}"]`);
+    if (!row) return;
+    const status = row.querySelector('.upstream-status');
+    const btn    = row.querySelector('.upstream-sync');
+    status.innerHTML = htmlFrag;
+    if (hasUpdate) {
+      btn.hidden = false;
+      btn.title = (info && info.remote && info.remote.message) || '';
+      row.classList.add('has-update');
+    } else {
+      btn.hidden = true;
+      row.classList.remove('has-update');
+    }
+  }
+
+  function describe(info) {
+    if (!info) return '檢查中…';
+    if (info.error) return `<span class="upstream-err">無法檢查：${info.error}</span>`;
+    const cur = (info.current && info.current.short) || (info.current && info.current.source === 'uncloned' ? '未下載' : '?');
+    const rem = (info.remote && info.remote.short) || '?';
+    if (info.available) {
+      const n = (info.new_commits || []).length;
+      const msg = (info.remote && info.remote.message) || '';
+      return `<span class="upstream-new">🔔 ${cur} → ${rem}${n ? ` (${n} 個新 commit)` : ''}</span>` +
+             (msg ? `<div class="upstream-msg">${escapeHtml(msg)}</div>` : '');
+    }
+    return `<span class="upstream-ok">✓ 已是最新 (${cur})</span>`;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;',
+    }[c]));
+  }
+
+  async function refresh() {
+    try {
+      const r = await fetch('/api/update/check_all').then(x => x.json());
+      if (!r.ok || !r.sources) return;
+      let updates = 0;
+      for (const name of ['self', 'admission', 'schedule']) {
+        const info = r.sources[name];
+        setRowStatus(name, describe(info), !!(info && info.available), info);
+        if (info && info.available) updates++;
+      }
+      if (updates > 0) {
+        countEl.textContent = String(updates);
+        toggleBtn.hidden = false;
+      } else {
+        toggleBtn.hidden = true;
+      }
+      return r.sources;
+    } catch (_) {
+      // offline / rate-limited — silent
+      for (const name of ['self', 'admission', 'schedule']) {
+        setRowStatus(name, '<span class="upstream-err">離線或限流</span>', false, null);
+      }
+    }
+  }
+
+  bar.addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('.upstream-sync');
+    if (!btn) return;
+    const name = btn.dataset.source;
+    const labelEl = btn.parentElement.querySelector('.upstream-label');
+    const friendly = labelEl ? labelEl.textContent : name;
+    if (!confirm(`同步「${friendly}」？\n` +
+                 (name === 'self'
+                   ? '會在本 repo 跑 git pull --ff-only，需要乾淨工作樹。同步後 App 會自動重啟。'
+                   : '會把該上游 clone/pull 到 external/ 資料夾，並把白名單裡的資料檔案 mirror 到 app/data/static/。')
+    )) return;
+    btn.disabled = true;
+    const orig = btn.textContent;
+    btn.textContent = '同步中…';
+    try {
       const fd = new FormData();
-      fd.append('restart', 'yes');
-      const resp = await fetch('/api/update/apply', { method: 'POST', body: fd })
+      if (name === 'self') fd.append('restart', 'yes');
+      const resp = await fetch(`/api/update/sync/${name}`, { method: 'POST', body: fd })
         .then(x => x.json());
       if (resp.ok) {
-        alert(`更新 ${resp.from} → ${resp.to} 成功，App 會自動重啟（約 2 秒後刷新頁面）`);
-        setTimeout(() => location.reload(), 2500);
+        if (name === 'self') {
+          alert(`本 App 更新 ${resp.from || '?'} → ${resp.to || '?'} 成功，自動重啟中（2 秒後刷新）`);
+          setTimeout(() => location.reload(), 2500);
+        } else {
+          const mirrored = (resp.mirrored || []).length;
+          const np = (resp.needs_port || []).length;
+          alert(`${friendly} 同步成功，HEAD = ${resp.to || '?'}\n` +
+                `自動 mirror ${mirrored} 個資料檔；上游另有 ${np} 個檔案需要開發者手動 port（不影響執行）。`);
+          await refresh();
+        }
       } else {
-        alert('更新失敗：' + (resp.message || '未知錯誤'));
+        alert(`${friendly} 同步失敗：${resp.message || '未知錯誤'}`);
       }
-    });
-  } catch (_) { /* offline or rate-limited — silently ignore */ }
+    } catch (e) {
+      alert(`${friendly} 同步失敗：${e}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = orig;
+    }
+  });
+
+  await refresh();
 })();
 
 

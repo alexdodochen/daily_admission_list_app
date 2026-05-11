@@ -13,9 +13,28 @@
     <a href="/">工作流程</a>
     <a href="/settings">設定</a>
   </nav>
-  <div id="update-badge" class="update-badge" hidden>
-    <span class="dot upd"></span><span id="update-text">有新版本</span>
-    <button id="update-btn" class="mini">更新</button>
+  <div id="upstream-bar" class="upstream-bar">
+    <button id="upstream-toggle" class="upstream-toggle" type="button" hidden>
+      <span class="dot upd"></span>
+      <span id="upstream-count">0</span> 個來源有更新
+    </button>
+    <div id="upstream-panel" class="upstream-panel" hidden>
+      <div class="upstream-row" data-source="self">
+        <span class="upstream-label">本 App</span>
+        <span class="upstream-status">…</span>
+        <button class="upstream-sync mini" data-source="self" hidden>同步</button>
+      </div>
+      <div class="upstream-row" data-source="admission">
+        <span class="upstream-label">入院清單上游</span>
+        <span class="upstream-status">…</span>
+        <button class="upstream-sync mini" data-source="admission" hidden>同步</button>
+      </div>
+      <div class="upstream-row" data-source="schedule">
+        <span class="upstream-label">排班 / Key 班上游</span>
+        <span class="upstream-status">…</span>
+        <button class="upstream-sync mini" data-source="schedule" hidden>同步</button>
+      </div>
+    </div>
   </div>
   <div class="status">
     {% if ready %}

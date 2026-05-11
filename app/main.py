@@ -17,6 +17,7 @@ from . import llm as llm_module
 from .services import sheet_service, ocr_service, lottery_service
 from .services import emr_service, ordering_service, line_service
 from .services import updater, cathlab_service, format_check_service, finalize_service
+from .services import upstream
 
 BASE = Path(__file__).parent
 app = FastAPI(title="每日入院名單 本地版")
@@ -316,15 +317,58 @@ async def api_finalize_check(date: str):
 
 @app.get("/api/update/check")
 async def api_update_check():
+    """Legacy single-source check (本 App 自身)."""
     return await updater.check()
 
 
 @app.post("/api/update/apply")
 async def api_update_apply(restart: str = Form("no")):
+    """Legacy single-source apply (本 App 自身 git pull)."""
     result = await updater.apply()
     if result.get("ok") and restart == "yes":
         updater.schedule_restart()
     return result
+
+
+# ------------------------------ Multi-source upstream sync ------------------------------
+
+@app.get("/api/update/check_all")
+async def api_update_check_all():
+    """檢查 3 個來源（本 App + 入院清單上游 + 排班/Key 班上游）的最新 commit。
+
+    每次 App 啟動 / 開首頁時前端會打這支，UI 依結果顯示徽章。"""
+    sources = await upstream.check_all()
+    return {"ok": True, "sources": sources}
+
+
+@app.post("/api/update/sync/{name}")
+async def api_update_sync(name: str, restart: str = Form("no")):
+    """同步指定 source。
+      - name='self'       → git pull 本 App（同 /api/update/apply）
+      - name='admission'  → clone/pull daily-admission-list-public + 跑 mirror
+      - name='schedule'   → clone/pull Key-Schedule-APP + 跑 mirror
+    """
+    if name not in upstream.SOURCES:
+        raise HTTPException(404, f"未知 source: {name}")
+    result = await upstream.sync_source(name)
+    if name == "self" and result.get("ok") and restart == "yes":
+        updater.schedule_restart()
+    return result
+
+
+@app.on_event("startup")
+async def _startup_check_upstreams():
+    """背景檢查 3 個來源；不 block 啟動，結果存 module 變數供前端讀。
+
+    這支只是 prefetch / cache warmup——實際 UI 顯示走 /api/update/check_all。
+    """
+    import asyncio as _asyncio
+    async def _bg():
+        try:
+            await upstream.check_all()
+        except Exception:
+            pass   # offline / rate limited → silent
+    _asyncio.create_task(_bg())
 
 
 # --------------------- Sheet explorer (read-only) ---------------------
