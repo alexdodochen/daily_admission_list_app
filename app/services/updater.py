@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Optional
 
 REPO_OWNER = "alexdodochen"
-REPO_NAME = "public_daily_admission_app"
+REPO_NAME = "daily_admission_list_app"
 API_BASE = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}"
 HTML_BASE = f"https://github.com/{REPO_OWNER}/{REPO_NAME}"
 

@@ -26,13 +26,33 @@ html, body { margin: 0; padding: 0; font-family: -apple-system, "Noto Sans TC", 
 .dot.bad { background: var(--bad); }
 .dot.upd { background: #f59e0b; }
 
-.update-badge {
-  display: flex; align-items: center; gap: 6px;
-  margin-left: auto; font-size: 13px;
+/* Multi-source upstream check (3 sources: self / admission / schedule) */
+.upstream-bar { margin-left: auto; position: relative; font-size: 13px; }
+.upstream-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 10px; border: 1px solid #fcd34d; background: #fffbeb;
-  border-radius: 20px;
+  border-radius: 20px; color: #92400e; cursor: pointer;
 }
-.update-badge + .status { margin-left: 12px; }
+.upstream-toggle:hover { background: #fef3c7; }
+.upstream-panel {
+  position: absolute; right: 0; top: calc(100% + 6px);
+  background: #fff; border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px 12px; min-width: 360px; z-index: 20;
+  box-shadow: 0 4px 16px rgba(0,0,0,.08);
+}
+.upstream-row {
+  display: grid; grid-template-columns: 130px 1fr auto;
+  gap: 8px; align-items: start; padding: 6px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.upstream-row:last-child { border-bottom: 0; }
+.upstream-label { font-weight: 600; color: var(--muted); }
+.upstream-status { line-height: 1.4; }
+.upstream-ok  { color: var(--ok); }
+.upstream-new { color: #b45309; font-weight: 600; }
+.upstream-err { color: var(--bad); }
+.upstream-msg { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.upstream-bar + .status { margin-left: 12px; }
 button.mini { padding: 3px 10px; font-size: 12px; background: #f59e0b; }
 button.mini:hover:not(:disabled) { background: #d97706; }
 
