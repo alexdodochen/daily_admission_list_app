@@ -17,6 +17,7 @@ from . import llm as llm_module
 from .services import sheet_service, ocr_service, lottery_service
 from .services import emr_service, ordering_service, line_service
 from .services import updater, cathlab_service, format_check_service, finalize_service
+from .services import reschedule_service
 
 BASE = Path(__file__).parent
 app = FastAPI(title="每日入院名單 本地版")
@@ -260,6 +261,92 @@ async def api_step5_verify(date: str = Form(...)):
 async def api_step5_keyin(date: str = Form(...), dry_run: str = Form("no")):
     try:
         result = await cathlab_service.keyin(date, dry_run=(dry_run == "yes"))
+        return {"ok": True, **result}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ------------------------------ Reschedule (V flag + full move) ------------------------------
+
+@app.post("/api/reschedule/v_flag_plan")
+async def api_reschedule_v_flag_plan(date: str = Form(...),
+                                     mapping_json: str = Form(...)):
+    """Preview the V-flag plan. `mapping_json` = {chart_no: target_date}."""
+    import json as _json
+    try:
+        mapping = _json.loads(mapping_json)
+        return {"ok": True, **reschedule_service.plan_v_flag(date, mapping)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/reschedule/v_flag_apply")
+async def api_reschedule_v_flag_apply(date: str = Form(...),
+                                      mapping_json: str = Form(...)):
+    import json as _json
+    try:
+        mapping = _json.loads(mapping_json)
+        return {"ok": True, **reschedule_service.apply_v_flag(date, mapping)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/reschedule/full_move_plan")
+async def api_reschedule_full_move_plan(date: str = Form(...),
+                                        mapping_json: str = Form(...)):
+    """Preview a full-move reschedule: V patches, main A-L rows to copy,
+    cathlab DEL list. User must confirm before applying side effects."""
+    import json as _json
+    try:
+        mapping = _json.loads(mapping_json)
+        return {"ok": True, **reschedule_service.plan_full_move(date, mapping)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/reschedule/cathlab_del")
+async def api_reschedule_cathlab_del(pairs_json: str = Form(...)):
+    """Run WEBCVIS DEL for [[chart, cath_date], ...] pairs."""
+    import json as _json
+    try:
+        pairs = _json.loads(pairs_json)
+        pair_list = [(c, d) for c, d in pairs]
+        return {"ok": True, **(await cathlab_service.del_charts(pair_list))}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ------------------------------ EMR main verify ------------------------------
+
+@app.post("/api/emr/verify_main")
+async def api_emr_verify_main(date: str = Form(...),
+                              session_url: str = Form(...),
+                              today: str = Form("")):
+    """
+    Cross-check main A-L姓名/性別/年齡 against EMR #divUserSpec for each
+    chart. Returns the diff + patches (caller decides whether to apply).
+    """
+    from datetime import date as _date
+    try:
+        ws = sheet_service.get_worksheet(date)
+        if ws is None:
+            raise ValueError(f"找不到工作表 {date}")
+        main = sheet_service.read_range(ws, "A2:L200") or []
+        rows: list[dict] = []
+        for i, r in enumerate(main):
+            rr = (r + [""] * 12)[:12]
+            chart = rr[8].strip()
+            if not chart:
+                continue
+            rows.append({
+                "row": i + 2,
+                "chart": chart,
+                "sheet_name": rr[5],
+                "sheet_gender": rr[6],
+                "sheet_age": rr[7],
+            })
+        today_str = today or _date.today().strftime("%Y%m%d")
+        result = await emr_service.verify_main_emr(session_url, rows, today_str)
         return {"ok": True, **result}
     except Exception as e:
         raise HTTPException(500, str(e))

@@ -333,3 +333,24 @@ def test_week_span_iso_week_mon_fri():
 
 def test_week_span_invalid_date_returns_self():
     assert cs._week_span("garbage") == ["garbage"]
+
+
+# ---------------- WEBCVIS DEL helpers ----------------
+
+def test_normalize_cath_date_yyyymmdd():
+    assert cs._normalize_cath_date("20260507") == "2026/05/07"
+
+
+def test_normalize_cath_date_already_slashed():
+    assert cs._normalize_cath_date("2026/05/07") == "2026/05/07"
+
+
+def test_normalize_cath_date_passthrough_invalid():
+    assert cs._normalize_cath_date("garbage") == "garbage"
+
+
+def test_del_charts_without_creds_raises(monkeypatch):
+    from app import config as appconfig
+    monkeypatch.setattr(appconfig, "load", lambda: appconfig.AppConfig())
+    with pytest.raises(RuntimeError, match="WEBCVIS"):
+        asyncio.run(cs.del_charts([("01808613", "20260507")]))

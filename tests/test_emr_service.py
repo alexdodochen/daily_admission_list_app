@@ -212,3 +212,75 @@ def test_process_patient_partial_demographics():
     out = es.process_patient(soap, div, "20260101")
     assert "y/o" not in out["c_text"]
     assert out["name"] == "林大姊"
+
+
+# ---------------- verify_main_emr (pure logic) ----------------
+
+def test_parse_divuserspec_full():
+    raw = "姓名 : 王小明 , 生日 : 1960/05/15 , 性別 : 男 , 病歷 : 12345678"
+    name, birth, gender = es.parse_divuserspec(raw)
+    assert name == "王小明"
+    assert birth == (1960, 5, 15)
+    assert gender == "男"
+
+
+def test_parse_divuserspec_empty():
+    name, birth, gender = es.parse_divuserspec("")
+    assert name == ""
+    assert birth is None
+    assert gender == ""
+
+
+def test_compare_demographics_all_match():
+    row = {"row": 5, "chart": "111", "sheet_name": "王小明",
+           "sheet_gender": "男", "sheet_age": "66"}
+    out = es.compare_demographics(row, "王小明", (1960, 5, 15), "男", "20260601")
+    assert out["patches"] == []
+    assert out["diffs"] == []
+
+
+def test_compare_demographics_age_diff():
+    row = {"row": 5, "chart": "111", "sheet_name": "王小明",
+           "sheet_gender": "男", "sheet_age": "65"}  # sheet says 65, EMR DOB → 66
+    out = es.compare_demographics(row, "王小明", (1960, 5, 15), "男", "20260601")
+    assert ("H5", "66") in out["patches"]
+    assert any("age" in d for d in out["diffs"])
+
+
+def test_compare_demographics_name_mismatch_patches_F():
+    row = {"row": 7, "chart": "111", "sheet_name": "王小銘",  # OCR typo
+           "sheet_gender": "男", "sheet_age": "66"}
+    out = es.compare_demographics(row, "王小明", (1960, 5, 15), "男", "20260601")
+    cells = [p[0] for p in out["patches"]]
+    assert "F7" in cells
+    assert ("F7", "王小明") in out["patches"]
+
+
+def test_compare_demographics_multiple_diffs():
+    row = {"row": 9, "chart": "222", "sheet_name": "X",
+           "sheet_gender": "男", "sheet_age": "30"}
+    out = es.compare_demographics(row, "李大姊", (1950, 1, 1), "女", "20260601")
+    cells = [p[0] for p in out["patches"]]
+    assert sorted(cells) == ["F9", "G9", "H9"]
+    assert ("G9", "女") in out["patches"]
+
+
+def test_compare_demographics_empty_emr_skips_those_fields():
+    """If EMR returns empty name/gender, don't overwrite sheet with empties."""
+    row = {"row": 5, "chart": "111", "sheet_name": "王小明",
+           "sheet_gender": "男", "sheet_age": "66"}
+    out = es.compare_demographics(row, "", (1960, 5, 15), "", "20260601")
+    cells = [p[0] for p in out["patches"]]
+    assert "F5" not in cells
+    assert "G5" not in cells
+    # Age does get checked because we have birth + today
+    # 1960-05-15 → 66 at 2026-06-01 → matches sheet 66, no patch
+    assert out["patches"] == []
+
+
+def test_compare_demographics_no_birth_skips_age():
+    row = {"row": 5, "chart": "111", "sheet_name": "王",
+           "sheet_gender": "男", "sheet_age": "30"}
+    out = es.compare_demographics(row, "王", None, "男", "20260601")
+    cells = [p[0] for p in out["patches"]]
+    assert "H5" not in cells

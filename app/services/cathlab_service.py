@@ -773,3 +773,117 @@ async def keyin(admit_date: str, dry_run: bool = False) -> dict:
         "log": log,
         "implemented": True,
     }
+
+
+# ============================================================================
+# WEBCVIS DEL — per-row chk-checkbox flow (verified 2026-05-06)
+# ============================================================================
+
+def _normalize_cath_date(d: str) -> str:
+    """Accept YYYYMMDD or YYYY/MM/DD; return YYYY/MM/DD (WEBCVIS form format)."""
+    s = (d or "").strip()
+    if "/" in s:
+        return s
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}/{s[4:6]}/{s[6:]}"
+    return s
+
+
+async def _del_one(page, chart: str) -> dict:
+    """
+    Returns {found: bool, error?: str, del_btn_disabled?: bool}.
+    Pure-JS row-search + chk-checkbox click. Does NOT submit form.
+    """
+    return await page.evaluate(
+        """(chart) => {
+            const rows = document.querySelectorAll("#row tr");
+            for (const r of rows) {
+                const el = r.querySelector("#hes_patno");
+                if (el && el.value && el.value.trim() === chart) {
+                    const chk = r.querySelector('input[type=checkbox][name=chk]');
+                    if (!chk) return {found: false, error: 'no chk checkbox'};
+                    chk.checked = true;
+                    if (chk.onclick) chk.onclick();
+                    const delBtn = document.getElementById('deleteButton');
+                    return {found: true, del_btn_disabled: !!(delBtn && delBtn.disabled)};
+                }
+            }
+            return {found: false, error: 'row not found'};
+        }""",
+        chart,
+    )
+
+
+async def del_charts(charts_with_dates: list[tuple[str, str]]) -> dict:
+    """
+    Delete WEBCVIS cathlab entries.
+
+    Args:
+      charts_with_dates: list of (chart_no, cath_date) tuples.
+                         cath_date as YYYYMMDD or YYYY/MM/DD.
+
+    DEL mechanism (feedback_webcvis_del_checkbox.md, verified 5/6):
+      Per-row chk-checkbox click fires onclick → enables #deleteButton.
+      Then click #deleteButton → confirm() → form submits DEL.
+      Page auto-handles the confirm dialog via page.on('dialog').
+
+    Returns {results: [{chart, cath_date, ok, reason}], ok_count, fail_count}.
+    """
+    cfg = appconfig.load()
+    if not cfg.cathlab_base_url or not cfg.cathlab_user or not cfg.cathlab_pass:
+        raise RuntimeError("請先在設定頁填入 WEBCVIS URL / 帳號 / 密碼")
+
+    pairs = [(c, _normalize_cath_date(d)) for c, d in charts_with_dates]
+
+    from playwright.async_api import async_playwright
+
+    results: list[dict] = []
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=False, slow_mo=100)
+        ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
+        page = await ctx.new_page()
+        # Auto-accept the JS confirm() dialog the DEL button triggers
+        page.on("dialog", lambda d: asyncio.create_task(d.accept()))
+        try:
+            await _login(page, cfg)
+            for chart, fmt_date in pairs:
+                await _set_date_and_query(page, cfg.cathlab_base_url, fmt_date)
+                pre = await _del_one(page, chart)
+                if not pre.get("found"):
+                    results.append({"chart": chart, "cath_date": fmt_date,
+                                    "ok": False, "reason": pre.get("error", "row not found")})
+                    continue
+                if pre.get("del_btn_disabled"):
+                    results.append({"chart": chart, "cath_date": fmt_date,
+                                    "ok": False, "reason": "deleteButton still disabled"})
+                    continue
+                await asyncio.sleep(0.4)
+                await page.click("#deleteButton")
+                await page.wait_for_load_state("networkidle", timeout=20000)
+                await asyncio.sleep(1.5)
+                # Verify removal by re-querying
+                await _set_date_and_query(page, cfg.cathlab_base_url, fmt_date)
+                still = await page.evaluate(
+                    """(chart) => {
+                        const rows = document.querySelectorAll("#row tr");
+                        for (const r of rows) {
+                            const el = r.querySelector("#hes_patno");
+                            if (el && el.value && el.value.trim() === chart) return true;
+                        }
+                        return false;
+                    }""",
+                    chart,
+                )
+                if still:
+                    results.append({"chart": chart, "cath_date": fmt_date,
+                                    "ok": False, "reason": "still present after DEL"})
+                else:
+                    results.append({"chart": chart, "cath_date": fmt_date,
+                                    "ok": True, "reason": "removed"})
+        finally:
+            await browser.close()
+
+    ok_count = sum(1 for r in results if r["ok"])
+    return {"results": results,
+            "ok_count": ok_count,
+            "fail_count": len(results) - ok_count}
