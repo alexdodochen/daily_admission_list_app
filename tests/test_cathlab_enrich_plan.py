@@ -25,26 +25,26 @@ def test_build_json_preserves_chinese_without_escape():
     assert "術" in result
 
 
-# ---------------- _read_w_markers ----------------
+# ---------------- _read_v_markers (post N-V 9-col rename) ----------------
 
-def test_read_w_markers_skips_rows_without_w():
-    # 23-column rows: chart is idx 18 (S), W is idx 22
+def test_read_v_markers_skips_rows_without_v():
+    # 22-column rows: chart is idx 18 (S), V is idx 21
     grid = [
-        [""] * 18 + ["12345678"] + [""] * 4,      # has chart, no W
-        [""] * 18 + ["99999999"] + ["", "", "", "20260420"],  # has W
-        [""] * 18 + ["11111111"] + ["", "", "", "改期"],       # header-ish, skipped
+        [""] * 18 + ["12345678"] + [""] * 3,      # has chart, no V
+        [""] * 18 + ["99999999"] + ["", "", "20260420"],  # has V
+        [""] * 18 + ["11111111"] + ["", "", "改期"],       # header-ish, skipped
     ]
-    markers = cs._read_w_markers(grid)
+    markers = cs._read_v_markers(grid)
     assert markers == {"99999999": "20260420"}
 
 
-def test_read_w_markers_ignores_short_rows():
-    grid = [["x"] * 10]  # only 10 cols, can't reach idx 22
-    assert cs._read_w_markers(grid) == {}
+def test_read_v_markers_ignores_short_rows():
+    grid = [["x"] * 10]
+    assert cs._read_v_markers(grid) == {}
 
 
-def test_read_w_markers_empty():
-    assert cs._read_w_markers([]) == {}
+def test_read_v_markers_empty():
+    assert cs._read_v_markers([]) == {}
 
 
 # ---------------- get_cathlab_date — extra weekdays ----------------
@@ -64,7 +64,7 @@ def test_sunday_plus_one():
 def _mk_patient(**kw):
     base = {"seq": 1, "doctor": "詹世鴻", "name": "王小明",
             "chart": "12345678", "diag": "CAD", "cath": "Left heart cath.",
-            "note": "", "skip": False}
+            "note": "", "emr": "", "skip": False}
     base.update(kw)
     return base
 
@@ -218,3 +218,118 @@ def test_keyin_real_without_creds_raises(monkeypatch):
 
     with pytest.raises(RuntimeError, match="WEBCVIS"):
         asyncio.run(cs.keyin("20260410", dry_run=False))
+
+
+# ---------------- new rules: Mon-EP / OPD second / 25房 / Others fallback / week-scan ----------------
+
+def test_resolve_diag_normalizes_angina_to_cad():
+    """Pre-cathlab normalize: angina/unstable → CAD before id lookup."""
+    label, idv = cs.resolve_diag("Angina pectoris")
+    assert label == "CAD"
+    assert idv == "PDI20090908120009"  # CAD's PDI
+
+
+def test_resolve_diag_unstable_to_cad():
+    label, _ = cs.resolve_diag("Unstable")
+    assert label == "CAD"
+
+
+def test_resolve_diag_others_fallback_pdi():
+    """`Others:opd` not in id maps → OTHERS_PDI parent + freetext preserved."""
+    label, idv = cs.resolve_diag("Others:opd")
+    assert idv == cs.OTHERS_PDI
+    assert label == "Others:opd"
+
+
+def test_resolve_diag_unknown_still_empty():
+    """Unknown diag without `Others:` prefix returns empty."""
+    label, idv = cs.resolve_diag("阿嬤感冒")
+    assert (label, idv) == ("", "")
+
+
+def test_room_25_in_doctor_codes():
+    rooms = cs.doctor_codes()["rooms"]
+    assert "外科開刀房25房" in rooms
+    assert rooms["外科開刀房25房"] == "xa-外科開刀房25房"
+
+
+def test_is_monday_cath():
+    assert cs._is_monday_cath("2026/04/13") is True   # Mon
+    assert cs._is_monday_cath("2026/04/14") is False  # Tue
+    assert cs._is_monday_cath("not-a-date") is False
+
+
+def test_is_ep_procedure():
+    assert cs._is_ep_procedure("RF ablation") is True
+    assert cs._is_ep_procedure("PPM") is True
+    assert cs._is_ep_procedure("CRT-D upgrade") is True
+    assert cs._is_ep_procedure("EP study") is True
+    assert cs._is_ep_procedure("Left heart cath.") is False
+    assert cs._is_ep_procedure("") is False
+
+
+def test_opd_doctor_in_emr_chen_zewei_liu_bingyan():
+    emr = "65 y/o 男\n【門診: 2026/04/10】 主治醫師: 劉秉彥\nCAD..."
+    assert cs._opd_doctor_in_emr("陳則瑋", emr) == "劉秉彥"
+
+
+def test_opd_doctor_in_emr_only_for_chen_zewei():
+    """Limited rule: only applies when admitting doctor is 陳則瑋."""
+    emr = "門診 劉秉彥"
+    assert cs._opd_doctor_in_emr("黃睦翔", emr) == ""
+
+
+def test_opd_doctor_in_emr_needs_opd_marker():
+    """劉秉彥 mentioned without 門診 keyword → not OPD second."""
+    emr = "備註: 劉秉彥 stand-by"
+    assert cs._opd_doctor_in_emr("陳則瑋", emr) == ""
+
+
+def test_enrich_mon_ep_forces_hong_chenhui_as_second():
+    """Mon cathlab + RF ablation → second=洪晨惠."""
+    # Admit Sun 2026/04/12 → Mon 2026/04/13. Use a doctor with Mon schedule.
+    p = _mk_patient(doctor="詹世鴻", cath="RF ablation", note="")
+    out = cs._enrich([p], "20260412")[0]
+    assert out["cath_date"] == "2026/04/13"
+    assert out["second_doctor"] == "洪晨惠"
+
+
+def test_enrich_mon_ep_pushes_existing_second_to_third():
+    """Mon + EP procedure with existing second tag in note → push to third."""
+    p = _mk_patient(doctor="詹世鴻", cath="RF ablation", note="浩")
+    out = cs._enrich([p], "20260412")[0]
+    assert out["second_doctor"] == "洪晨惠"
+    assert out["third_doctor"] == "葉立浩"
+
+
+def test_enrich_mon_non_ep_keeps_original_second():
+    """Mon but non-EP procedure (e.g. LHC) → second from note unchanged."""
+    p = _mk_patient(doctor="詹世鴻", cath="Left heart cath.", note="浩")
+    out = cs._enrich([p], "20260412")[0]
+    assert out["second_doctor"] == "葉立浩"
+    assert out["third_doctor"] == ""
+
+
+def test_enrich_chen_zewei_opd_liu_overrides_note():
+    """陳則瑋 + 門診 劉秉彥 in EMR → second=劉秉彥 even with no note tag."""
+    p = _mk_patient(doctor="陳則瑋", cath="Left heart cath.", note="",
+                    emr="65 y/o 男\n【門診】 主治醫師: 劉秉彥\nCAD")
+    out = cs._enrich([p], "20260415")[0]  # Wed admit → Thu cath
+    assert out["second_doctor"] == "劉秉彥"
+
+
+def test_enrich_skip_clears_third_doctor():
+    p = _mk_patient(skip=True)
+    out = cs._enrich([p], "20260413")[0]
+    assert out["third_doctor"] == ""
+
+
+def test_week_span_iso_week_mon_fri():
+    # 2026/04/15 is a Wed → its week is Mon 4/13 .. Fri 4/17
+    assert cs._week_span("2026/04/15") == [
+        "2026/04/13", "2026/04/14", "2026/04/15", "2026/04/16", "2026/04/17",
+    ]
+
+
+def test_week_span_invalid_date_returns_self():
+    assert cs._week_span("garbage") == ["garbage"]

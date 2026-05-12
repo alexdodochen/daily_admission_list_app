@@ -121,6 +121,8 @@ textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 13px; b
 .emr-card { border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin: 8px 0; }
 .emr-card h3 { margin: 0 0 6px; font-size: 15px; }
 .emr-card pre { white-space: pre-wrap; background: #f8fafc; padding: 8px; border-radius: 4px; margin: 0; font-size: 13px; }
+.emr-card .emr-fg { color: #2563eb; font-weight: 600; }
+.emr-card .emr-name-fix { color: #d97706; font-weight: 600; margin-left: 4px; }
 
 .doctor-block { border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin: 10px 0; }
 .doctor-block h3 { margin: 0 0 6px; color: var(--accent); }

@@ -189,11 +189,13 @@ async def api_step2_write(date: str = Form(...), ordered_json: str = Form(...)):
 
 @app.post("/api/step3/run")
 async def api_step3_run(session_url: str = Form(...),
-                        patients_json: str = Form(...)):
+                        patients_json: str = Form(...),
+                        admission_date: str = Form("")):
     import json as _json
     try:
         patients = _json.loads(patients_json)
-        results = await emr_service.extract_patients(session_url, patients)
+        results = await emr_service.extract_patients(
+            session_url, patients, admission_date=admission_date)
         return {"ok": True, "results": results}
     except Exception as e:
         raise HTTPException(500, str(e))

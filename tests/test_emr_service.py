@@ -1,62 +1,214 @@
-"""Tests for emr_service.summarize_html — short-circuits on empty input
-and otherwise delegates to LLM text()."""
+"""Pure-logic tests for emr_service.
+
+No LLM dependency — the 4-section summary feature is retired (5/10).
+Tests cover truncation, divUserSpec parsing, F/G detection, and the
+high-level `process_patient` aggregator.
+"""
 from __future__ import annotations
 
-import asyncio
-
-from app.services import emr_service
+from app.services import emr_service as es
 
 
-class FakeLLM:
-    def __init__(self, reply: str):
-        self.reply = reply
-        self.last_prompt = ""
+# ---------------- truncation ----------------
 
-    async def vision(self, image_bytes, prompt, mime="image/png"):
-        return ""
-
-    async def text(self, prompt, system=None):
-        self.last_prompt = prompt
-        return self.reply
+def test_truncate_at_medicine():
+    text = "Dx line\n[Assessment & Plan]\nplan\n[Medicine]\nDRUG_A 5 mg"
+    out = es.truncate_emr(text)
+    assert "plan" in out
+    assert "DRUG_A" not in out
 
 
-def _run(coro):
-    return asyncio.run(coro)
+def test_truncate_at_chinese_drug_marker():
+    text = "Dx info\n-------藥品-------\nDRUG_X"
+    assert es.truncate_emr(text).rstrip() == "Dx info"
 
 
-def test_summarize_empty_html_shortcuts_without_llm(monkeypatch):
-    sentinel = {"called": False}
-
-    def fake_get():
-        sentinel["called"] = True
-        return FakeLLM("不該被呼叫")
-    monkeypatch.setattr(emr_service, "get_llm", fake_get)
-
-    out = _run(emr_service.summarize_html(""))
-    assert "主訴" in out and "—" in out  # dashes placeholder
-    assert sentinel["called"] is False
+def test_truncate_returns_input_when_no_marker():
+    assert es.truncate_emr("clean SOAP") == "clean SOAP"
 
 
-def test_summarize_whitespace_only_shortcuts(monkeypatch):
-    monkeypatch.setattr(emr_service, "get_llm",
-                        lambda: (_ for _ in ()).throw(AssertionError("shouldn't call")))
-    out = _run(emr_service.summarize_html("   \n\t  "))
-    assert out.startswith("主訴：")
+def test_truncate_handles_empty():
+    assert es.truncate_emr("") == ""
 
 
-def test_summarize_delegates_to_llm_and_trims(monkeypatch):
-    fake = FakeLLM("主訴：胸痛\n病史：HTN\n理學檢查：—\n檢查結果：Troponin 0.01\n\n")
-    monkeypatch.setattr(emr_service, "get_llm", lambda: fake)
-    out = _run(emr_service.summarize_html("<div class='small'>SOAP note...</div>"))
-    assert out.endswith("Troponin 0.01")  # trimmed trailing \n
-    # Prompt should include the HTML (truncated to 15k)
-    assert "SOAP note" in fake.last_prompt
+def test_truncate_picks_earliest_marker():
+    text = "abc[Plan : 依類別]xxx[Medicine]yyy"
+    assert es.truncate_emr(text).rstrip() == "abc"
 
 
-def test_summarize_truncates_long_html(monkeypatch):
-    huge = "x" * 50000
-    fake = FakeLLM("主訴：—\n病史：—\n理學檢查：—\n檢查結果：—")
-    monkeypatch.setattr(emr_service, "get_llm", lambda: fake)
-    _run(emr_service.summarize_html(huge))
-    # Prompt = SUMMARY_PROMPT + html[:15000]. Total length bounded.
-    assert len(fake.last_prompt) <= len(emr_service.SUMMARY_PROMPT) + 15000
+# ---------------- divUserSpec ----------------
+
+def test_parse_name_from_divuserspec():
+    raw = "姓名 : 謝秀嬌 , 生日 : 1955/02/20 , 性別 : 女"
+    assert es.parse_name_from_raw(raw) == "謝秀嬌"
+
+
+def test_parse_name_missing():
+    assert es.parse_name_from_raw("生日 : 2000/01/01") == ""
+
+
+def test_parse_birth():
+    raw = "姓名 : 王小明 , 生日 : 1960/05/15 , 性別 : 男"
+    assert es.parse_birth_from_raw(raw) == (1960, 5, 15)
+
+
+def test_parse_birth_missing():
+    assert es.parse_birth_from_raw("姓名 : 王小明") is None
+
+
+def test_parse_gender():
+    assert es.parse_gender_from_raw("姓名 : x , 性別 : 男") == "男"
+    assert es.parse_gender_from_raw("姓名 : x , 性別 : 女") == "女"
+    assert es.parse_gender_from_raw("nothing") == ""
+
+
+def test_compute_age_before_birthday():
+    # Born 1960/05/15, admit 2026/03/01 → not yet 66
+    assert es.compute_age((1960, 5, 15), "20260301") == 65
+
+
+def test_compute_age_after_birthday():
+    assert es.compute_age((1960, 5, 15), "20260601") == 66
+
+
+def test_compute_age_on_birthday():
+    assert es.compute_age((1960, 5, 15), "20260515") == 66
+
+
+def test_compute_age_invalid_date():
+    assert es.compute_age((1960, 5, 15), "not-a-date") is None
+
+
+def test_compute_age_none_birth():
+    assert es.compute_age(None, "20260101") is None
+
+
+# ---------------- detect_fg ----------------
+
+def test_detect_fg_cad_lhc():
+    text = "[Diagnosis]\n1. CAD\n[Assessment & Plan]\nplan LHC"
+    f, g = es.detect_fg(text)
+    assert f == "CAD"
+    assert g == "Left heart cath."
+
+
+def test_detect_fg_stemi_pci():
+    text = "[Diagnosis]\n1. STEMI\n[Assessment & Plan]\nprimary PCI"
+    f, g = es.detect_fg(text)
+    assert f == "STEMI"
+    assert g == "PCI"
+
+
+def test_detect_fg_paf_rfa():
+    text = "[Diagnosis]\n1. pAf\n[Assessment & Plan]\nRF ablation"
+    f, g = es.detect_fg(text)
+    assert f == "pAf"
+    assert g == "RF ablation"
+
+
+def test_detect_fg_unstable_angina_maps_to_unstable():
+    text = "[Diagnosis]\n1. unstable angina\n[Assessment & Plan]\nplan PCI"
+    f, _ = es.detect_fg(text)
+    assert f == "Unstable"
+
+
+def test_detect_fg_numbered_priority():
+    """Item 1 wins over item 2."""
+    text = "[Diagnosis]\n1. CAD\n2. pAf\n[Assessment & Plan]\nplan"
+    f, _ = es.detect_fg(text)
+    assert f == "CAD"
+
+
+def test_detect_fg_f_to_g_fallback():
+    """G empty in plan but F=CAD → G falls back to Left heart cath."""
+    text = "[Diagnosis]\n1. CAD\n[Assessment & Plan]\nwait for OPD"
+    f, g = es.detect_fg(text)
+    assert f == "CAD"
+    assert g == "Left heart cath."
+
+
+def test_detect_fg_past_pci_doesnt_fire():
+    """s/p PCI from 2020 must NOT trigger CATH=PCI."""
+    text = "[Diagnosis]\n1. CAD\n[Assessment & Plan]\ns/p PCI on 2020/05"
+    _, g = es.detect_fg(text)
+    assert g == "Left heart cath."  # F→G fallback, not PCI
+
+
+def test_detect_fg_generator_replacement_override():
+    text = "[Diagnosis]\n1. pAf\n[Assessment & Plan]\nplan PPM generator replacement"
+    f, g = es.detect_fg(text)
+    assert f == "Generator replacement"
+    assert g == "PPM"
+
+
+def test_detect_fg_icd_fallback():
+    """Empty Dx free text, ICD-10 code carries the diagnosis."""
+    text = "[Diagnosis]\n* (ICD-10:I259) chronic CAD\n[Assessment & Plan]\nplan"
+    f, _ = es.detect_fg(text)
+    assert f == "CAD"
+
+
+def test_detect_fg_empty():
+    assert es.detect_fg("") == ("", "")
+
+
+# ---------------- normalize_diag_for_cathlab ----------------
+
+def test_normalize_diag_angina_to_cad():
+    assert es.normalize_diag_for_cathlab("Angina pectoris") == "CAD"
+
+
+def test_normalize_diag_unstable_to_cad():
+    assert es.normalize_diag_for_cathlab("Unstable") == "CAD"
+
+
+def test_normalize_diag_pass_through():
+    assert es.normalize_diag_for_cathlab("CAD") == "CAD"
+    assert es.normalize_diag_for_cathlab("pAf") == "pAf"
+
+
+def test_normalize_diag_empty():
+    assert es.normalize_diag_for_cathlab("") == ""
+
+
+# ---------------- process_patient ----------------
+
+def test_process_patient_full_fields():
+    soap = "[Diagnosis]\n1. CAD\n[Assessment & Plan]\nplan LHC\n[Medicine]\nDRUG"
+    div = "姓名 : 王小明 , 生日 : 1960/05/15 , 性別 : 男"
+    out = es.process_patient(soap, div, "20260601")
+    assert out["name"] == "王小明"
+    assert out["age"] == 66
+    assert out["gender"] == "男"
+    assert out["f"] == "CAD"
+    assert out["g"] == "Left heart cath."
+    assert out["has_record"] is True
+    assert out["c_text"].startswith("66 y/o 男\n")
+    assert "DRUG" not in out["c_text"]
+
+
+def test_process_patient_no_record():
+    """No SOAP → NO_RECORD_TEXT placeholder, but demographics still parsed."""
+    div = "姓名 : 林大姊 , 生日 : 1950/01/01 , 性別 : 女"
+    out = es.process_patient("", div, "20260101")
+    assert out["has_record"] is False
+    assert out["f"] == ""
+    assert out["g"] == ""
+    assert es.NO_RECORD_TEXT in out["c_text"]
+    assert out["c_text"].startswith("76 y/o 女\n")  # demographic prefix kept
+
+
+def test_process_patient_no_demographics_no_prefix():
+    soap = "[Diagnosis]\nCAD\n[Assessment & Plan]\nplan"
+    out = es.process_patient(soap, "", "20260101")
+    assert not out["c_text"].startswith(("0 y/o", "1 y/o"))
+    assert "y/o" not in out["c_text"].split("\n")[0]
+
+
+def test_process_patient_partial_demographics():
+    """Missing gender → no prefix (age alone not enough)."""
+    soap = "x"
+    div = "姓名 : 林大姊 , 生日 : 1950/01/01"
+    out = es.process_patient(soap, div, "20260101")
+    assert "y/o" not in out["c_text"]
+    assert out["name"] == "林大姊"

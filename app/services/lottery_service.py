@@ -1,19 +1,30 @@
 """
 Step 2 — Lottery + Round-Robin.
 
-- Reads 主治醫師抽籤表 to know each doctor's 籤數 (lottery tickets) for the day
-- Randomly draws patients per doctor up to their ticket count
-- Non-schedule doctors go last
-- Produces a round-robin order: A1→B1→C1→A2→B2→...
-- Writes N–P (序號 / 主治醫師 / 病人姓名) to the date sheet
+Two-group round-robin (`feedback_lottery_roundrobin.md`):
+  Group 1 — 時段組: doctors that appear in 主治醫師抽籤表 for the schedule day.
+  Group 2 — 非時段組: doctors with admitted patients but NOT in the lottery.
+
+Within each group:
+  - Doctor draw order is weighted by `*N` ticket count (`weighted_doctor_shuffle`).
+  - Patients are round-robined A1 → B1 → C1 → A2 → ... until each doctor empty.
+
+The two groups NEVER mix; Group 2 starts only after Group 1 fully RR'd
+(per the user's repeated correction in `feedback_lottery_roundrobin.md`).
+
+The 詹世鴻 Friday exception (rule 16) is handled upstream: callers
+should drop 詹世鴻 from `tickets` on Friday so he falls into Group 2.
 """
 from __future__ import annotations
 
 import random
+import re
 from typing import Optional
 
 from . import sheet_service
 
+
+# ---------------------------- main / lottery readers ----------------------------
 
 def read_main_patients(date: str) -> list[dict]:
     ws = sheet_service.get_worksheet(date)
@@ -22,9 +33,8 @@ def read_main_patients(date: str) -> list[dict]:
     rows = sheet_service.read_range(ws, "A2:L200")
     out = []
     for i, r in enumerate(rows):
-        # pad
         r = (r + [""] * 12)[:12]
-        if not r[5].strip():  # no name → stop
+        if not r[5].strip():
             break
         out.append({
             "row": i + 2,
@@ -35,48 +45,74 @@ def read_main_patients(date: str) -> list[dict]:
     return out
 
 
+def parse_ticket_cell(raw: str) -> tuple[str, int]:
+    """`'李柏增*2'` → `('李柏增', 2)`; `'許志新'` → `('許志新', 1)`; empty → `('', 0)`."""
+    s = (raw or "").strip()
+    if not s:
+        return ("", 0)
+    m = re.match(r"^(.+?)\*(\d+)$", s)
+    if m:
+        return (m.group(1).strip(), int(m.group(2)))
+    return (s, 1)
+
+
 def read_lottery_tickets(schedule_day: str) -> dict[str, int]:
     """
-    Read 主治醫師抽籤表. Expected layout: first column = weekday label
-    (週一/週二/...), subsequent columns = doctor names with header row
-    listing tickets, or inline count annotations like "柯呈諭*2".
-
-    This is a best-effort parser matching how the existing workflow stores
-    it; callers can override the result in the UI.
+    Read 主治醫師抽籤表. Layout: first column = weekday label
+    (週一/週二/...), subsequent columns = doctor names with `*N` ticket suffix.
+    Returns {doctor: ticket_count}.
     """
     ws = sheet_service.get_worksheet("主治醫師抽籤表")
     if ws is None:
         return {}
     rows = sheet_service.read_range(ws, "A1:Z50")
     tickets: dict[str, int] = {}
-    day_label = schedule_day  # "週一".."週五"
     for r in rows:
         if not r:
             continue
-        if r[0].strip() == day_label:
+        if r[0].strip() == schedule_day:
             for cell in r[1:]:
-                if not cell.strip():
-                    continue
-                name = cell.strip()
-                count = 1
-                if "*" in name:
-                    name, c = name.split("*", 1)
-                    try:
-                        count = int(c)
-                    except ValueError:
-                        count = 1
-                tickets[name.strip()] = tickets.get(name.strip(), 0) + count
+                name, count = parse_ticket_cell(cell)
+                if name and count > 0:
+                    tickets[name] = tickets.get(name, 0) + count
             break
     return tickets
 
 
-def draw(patients: list[dict], tickets: dict[str, int],
+# ---------------------------- weighted shuffle ----------------------------
+
+def weighted_doctor_shuffle(tickets: dict[str, int], rng: Optional[random.Random] = None) -> list[str]:
+    """
+    Pool = each doctor × ticket_count, shuffle, dedup keeping first occurrence.
+    `*2` doctor lands earlier on average but still occupies one RR slot.
+    """
+    rng = rng or random.Random()
+    pool: list[str] = []
+    for name, count in tickets.items():
+        if count > 0:
+            pool.extend([name] * count)
+    rng.shuffle(pool)
+    seen: set[str] = set()
+    out: list[str] = []
+    for n in pool:
+        if n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
+# ---------------------------- draw + RR (two groups) ----------------------------
+
+def draw(patients: list[dict],
+         tickets: dict[str, int],
          seed: Optional[int] = None) -> dict[str, list[dict]]:
     """
-    Randomly pick patients for each doctor up to their ticket count.
-    Patients whose doctor is not in `tickets` are treated as non-schedule.
-    Returns {doctor: [patient, ...]} preserving doctor listing order in
-    `tickets`, with non-schedule doctors appended at the end.
+    Pick patients per doctor up to their ticket count (in-schedule) or all
+    of them (non-schedule). Returns {doctor: [patient, ...]} with in-schedule
+    doctors first (insertion order = `tickets` order), non-schedule last.
+
+    Patient order within each doctor is randomized (used for the per-doctor
+    internal order before RR).
     """
     rng = random.Random(seed)
     by_doctor: dict[str, list[dict]] = {}
@@ -84,32 +120,20 @@ def draw(patients: list[dict], tickets: dict[str, int],
         by_doctor.setdefault(p["doctor"], []).append(p)
 
     result: dict[str, list[dict]] = {}
-    # In-schedule doctors first
     for doc in tickets:
         pool = list(by_doctor.get(doc, []))
         rng.shuffle(pool)
         result[doc] = pool[: tickets.get(doc, len(pool))]
-
-    # Non-schedule doctors (Friday special: 詹世鴻 too)
     for doc, pool in by_doctor.items():
-        if doc not in tickets and doc:
-            result[doc] = list(pool)
+        if doc and doc not in tickets:
+            shuffled = list(pool)
+            rng.shuffle(shuffled)
+            result[doc] = shuffled
     return result
 
 
-def round_robin(draws: dict[str, list[dict]],
-                tickets: dict[str, int]) -> list[dict]:
-    """True round-robin: take 1 from each doctor in turn until all empty."""
-    # Order doctors: tickets dict first (insertion order), then non-schedule
-    order: list[str] = []
-    for d in tickets:
-        if d in draws:
-            order.append(d)
-    for d in draws:
-        if d not in order:
-            order.append(d)
-
-    queues = {d: list(ps) for d, ps in draws.items()}
+def _rr_within_group(draws: dict[str, list[dict]], order: list[str]) -> list[dict]:
+    queues = {d: list(draws.get(d, [])) for d in order}
     out: list[dict] = []
     while any(queues[d] for d in order):
         for d in order:
@@ -118,8 +142,35 @@ def round_robin(draws: dict[str, list[dict]],
     return out
 
 
+def round_robin(draws: dict[str, list[dict]],
+                tickets: dict[str, int],
+                seed: Optional[int] = None) -> list[dict]:
+    """
+    Two-group RR:
+      Group 1 (時段組): doctors in `tickets` AND with patients in `draws`.
+                       Doctor order = `weighted_doctor_shuffle(tickets ∩ draws)`.
+      Group 2 (非時段組): doctors with patients but not in `tickets`.
+                          Doctor order = plain shuffle (no tickets to weight by).
+    """
+    rng = random.Random(seed)
+
+    # Group 1
+    in_sched_tix = {d: c for d, c in tickets.items() if d in draws and draws[d]}
+    group1_order = weighted_doctor_shuffle(in_sched_tix, rng=rng)
+
+    # Group 2 (preserve dict iteration order, then shuffle)
+    group2_order = [d for d in draws if d and d not in tickets and draws[d]]
+    rng.shuffle(group2_order)
+
+    return _rr_within_group(draws, group1_order) + _rr_within_group(draws, group2_order)
+
+
+# ---------------------------- writer ----------------------------
+
 def write_to_sheet(date: str, ordered: list[dict]) -> dict:
-    """Write 序號/主治醫師/病人姓名/(空 Q)/(空 R)/病歷號 to N2:S{n+1}."""
+    """Write 序號 / 主治醫師 / 病人姓名 / 備註(住服) / 備註 / 病歷號 to N2:S{n+1}.
+    Q (備註(住服)) and R (備註) default to empty — user marks them manually.
+    """
     ws = sheet_service.get_worksheet(date)
     body = []
     for i, p in enumerate(ordered, start=1):

@@ -20,13 +20,14 @@ from typing import Optional
 
 from .. import config as appconfig
 from . import sheet_service
+from . import emr_service
 
 
 SKIP_KEYWORDS = ["不排程", "檢查"]
 ZHANG_BORROWED_BY = ["王思翰", "張倉惟"]  # 借用張獻元時段時的註記關鍵字
 
 # 第二主治醫師短碼 → 全名（用於從註記抽取 attendingdoctor2）
-# 順序代表優先度；CLAUDE.md 規則 16：多人時葉立浩 > 其他
+# 順序代表優先度；CLAUDE.md 規則 15：多人時葉立浩 > 其他
 SECOND_DOCTORS: list[tuple[str, str]] = [
     ("浩", "葉立浩"),
     ("寬", "葉建寬"),
@@ -34,6 +35,28 @@ SECOND_DOCTORS: list[tuple[str, str]] = [
     ("嘉", "蘇奕嘉"),
     ("軨", "許毓軨"),
 ]
+
+# Mon-cathlab + EP-family procedure → second forced to 洪晨惠 (CLAUDE.md rule 15,
+# feedback_monday_ep_hong_chenhui_second.md, 5/8 broadened rule). Existing second
+# from 時段表 gets pushed to recommendationDoctor (third doctor field).
+EP_PROCEDURE_KEYWORDS = [
+    "RF ablation", "RFA", "ablation",
+    "PFA", "AF ablation", "AFL ablation", "PSVT ablation",
+    "EP study",
+    "PPM", "pacemaker", "ICD implant", "ICD generator",
+    "CRT", "generator replacement",
+]
+
+# 陳則瑋 special: when sub-table C col contains 門診 entry by 劉秉彥, push him
+# as second (memory feedback_chen_zewei_liu_bingyan_second.md). Limited to 劉秉彥.
+CHEN_ZEWEI_OPD_DOCTOR = "陳則瑋"
+LIU_BINGYAN_NAME = "劉秉彥"
+
+# 'Others:XXX' fallback PDI (feedback_others_diag_freetext.md, 2026-04-27).
+# When DIAG_IDS lacks an 'Others:foo' entry, use the parent Others PDI with the
+# full freetext preserved as the name (verified for 'Others:opd', 'Others:s/p HTx').
+OTHERS_PDI = "PDI20090908120008"
+
 STATIC_DIR = Path(__file__).resolve().parent.parent / "data" / "static"
 
 _id_maps: Optional[dict] = None
@@ -116,11 +139,51 @@ def _resolve_id(text: str, table: dict) -> tuple[str, str]:
 
 
 def resolve_diag(text: str) -> tuple[str, str]:
-    return _resolve_id(text, id_maps().get("diag", {}))
+    """
+    Resolve 術前診斷 → (label, id). Applies _normalize_diag first
+    (angina/unstable → CAD per feedback_diag_angina_false_positive.md), then
+    falls back to OTHERS_PDI when input is 'Others:XXX' not in id maps.
+    """
+    norm = emr_service.normalize_diag_for_cathlab(text)
+    label, idv = _resolve_id(norm, id_maps().get("diag", {}))
+    if idv:
+        return label, idv
+    if norm.startswith("Others:"):
+        return norm, OTHERS_PDI
+    return "", ""
 
 
 def resolve_proc(text: str) -> tuple[str, str]:
     return _resolve_id(text, id_maps().get("proc", {}))
+
+
+# ---------------------------------- Mon-EP / OPD rules ----------------------------------
+
+def _is_monday_cath(cath_date_str: str) -> bool:
+    try:
+        return datetime.strptime(cath_date_str, "%Y/%m/%d").weekday() == 0
+    except ValueError:
+        return False
+
+
+def _is_ep_procedure(proc_text: str) -> bool:
+    if not proc_text:
+        return False
+    t = proc_text.lower()
+    return any(kw.lower() in t for kw in EP_PROCEDURE_KEYWORDS)
+
+
+def _opd_doctor_in_emr(doctor: str, emr_c_text: str) -> str:
+    """
+    陳則瑋 patient whose sub-table C col mentions 劉秉彥 in a 門診 line →
+    returns '劉秉彥'. Otherwise ''.
+    """
+    if doctor != CHEN_ZEWEI_OPD_DOCTOR or not emr_c_text:
+        return ""
+    for line in emr_c_text.split("\n"):
+        if "門診" in line and LIU_BINGYAN_NAME in line:
+            return LIU_BINGYAN_NAME
+    return ""
 
 
 def compute_all_slots(doctor: str, cath_date_str: str) -> list[dict]:
@@ -169,27 +232,33 @@ def compute_time(session: str, index: int) -> str:
 
 # ---------------------------------- patient reader ----------------------------------
 
-def _read_w_markers(data: list[list[str]]) -> dict[str, str]:
-    """N-W ordering 區塊的 W 欄（改期）— 回傳 {病歷號: W值}."""
+def _read_v_markers(data: list[list[str]]) -> dict[str, str]:
+    """N-V ordering 區塊的 V 欄（改期，YYYYMMDD）— 回傳 {病歷號: V值}.
+
+    New 9-col layout: N=13, O=14, P=15, Q=16, R=17, S=18, T=19, U=20, V=21.
+    """
     out = {}
     for row in data:
-        if len(row) < 23:
+        if len(row) < 22:
             continue
         chart = (row[18] or "").strip()   # S = index 18
-        w     = (row[22] or "").strip()   # W = index 22
-        if chart and w and w != "改期":
-            out[chart] = w
+        v     = (row[21] or "").strip()   # V = index 21
+        if chart and v and v != "改期":
+            out[chart] = v
     return out
 
 
 def read_patients(date: str) -> list[dict]:
-    """Scan date sheet 子表格 + W-column skips. Returns patient dicts with
-    fields: seq, doctor, name, chart, diag, cath, note, skip (bool)."""
+    """Scan date sheet 子表格 + V-column reschedule skips. Returns patient
+    dicts with fields: seq, doctor, name, chart, diag, cath, note, emr, skip.
+
+    Reschedule marker is now V (col idx 21 in N-V 9-col layout) — index by
+    chart no via _read_v_markers."""
     ws = sheet_service.get_worksheet(date)
     if not ws:
         raise ValueError(f"找不到工作表：{date}")
     data = ws.get_all_values()
-    reschedules = _read_w_markers(data)
+    reschedules = _read_v_markers(data)
 
     patients: list[dict] = []
     current_doctor = ""
@@ -207,16 +276,17 @@ def read_patients(date: str) -> list[dict]:
             seq += 1
             name = col_a
             chart = r[1].strip()
+            emr  = r[2]      # C col (EMR raw with age/gender prefix); keep newlines
             note = r[7].strip()
             diag = r[5].strip()
             cath = r[6].strip()
-            w_mark = reschedules.get(chart, "")
-            should_skip = any(k in note for k in SKIP_KEYWORDS) or bool(w_mark)
-            if w_mark:
-                note = (note + f" [改期→{w_mark}]").strip()
+            v_mark = reschedules.get(chart, "")
+            should_skip = any(k in note for k in SKIP_KEYWORDS) or bool(v_mark)
+            if v_mark:
+                note = (note + f" [改期→{v_mark}]").strip()
             patients.append({
                 "seq": seq, "doctor": current_doctor,
-                "name": name, "chart": chart,
+                "name": name, "chart": chart, "emr": emr,
                 "diag": diag, "cath": cath, "note": note,
                 "skip": should_skip,
             })
@@ -255,6 +325,21 @@ async def _set_date_and_query(page, base_url: str, date_str: str) -> None:
     }""")
     await page.wait_for_load_state("networkidle", timeout=10000)
     await asyncio.sleep(1)
+
+
+def _week_span(date_str: str) -> list[str]:
+    """Return [Mon..Fri] dates (YYYY/MM/DD) for the ISO-week containing date_str.
+
+    Week-scan rule (CLAUDE.md rule 19, feedback_cathlab_week_check_before_keyin.md):
+    before any ADD, check the whole Mon-Fri window — if chart exists on ANY day,
+    skip it (don't duplicate). Saturday/Sunday have no cathlab, so 5-day span.
+    """
+    try:
+        dt = datetime.strptime(date_str, "%Y/%m/%d")
+    except ValueError:
+        return [date_str]
+    monday = dt - timedelta(days=dt.weekday())
+    return [(monday + timedelta(days=i)).strftime("%Y/%m/%d") for i in range(5)]
 
 
 async def _get_existing_charts(page) -> set[str]:
@@ -323,8 +408,14 @@ def _pick_second_doctor(note: str) -> tuple[str, str]:
 
 
 def _enrich(patients: list[dict], admit_date: str) -> list[dict]:
-    """Attach cath_date / session / room / time / diag_id / proc_id / second_doctor to each patient."""
-    # Group by (cath_date, doctor) to number patients per doctor block
+    """Attach cath_date / session / room / time / diag_id / proc_id / second_doctor / third_doctor to each patient.
+
+    Second/third doctor priority (CLAUDE.md rule 15 + 5/8 broadening):
+      1. Start with note-extracted second (葉立浩 wins on ties).
+      2. 陳則瑋 + sub-table C 門診 by 劉秉彥 → second=劉秉彥 (overrides note).
+      3. Mon cathlab + EP-family procedure → second forced to 洪晨惠; if a
+         second was already set, push it to third (recommendationDoctor).
+    """
     counters: dict[tuple[str, str], int] = {}
     for p in patients:
         if p["skip"]:
@@ -337,17 +428,15 @@ def _enrich(patients: list[dict], admit_date: str) -> list[dict]:
             p["proc_id"] = ""
             p["proc_label"] = ""
             p["second_doctor"] = ""
+            p["third_doctor"] = ""
             p["note_out"] = p["note"]
             continue
         cath = get_cathlab_date(admit_date, p["doctor"], p["note"])
-        # Honour PM hints in note: 下午, PM, 晚 → prefer PM slot when doctor
-        # has both AM and PM on the day (e.g. 柯呈諭 Thu, 張獻元 Wed).
         prefer = ""
         if any(k in p["note"] for k in ("下午", "PM", "pm", "晚")):
             prefer = "PM"
         elif any(k in p["note"] for k in ("上午", "AM", "am", "早")):
             prefer = "AM"
-        # 張獻元 Tue same-day always means his Tue PM slot
         if p["doctor"] == "張獻元" and datetime.strptime(admit_date, "%Y%m%d").weekday() == 1 \
                 and cath == datetime.strptime(admit_date, "%Y%m%d").strftime("%Y/%m/%d"):
             prefer = "PM"
@@ -359,13 +448,26 @@ def _enrich(patients: list[dict], admit_date: str) -> list[dict]:
         d_label, d_id = resolve_diag(p["diag"])
         q_label, q_id = resolve_proc(p["cath"])
         note_out = p["note"]
-        # Non-schedule → 備註加「本日無時段」
         if not slot["in_schedule"] and "本日無時段" not in note_out:
             note_out = (note_out + " 本日無時段").strip()
-        # Procedure 文字沒映射 → 塞備註（CLAUDE.md 規則 feedback_cathlab_note_fallback）
         if p["cath"] and not q_id and p["cath"] not in note_out:
             note_out = (note_out + " " + p["cath"]).strip()
+
+        # --- second/third doctor resolution ---
         second, _tag = _pick_second_doctor(p["note"])
+        third = ""
+
+        # 陳則瑋 OPD by 劉秉彥 → second=劉秉彥
+        opd_second = _opd_doctor_in_emr(p["doctor"], p.get("emr", ""))
+        if opd_second:
+            second = opd_second
+
+        # Mon + EP-family → second forced to 洪晨惠
+        if _is_monday_cath(cath) and _is_ep_procedure(p["cath"]):
+            if second and second != "洪晨惠":
+                third = second
+            second = "洪晨惠"
+
         p["cath_date"] = cath
         p["session"] = slot["session"]
         p["room"] = slot["room"]
@@ -375,6 +477,7 @@ def _enrich(patients: list[dict], admit_date: str) -> list[dict]:
         p["proc_id"] = q_id
         p["proc_label"] = q_label
         p["second_doctor"] = second
+        p["third_doctor"] = third
         p["note_out"] = note_out
     return patients
 
@@ -470,7 +573,7 @@ async def _add_patient(page, base_url: str, cath_date: str, p: dict) -> dict:
         await page.fill('input[name="inspectiontime"]', p["time"])
         await page.select_option('select[name="examroom"]', value=room_code)
         await page.select_option('select[name="attendingdoctor1"]', value=doc_code)
-        # Second attending (CLAUDE.md rule 16): 葉立浩 priority > first-hit
+        # Second attending (CLAUDE.md rule 15): 葉立浩 priority > first-hit
         second_name = p.get("second_doctor", "")
         second_code = codes["doctors"].get(second_name, "") if second_name else ""
         if second_code:
@@ -478,6 +581,15 @@ async def _add_patient(page, base_url: str, cath_date: str, p: dict) -> dict:
                 await page.select_option('select[name="attendingdoctor2"]', value=second_code)
             except Exception:
                 pass  # field may not be present on this form variant
+
+        # Third attending / recommendationDoctor (Mon-EP push rule, feedback_cathlab_third_doctor.md)
+        third_name = p.get("third_doctor", "")
+        third_code = codes["doctors"].get(third_name, "") if third_name else ""
+        if third_code:
+            try:
+                await page.select_option('select[name="recommendationDoctor"]', value=third_code)
+            except Exception:
+                pass
 
         await page.evaluate(
             """([dj, pj]) => {
@@ -591,20 +703,33 @@ async def keyin(admit_date: str, dry_run: bool = False) -> dict:
             log.append("登入成功")
 
             unique_dates = sorted({p["cath_date"] for p in active})
-            # Pre-fetch existing charts per date to skip duplicates
-            existing: dict[str, set[str]] = {}
+            # Week-scan (rule 19): scan Mon-Fri of each ISO week touching any
+            # cath_date so we can skip charts already on ANOTHER day.
+            scan_dates: set[str] = set()
             for d in unique_dates:
+                scan_dates.update(_week_span(d))
+            existing: dict[str, set[str]] = {}
+            for d in sorted(scan_dates):
                 await _set_date_and_query(page, cfg.cathlab_base_url, d)
                 existing[d] = await _get_existing_charts(page)
                 log.append(f"查詢 {d}：現有 {len(existing[d])} 筆")
 
-            # Phase 1: ADD
+            def _existing_anywhere(chart: str) -> str:
+                """Return cath_date string where chart already exists in scan window, or ''."""
+                for d, charts in existing.items():
+                    if chart in charts:
+                        return d
+                return ""
+
+            # Phase 1: ADD (skip if chart present on ANY day in the scan window)
             log.append("--- Phase 1: ADD ---")
             for i, p in enumerate(active):
                 d = p["cath_date"]
-                if p["chart"] in existing[d]:
+                already = _existing_anywhere(p["chart"])
+                if already:
+                    reason = f"already exists on {already}" if already != d else "already exists"
                     add_results.append({"chart": p["chart"], "name": p["name"],
-                                        "result": "skip", "reason": "already exists"})
+                                        "result": "skip", "reason": reason})
                     continue
                 if i > 0:
                     await _set_date_and_query(page, cfg.cathlab_base_url, d)

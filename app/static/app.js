@@ -123,7 +123,7 @@ if (document.querySelector('.stepper')) {
 // ---------- Format check ----------
 const FMT_LABELS = {
   main_header_missing:     '主資料 A-L 表頭錯誤',
-  order_header_wrong:      '入院序 N-W 表頭錯誤',
+  order_header_wrong:      '入院序 N-V 表頭錯誤',
   subtable_count_mismatch: '子表格人數標題與實際不符',
   gap_too_small:           '子表格間空白行不足（< 2）',
   subtable_missing_title:  '子表格缺少標題（姓名列前沒有 X（N人））',
@@ -343,7 +343,7 @@ function showStep1DiffAndConfirm(diff) {
       ${rowHtml('added',   '新增',   diff.added)}
       ${rowHtml('removed', '取消',   diff.removed)}
       ${rowHtml('changed', '換醫師', diff.doctor_changed)}
-      <p class="hint">確認後：A-L 主資料會覆蓋為新清單。子表格與 N-W 入院序「不會自動更新」—— 新增/取消病人需手動在 Step 2/3/4 重跑。</p>
+      <p class="hint">確認後：A-L 主資料會覆蓋為新清單。子表格與 N-V 入院序「不會自動更新」—— 新增/取消病人需手動在 Step 2/3/4 重跑。</p>
       <button id="diff-confirm-btn" class="primary">確認覆蓋</button>
       <button id="diff-cancel-btn">取消</button>
     </div>
@@ -503,13 +503,20 @@ function setupStep3() {
 }
 
 function renderEmrResults(results) {
-  const html = results.map(r => `
+  const escape = s => (s || '').replace(/</g, '&lt;');
+  const html = results.map(r => {
+    const demog = (r.age != null && r.gender) ? `${r.age} y/o ${r.gender}` : '';
+    const fg = `<span class="emr-fg">F=${escape(r.f) || '—'} / G=${escape(r.g) || '—'}</span>`;
+    const emrName = r.emr_name && r.emr_name !== r.name
+      ? `<span class="emr-name-fix">(EMR：${escape(r.emr_name)})</span>` : '';
+    return `
     <div class="emr-card">
-      <h3>${r.doctor || ''} / ${r.name} (${r.chart_no}) ${r.error ? '⚠' : ''}</h3>
-      ${r.error ? `<p class="msg err">${r.error}</p>` : ''}
-      <pre>${(r.summary || '').replace(/</g, '&lt;')}</pre>
-    </div>
-  `).join('');
+      <h3>${escape(r.doctor)} / ${escape(r.name)} ${emrName} (${escape(r.chart_no)}) ${r.error ? '⚠' : ''}</h3>
+      ${r.error ? `<p class="msg err">${escape(r.error)}</p>` : ''}
+      <p class="hint">${escape(demog)} &nbsp; ${fg}</p>
+      <pre>${escape(r.c_text)}</pre>
+    </div>`;
+  }).join('');
   $('#emr-results').innerHTML = html;
 }
 
