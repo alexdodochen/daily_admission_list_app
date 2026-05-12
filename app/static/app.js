@@ -2,6 +2,21 @@
 // Small vanilla JS app. No framework — keeps the local bundle zero-deps.
 // ========================================================================
 
+// ---------- Help modal (runs on every page) ----------
+(function () {
+  const link = document.getElementById('help-link');
+  const modal = document.getElementById('help-modal');
+  const close = document.getElementById('help-close');
+  if (!link || !modal) return;
+  link.addEventListener('click', (e) => { e.preventDefault(); modal.hidden = false; });
+  if (close) close.addEventListener('click', () => { modal.hidden = true; });
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.hidden = true; });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !modal.hidden) modal.hidden = true;
+  });
+})();
+
+
 // ---------- Auto-update banner (runs on every page) ----------
 (async function () {
   try {

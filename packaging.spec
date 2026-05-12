@@ -5,7 +5,7 @@ PyInstaller spec for the daily-admission app.
 Build:
     pyinstaller packaging.spec --noconfirm
 
-Output: dist/admission-app/admission-app.exe (onedir).
+Output: dist/每日入院名單/每日入院名單.exe (onedir).
 
 Before running:
   1. Copy your real service-account JSON to app/bundled/service_account.json
@@ -27,6 +27,17 @@ datas = [
 # gspread ships certificates + small JSON assets; include them all
 datas += collect_data_files("gspread")
 datas += collect_data_files("google.auth")
+
+# ---- Bundle Playwright Chromium so recipients don't need to install ----
+import os as _os
+_pw_root = _os.path.join(_os.environ.get("LOCALAPPDATA", ""), "ms-playwright")
+if _os.path.isdir(_pw_root):
+    for _name in _os.listdir(_pw_root):
+        # Bundle chromium-* (regular + headless variants) + ffmpeg-*; skip winldd
+        if _name.startswith("chromium") or _name.startswith("ffmpeg"):
+            _src = _os.path.join(_pw_root, _name)
+            if _os.path.isdir(_src):
+                datas.append((_src, _os.path.join("ms-playwright", _name)))
 
 # ---- Hidden imports --------------------------------------------------------
 # FastAPI / uvicorn / httpx pull a lot of submodules dynamically.
@@ -72,7 +83,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="admission-app",
+    name="每日入院名單",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -93,5 +104,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="admission-app",
+    name="每日入院名單",
 )

@@ -12,6 +12,7 @@
   <nav>
     <a href="/">工作流程</a>
     <a href="/settings">設定</a>
+    <a href="#" id="help-link">說明</a>
   </nav>
   <div id="update-badge" class="update-badge" hidden>
     <span class="dot upd"></span><span id="update-text">有新版本</span>
@@ -28,6 +29,44 @@
 <main>
 {% block body %}{% endblock %}
 </main>
+
+<!-- Help modal — toggled by #help-link in the topbar -->
+<div id="help-modal" class="help-modal" hidden>
+  <div class="help-content">
+    <header>
+      <h2>🩺 每日入院名單 — 操作說明</h2>
+      <button id="help-close" class="help-close" type="button">✕</button>
+    </header>
+    <section>
+      <p class="hint">這個 app 把每天的住院 + 隔天的心導管排程自動化。資料全部存在你自己的 Google Sheet，所有 API key 都在本機。</p>
+
+      <h3>第一次使用</h3>
+      <ol>
+        <li><b>設定頁</b> 填：LLM key (Anthropic / OpenAI / Gemini 任一) → Google service account JSON 路徑 → Sheet ID → WEBCVIS 帳密 → LINE token。「測試連線」要兩個 ✓ 才能繼續。</li>
+        <li>把 service account 的 email 加入該 Sheet 的「編輯者」（或把 Sheet 設「知道連結都可以編輯」）。</li>
+      </ol>
+
+      <h3>每天 6 步</h3>
+      <ol>
+        <li><b>匯入名單</b> — 拖入院名單截圖 → LLM 辨識成 A-L 表格 → 對病歷號 → 寫入 Sheet。</li>
+        <li><b>抽籤排序</b> — 讀主治醫師抽籤表 + 主資料 → 加權隨機抽 → round-robin → 寫 N-S。時段組 / 非時段組 兩段獨立 RR。</li>
+        <li><b>EMR 擷取</b> — 自己登入 EMR 後貼 session URL → Playwright 抓 SOAP → 自動偵測 F (術前診斷) / G (預計心導管) → 自動補 #divUserSpec 的姓名/生日/性別。<i>沒有 LLM 摘要功能</i>。</li>
+        <li><b>入院序整合</b> — 在子表格手動確認 F/G → 整合寫入 N-V 9 欄。Q (備註住服) / V (改期) 是手動標記，重跑會保留。</li>
+        <li><b>導管排程</b> — 計畫 (dry-run) / 驗證 / Keyin 到 WEBCVIS。自動偵測週一 EP → 洪晨惠當第二、陳則瑋門診 → 劉秉彥當第二、本週其他天已存在的病歷號自動跳過。</li>
+        <li><b>LINE 推播</b> — 讀 N-Q 四欄 → 預覽訊息 → 推到指定 group。</li>
+      </ol>
+
+      <h3>遇到問題</h3>
+      <ul>
+        <li>頂端紅燈 = 設定還沒填好 → 回設定頁。</li>
+        <li>Step 3、5 卡住 = EMR / WEBCVIS session 過期 → 重新登入再貼一次 URL。</li>
+        <li>OCR 病歷號錯 = Sheet 主資料 I 欄直接改後重跑 Step 3 (EMR)。EMR 會用 <code>#divUserSpec</code> 反查校正姓名/年齡/性別。</li>
+        <li>排程跑錯 / 想改某天住院 = 寫 V 欄 (改期) 為目標日期 YYYYMMDD，下次 keyin 會跳過該病人。</li>
+        <li>所有設定存在 <code>%LOCALAPPDATA%\admission-app\config.json</code>，更新 app 不會被覆蓋。</li>
+      </ul>
+    </section>
+  </div>
+</div>
 <script src="/static/app.js"></script>
 {% block scripts %}{% endblock %}
 </body>
