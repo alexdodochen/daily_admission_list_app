@@ -44,14 +44,35 @@ BUNDLED_DEFAULTS = BUNDLED_DIR / "defaults.json"
 BUNDLED_SA = BUNDLED_DIR / "service_account.json"
 
 # User-writable data dir.
-#  - Dev: app/data/ alongside source
-#  - Packaged: app/data/ alongside the .exe (NOT inside _MEIPASS, so it persists)
+#  - Dev (python -m app.run): app/data/ alongside source — easy to inspect.
+#  - Packaged (.exe): %LOCALAPPDATA%\admission-app\ (or ~/.config/admission-app/
+#    on POSIX). Survives every exe update because the new zip extracts to a
+#    different folder; user_data isn't inside the bundle.
+#
+# Migration: if an older .exe wrote user_data NEXT to the .exe, copy that
+# config across on first launch so users don't re-fill the settings page.
 if getattr(sys, "frozen", False):
-    # PyInstaller: put user data next to the .exe, not inside the bundle
-    DATA_DIR = Path(sys.executable).parent / "user_data"
+    if sys.platform == "win32":
+        _root = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        DATA_DIR = Path(_root) / "admission-app"
+    else:
+        _root = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+        DATA_DIR = Path(_root) / "admission-app"
+
+    _legacy_dir = Path(sys.executable).parent / "user_data"
+    _legacy_cfg = _legacy_dir / "config.json"
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    if _legacy_cfg.exists() and not (DATA_DIR / "config.json").exists():
+        # One-time migration from old layout
+        try:
+            (DATA_DIR / "config.json").write_text(
+                _legacy_cfg.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+        except Exception:
+            pass
 else:
     DATA_DIR = Path(__file__).parent / "data"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG_PATH = DATA_DIR / "config.json"
 
 

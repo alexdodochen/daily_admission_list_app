@@ -210,7 +210,7 @@ def _fake_read_range(col_a_values, main_header=None, order_header=None):
             return [[v] for v in col_a_values]
         if a1 == "A1:L1":
             return [main_header]
-        if a1 == "N1:W1":
+        if a1 == "N1:V1":
             return [order_header]
         return []
     return read_range

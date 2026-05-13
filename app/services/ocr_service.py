@@ -201,7 +201,7 @@ def write_to_sheet(date: str, patients: list[dict],
     and return the diff — caller must re-submit with allow_overwrite=True
     after the user confirms the add/remove list.
 
-    Note: this MVP only rewrites A-L. Sub-tables (below main data) and N-W
+    Note: this MVP only rewrites A-L. Sub-tables (below main data) and N-V
     ordering are NOT auto-rebuilt — caller should rerun Steps 2-4 after
     significant adds/removes. Cancelled patients still linger in sub-tables
     until cleaned up manually or in a later phase.

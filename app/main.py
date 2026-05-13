@@ -20,6 +20,7 @@ from .services import sheet_service, ocr_service, lottery_service
 from .services import emr_service, ordering_service, line_service
 from .services import updater, cathlab_service, format_check_service, finalize_service
 from .services import cv_solver, scheduling_service
+from .services import reschedule_service, upstream
 
 BASE = Path(__file__).parent
 app = FastAPI(title="心臟內科總醫師 — 本地版")
@@ -227,11 +228,13 @@ async def api_step2_write(date: str = Form(...), ordered_json: str = Form(...)):
 
 @app.post("/api/step3/run")
 async def api_step3_run(session_url: str = Form(...),
-                        patients_json: str = Form(...)):
+                        patients_json: str = Form(...),
+                        admission_date: str = Form("")):
     import json as _json
     try:
         patients = _json.loads(patients_json)
-        results = await emr_service.extract_patients(session_url, patients)
+        results = await emr_service.extract_patients(
+            session_url, patients, admission_date=admission_date)
         return {"ok": True, "results": results}
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -301,6 +304,92 @@ async def api_step5_keyin(date: str = Form(...), dry_run: str = Form("no")):
         raise HTTPException(500, str(e))
 
 
+# ------------------------------ Reschedule (V flag + full move) ------------------------------
+
+@app.post("/api/reschedule/v_flag_plan")
+async def api_reschedule_v_flag_plan(date: str = Form(...),
+                                     mapping_json: str = Form(...)):
+    """Preview the V-flag plan. `mapping_json` = {chart_no: target_date}."""
+    import json as _json
+    try:
+        mapping = _json.loads(mapping_json)
+        return {"ok": True, **reschedule_service.plan_v_flag(date, mapping)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/reschedule/v_flag_apply")
+async def api_reschedule_v_flag_apply(date: str = Form(...),
+                                      mapping_json: str = Form(...)):
+    import json as _json
+    try:
+        mapping = _json.loads(mapping_json)
+        return {"ok": True, **reschedule_service.apply_v_flag(date, mapping)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/reschedule/full_move_plan")
+async def api_reschedule_full_move_plan(date: str = Form(...),
+                                        mapping_json: str = Form(...)):
+    """Preview a full-move reschedule: V patches, main A-L rows to copy,
+    cathlab DEL list. User must confirm before applying side effects."""
+    import json as _json
+    try:
+        mapping = _json.loads(mapping_json)
+        return {"ok": True, **reschedule_service.plan_full_move(date, mapping)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/reschedule/cathlab_del")
+async def api_reschedule_cathlab_del(pairs_json: str = Form(...)):
+    """Run WEBCVIS DEL for [[chart, cath_date], ...] pairs."""
+    import json as _json
+    try:
+        pairs = _json.loads(pairs_json)
+        pair_list = [(c, d) for c, d in pairs]
+        return {"ok": True, **(await cathlab_service.del_charts(pair_list))}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ------------------------------ EMR main verify ------------------------------
+
+@app.post("/api/emr/verify_main")
+async def api_emr_verify_main(date: str = Form(...),
+                              session_url: str = Form(...),
+                              today: str = Form("")):
+    """
+    Cross-check main A-L姓名/性別/年齡 against EMR #divUserSpec for each
+    chart. Returns the diff + patches (caller decides whether to apply).
+    """
+    from datetime import date as _date
+    try:
+        ws = sheet_service.get_worksheet(date)
+        if ws is None:
+            raise ValueError(f"找不到工作表 {date}")
+        main = sheet_service.read_range(ws, "A2:L200") or []
+        rows: list[dict] = []
+        for i, r in enumerate(main):
+            rr = (r + [""] * 12)[:12]
+            chart = rr[8].strip()
+            if not chart:
+                continue
+            rows.append({
+                "row": i + 2,
+                "chart": chart,
+                "sheet_name": rr[5],
+                "sheet_gender": rr[6],
+                "sheet_age": rr[7],
+            })
+        today_str = today or _date.today().strftime("%Y%m%d")
+        result = await emr_service.verify_main_emr(session_url, rows, today_str)
+        return {"ok": True, **result}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 # ------------------------------ Step 6 LINE ------------------------------
 
 @app.get("/api/step6/preview")
@@ -354,15 +443,58 @@ async def api_finalize_check(date: str):
 
 @app.get("/api/update/check")
 async def api_update_check():
+    """Legacy single-source check (本 App 自身)."""
     return await updater.check()
 
 
 @app.post("/api/update/apply")
 async def api_update_apply(restart: str = Form("no")):
+    """Legacy single-source apply (本 App 自身 git pull)."""
     result = await updater.apply()
     if result.get("ok") and restart == "yes":
         updater.schedule_restart()
     return result
+
+
+# ------------------------------ Multi-source upstream sync ------------------------------
+
+@app.get("/api/update/check_all")
+async def api_update_check_all():
+    """檢查 3 個來源（本 App + 入院清單上游 + 排班/Key 班上游）的最新 commit。
+
+    每次 App 啟動 / 開首頁時前端會打這支，UI 依結果顯示徽章。"""
+    sources = await upstream.check_all()
+    return {"ok": True, "sources": sources}
+
+
+@app.post("/api/update/sync/{name}")
+async def api_update_sync(name: str, restart: str = Form("no")):
+    """同步指定 source。
+      - name='self'       → git pull 本 App（同 /api/update/apply）
+      - name='admission'  → clone/pull daily-admission-list-public + 跑 mirror
+      - name='schedule'   → clone/pull Key-Schedule-APP + 跑 mirror
+    """
+    if name not in upstream.SOURCES:
+        raise HTTPException(404, f"未知 source: {name}")
+    result = await upstream.sync_source(name)
+    if name == "self" and result.get("ok") and restart == "yes":
+        updater.schedule_restart()
+    return result
+
+
+@app.on_event("startup")
+async def _startup_check_upstreams():
+    """背景檢查 3 個來源；不 block 啟動，結果存 module 變數供前端讀。
+
+    這支只是 prefetch / cache warmup——實際 UI 顯示走 /api/update/check_all。
+    """
+    import asyncio as _asyncio
+    async def _bg():
+        try:
+            await upstream.check_all()
+        except Exception:
+            pass   # offline / rate limited → silent
+    _asyncio.create_task(_bg())
 
 
 # --------------------- Sheet explorer (read-only) ---------------------

@@ -3,7 +3,7 @@
 <section class="stepper">
   <div class="step active" data-step="1">① 匯入名單</div>
   <div class="step" data-step="2">② 抽籤排序</div>
-  <div class="step" data-step="3">③ EMR 摘要</div>
+  <div class="step" data-step="3">③ EMR 擷取</div>
   <div class="step" data-step="4">④ 入院序整合</div>
   <div class="step" data-step="5">⑤ 導管排程</div>
   <div class="step" data-step="6">⑥ LINE 推播</div>
@@ -66,15 +66,15 @@
 
 <!-- Step 3 -->
 <section class="card panel hidden" data-panel="3">
-  <h2>Step 3 — EMR 摘要（Playwright）</h2>
-  <p class="hint">請自己先在瀏覽器登入 EMR，然後把查詢頁網址貼過來。</p>
+  <h2>Step 3 — EMR 擷取（Playwright）</h2>
+  <p class="hint">請自己先在瀏覽器登入 EMR，然後把查詢頁網址貼過來。每位病人會擷取 raw SOAP + #divUserSpec，並自動偵測 F (術前診斷) / G (預計心導管)。摘要功能已停用 (5/10)。</p>
   <label>Session URL
     <input id="session-url" placeholder="http://.../Emrquery/...">
   </label>
   <p class="hint">病人清單預設取 Step 2 的 ordered 結果，你也可以貼 JSON。</p>
   <textarea id="emr-patients" rows="6" placeholder='[{"chart_no":"123","name":"王小明","doctor":"李文煌"}]'></textarea>
   <div class="actions">
-    <button id="run3-btn">開始擷取 + LLM 摘要</button>
+    <button id="run3-btn">開始擷取 + 自動偵測 F/G</button>
     <span id="s3-msg" class="msg"></span>
   </div>
   <div id="emr-results"></div>
@@ -83,9 +83,10 @@
 <!-- Step 4 -->
 <section class="card panel hidden" data-panel="4">
   <h2>Step 4 — F/G 檢查 + 整合入院序</h2>
+  <p class="hint">確認子表格 F/G 都填好（也可手動設定 E 欄入院序）後，整合寫入 N-V 9 欄：序號 / 主治 / 姓名 / 備註(住服) / 備註 / 病歷號 / 術前診斷 / 預計心導管 / 改期。Q (住服) 與 V (改期) 為手動標記，重跑時保留。</p>
   <div class="actions">
     <button id="load4-btn">讀取醫師子表格</button>
-    <button id="integrate4-btn" disabled>整合寫入 N-W</button>
+    <button id="integrate4-btn" disabled>整合寫入 N-V</button>
     <span id="s4-msg" class="msg"></span>
   </div>
   <div id="subtables-wrap"></div>

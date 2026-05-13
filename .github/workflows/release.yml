@@ -1,0 +1,123 @@
+name: Build + Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Need write access to create releases + upload assets
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-${{ runner.os }}-
+
+      - name: Install Python deps
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          # All three LLM SDKs must be installed so PyInstaller picks them up
+          # via the hidden-imports list in packaging.spec.
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: ~\AppData\Local\ms-playwright
+          key: playwright-${{ runner.os }}-chromium-1208
+
+      - name: Install Playwright Chromium
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: python -m playwright install chromium
+
+      - name: Compute version
+        id: ver
+        shell: pwsh
+        run: |
+          $sha = (git rev-parse HEAD).Trim()
+          $short = $sha.Substring(0, 7)
+          $date = (Get-Date -Format "yyyyMMdd-HHmm")
+          $tag = "v$date-$short"
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "short=$short" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Output "Tag: $tag"
+
+      - name: Stamp app/VERSION
+        shell: pwsh
+        run: |
+          $built = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+          $version = @{
+            tag = "${{ steps.ver.outputs.tag }}"
+            sha = "${{ steps.ver.outputs.sha }}"
+            short = "${{ steps.ver.outputs.short }}"
+            built_at = $built
+            built_by = "github-actions"
+          } | ConvertTo-Json
+          $version | Out-File -FilePath app/VERSION -Encoding utf8 -NoNewline
+          Get-Content app/VERSION
+
+      - name: Build with PyInstaller
+        run: python -m PyInstaller packaging.spec --noconfirm
+
+      - name: Verify build
+        shell: pwsh
+        run: |
+          $exe = "dist/每日入院名單/每日入院名單.exe"
+          if (-not (Test-Path $exe)) { throw "Build missing: $exe" }
+          $size = (Get-Item $exe).Length / 1MB
+          Write-Output ("Built {0} ({1:N1} MB)" -f $exe, $size)
+          # Folder size sanity check
+          $total = (Get-ChildItem dist/每日入院名單 -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB
+          Write-Output ("Total folder: {0:N0} MB" -f $total)
+
+      - name: Zip distribution
+        shell: pwsh
+        run: |
+          cd dist
+          # Compress-Archive handles Unicode paths fine on PowerShell 5.1+
+          Compress-Archive -Path "每日入院名單" -DestinationPath "每日入院名單.zip" -Force
+          $zipSize = (Get-Item "每日入院名單.zip").Length / 1MB
+          Write-Output ("Zip: {0:N1} MB" -f $zipSize)
+
+      - name: Upload artifact (debug only — kept for 7d)
+        uses: actions/upload-artifact@v4
+        with:
+          name: 每日入院名單-${{ steps.ver.outputs.tag }}
+          path: dist/每日入院名單.zip
+          retention-days: 7
+
+      - name: Create GitHub Release + upload zip
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          body: |
+            自動建置 — commit `${{ steps.ver.outputs.short }}`
+
+            **安裝**：解壓 `每日入院名單.zip` 到任何資料夾 → 雙擊 `每日入院名單.exe`。
+            **更新**：app 內按「更新」按鈕，會自動下載最新 release 並換檔重啟。
+
+            設定檔位置 `%LOCALAPPDATA%\admission-app\config.json` — 更新不會覆蓋。
+          generate_release_notes: true
+          files: dist/每日入院名單.zip

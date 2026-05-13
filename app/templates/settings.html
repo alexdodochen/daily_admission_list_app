@@ -33,6 +33,18 @@
       <label>Service account JSON 絕對路徑
         <input name="google_creds_path" value="{{ cfg.google_creds_path }}" placeholder="例：C:\Users\you\sigma-xxxxx.json">
       </label>
+      <details class="hint">
+        <summary>沒有 service account JSON？點這裡看怎麼申請（一次性，~5 分鐘）</summary>
+        <ol>
+          <li>到 <a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a> 登入。</li>
+          <li>左上選一個 project（沒有就「新增專案」，名稱隨便）。</li>
+          <li>左側選單 →「IAM 與管理」→「服務帳戶」→「建立服務帳戶」，名稱隨便（例：admission-bot），其他都跳過。</li>
+          <li>建好後點進那個服務帳戶 →「金鑰」分頁 →「新增金鑰 → 建立新的金鑰 → JSON」→ 下載。</li>
+          <li>到 <a href="https://console.cloud.google.com/apis/library/sheets.googleapis.com" target="_blank">啟用 Google Sheets API</a> 跟 <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank">Drive API</a>（同一個 project）。</li>
+          <li>把下載的 JSON 存到電腦任一位置，把絕對路徑貼到上面那欄。</li>
+        </ol>
+        <p>注意：Sheet 必須設成「知道連結的所有人 / 編輯者」，否則服務帳戶看不到你的 sheet。</p>
+      </details>
       {% endif %}
       {% if bundled.sheet_id %}
       <p class="hint">✓ 入院清單 Spreadsheet ID 已由系統內建（<code>{{ cfg.sheet_id }}</code>）。</p>

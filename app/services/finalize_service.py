@@ -67,7 +67,7 @@ def _check_subtable_fg(ws, subs: list[dict]) -> dict:
 
 def _check_ordering(ws, main_end: int) -> tuple[dict, list[list[str]]]:
     """N-row patient count must match main-data count. Returns (check, ordering_rows)."""
-    rows = sheet_service.read_range(ws, "N2:W200") or []
+    rows = sheet_service.read_range(ws, "N2:V200") or []
     while rows and not any((c or "").strip() for c in rows[-1]):
         rows.pop()
     order_count = len(rows)
@@ -81,7 +81,7 @@ def _check_ordering(ws, main_end: int) -> tuple[dict, list[list[str]]]:
         return ({"id": "ordering",
                  "label": "入院序人數與主資料一致",
                  "ok": False,
-                 "detail": f"N-W 未寫入（主資料 {main_count} 位）"}, rows)
+                 "detail": f"N-V 未寫入（主資料 {main_count} 位）"}, rows)
     if order_count != main_count:
         return ({"id": "ordering",
                  "label": "入院序人數與主資料一致",
@@ -93,7 +93,7 @@ def _check_ordering(ws, main_end: int) -> tuple[dict, list[list[str]]]:
 
 
 def _check_reschedule(ordering_rows: list[list[str]]) -> dict:
-    """V/W column reschedule entries must be empty or YYYYMMDD."""
+    """V column reschedule entries must be empty or YYYYMMDD."""
     try:
         idx = format_check_service.EXPECTED_ORDER_HEADER.index(RESCHEDULE_COL_NAME)
     except ValueError:

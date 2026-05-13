@@ -49,9 +49,24 @@ python -m app.run
 | ⑤ **導管排程** | `plan`（dry-run）/`verify`（登入 WEBCVIS 查漏）/`keyin`（Phase 1 ADD + Phase 2 UPT）；自動帶入時段、房間、第二主治醫師（葉立浩優先） |
 | ⑥ **LINE 推播** | 讀 N-Q 四欄 → 預覽 → 推到 LINE group（用自己的 Messaging API token） |
 
-## 4.5 自動更新
+## 4.5 自動更新（多源 upstream check）
 
-App 啟動時會打 GitHub API 比對版本；有新版右上會跳黃色徽章，按「更新」會 `git pull --ff-only` 再重啟。非 git checkout 需要自己 `git pull` 或重新 `git clone`。
+App 啟動時背景檢查 3 個 GitHub repo：
+
+| 來源 key | repo | 對應功能 |
+| --- | --- | --- |
+| `self`      | `alexdodochen/daily_admission_list_app`  | 本 App 自身 |
+| `admission` | `alexdodochen/daily-admission-list-public` | 每日入院清單功能源頭 |
+| `schedule`  | `alexdodochen/Key-Schedule-APP`          | 排班 + Key 班功能源頭 |
+
+任一來源有新 commit，topbar 右上會顯示「🔔 N 個來源有更新」。點開展開三列，逐源同步：
+
+- `self` → `git pull --ff-only` + 自動重啟（原行為，需要 git checkout 安裝）
+- `admission` / `schedule` → `git clone` 或 `git pull` 到 `external/<repo>/`，再依 `app/services/sync_manifest.py` 把白名單裡的「資料型」檔案（如 `cathlab_id_maps.json`、`schedule_readable.txt`）mirror 進 `app/data/static/`
+
+Python / HTML 程式碼變動**不會自動覆寫**——manifest 把它們標 `needs_port`，UI 會列出哪些檔案需要下次手動 port 進對應的 service。
+
+API: `GET /api/update/check_all`、`POST /api/update/sync/{name}`（name = `self|admission|schedule`）。同步狀態存在 `app/data/integration_state.json`。
 
 ## 5. 檔案結構
 

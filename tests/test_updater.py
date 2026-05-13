@@ -1,6 +1,6 @@
 """Tests for updater: version discovery + check() logic.
 
-No real git / GitHub calls — we monkeypatch _git and latest_remote.
+No real git / GitHub calls — we monkeypatch _git and latest_commit.
 """
 from __future__ import annotations
 
@@ -91,7 +91,7 @@ def test_check_update_available(monkeypatch):
     def fake_remote():
         return {"sha": "bbbbbbb2222", "short": "bbbbbbb",
                 "message": "feat: stuff", "date": "", "url": ""}
-    monkeypatch.setattr(updater, "latest_remote", fake_remote)
+    monkeypatch.setattr(updater, "latest_commit", fake_remote)
 
     result = asyncio.run(updater.check())
     assert result["available"] is True
@@ -104,7 +104,7 @@ def test_check_up_to_date(monkeypatch):
     monkeypatch.setattr(updater, "current_version", lambda: {
         "sha": same, "short": same[:7], "source": "git", "dirty": False,
     })
-    monkeypatch.setattr(updater, "latest_remote", lambda: {
+    monkeypatch.setattr(updater, "latest_commit", lambda: {
         "sha": same, "short": same[:7], "message": "", "date": "", "url": "",
     })
     result = asyncio.run(updater.check())
@@ -115,7 +115,7 @@ def test_check_unknown_local_treated_as_update(monkeypatch):
     monkeypatch.setattr(updater, "current_version", lambda: {
         "sha": "", "short": "", "source": "unknown", "dirty": False,
     })
-    monkeypatch.setattr(updater, "latest_remote", lambda: {
+    monkeypatch.setattr(updater, "latest_commit", lambda: {
         "sha": "remote123", "short": "remote1", "message": "", "date": "", "url": "",
     })
     result = asyncio.run(updater.check())
@@ -130,7 +130,7 @@ def test_check_network_error_returns_error(monkeypatch):
 
     def boom():
         raise RuntimeError("network down")
-    monkeypatch.setattr(updater, "latest_remote", boom)
+    monkeypatch.setattr(updater, "latest_commit", boom)
 
     result = asyncio.run(updater.check())
     assert result["available"] is False
@@ -155,3 +155,67 @@ def test_apply_refuses_dirty_tree(monkeypatch):
     result = asyncio.run(updater.apply())
     assert result["ok"] is False
     assert "未 commit" in result["message"] or "stash" in result["message"]
+
+
+# ---------------- Frozen-mode release flow (new) ----------------
+
+def test_check_frozen_compares_release_tag(monkeypatch):
+    """In frozen mode, check() should call latest_release and compare tag."""
+    monkeypatch.setattr(updater, "is_frozen", lambda: True)
+    monkeypatch.setattr(updater, "current_version", lambda: {
+        "sha": "abc", "short": "abc", "tag": "v20260101-aaaaaaa",
+        "source": "file", "dirty": False,
+    })
+    monkeypatch.setattr(updater, "latest_release", lambda: {
+        "tag": "v20260512-bbbbbbb", "sha": "bbbb",
+        "asset_url": "https://example.com/x.zip", "asset_size": 100,
+        "name": "v20260512-bbbbbbb", "message": "fix bug",
+        "date": "2026-05-12T00:00:00Z", "short": "bbbbbbb",
+        "url": "https://github.com/x/y/releases/tag/v20260512-bbbbbbb",
+    })
+    r = asyncio.run(updater.check())
+    assert r["available"] is True
+    assert r["frozen"] is True
+    assert r["remote"]["tag"] == "v20260512-bbbbbbb"
+
+
+def test_check_frozen_same_tag_no_update(monkeypatch):
+    monkeypatch.setattr(updater, "is_frozen", lambda: True)
+    monkeypatch.setattr(updater, "current_version", lambda: {
+        "sha": "x", "short": "x", "tag": "v20260512-bbbbbbb",
+        "source": "file", "dirty": False,
+    })
+    monkeypatch.setattr(updater, "latest_release", lambda: {
+        "tag": "v20260512-bbbbbbb", "asset_url": "https://example.com/x.zip",
+        "sha": "", "short": "", "name": "", "message": "", "date": "", "url": "",
+        "asset_size": 0,
+    })
+    r = asyncio.run(updater.check())
+    assert r["available"] is False
+
+
+def test_check_frozen_missing_asset_returns_error(monkeypatch):
+    """Release exists but no 每日入院名單.zip asset → can't update."""
+    monkeypatch.setattr(updater, "is_frozen", lambda: True)
+    monkeypatch.setattr(updater, "current_version", lambda: {
+        "sha": "x", "tag": "v1", "source": "file", "short": "x", "dirty": False,
+    })
+    monkeypatch.setattr(updater, "latest_release", lambda: {
+        "tag": "v2", "asset_url": "",
+        "sha": "", "short": "", "name": "", "message": "", "date": "", "url": "",
+        "asset_size": 0,
+    })
+    r = asyncio.run(updater.check())
+    assert r["available"] is False
+    assert "asset" in r.get("error", "").lower()
+
+
+def test_apply_frozen_no_asset(monkeypatch):
+    monkeypatch.setattr(updater, "is_frozen", lambda: True)
+    monkeypatch.setattr(updater, "latest_release", lambda: {
+        "tag": "v9", "asset_url": "", "sha": "", "short": "",
+        "name": "", "message": "", "date": "", "url": "", "asset_size": 0,
+    })
+    r = asyncio.run(updater.apply())
+    assert r["ok"] is False
+    assert "asset" in r["message"]
