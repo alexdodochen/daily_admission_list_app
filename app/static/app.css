@@ -104,6 +104,11 @@ button {
 }
 button:hover:not(:disabled) { background: var(--accent-2); }
 button:disabled { background: #cbd5e1; cursor: not-allowed; }
+button.primary { background: #16a34a; }
+button.primary:hover:not(:disabled) { background: #15803d; }
+
+.button-order-hint { background: #fef3c7; border-left: 3px solid #f59e0b;
+                     padding: 8px 12px; margin: 12px 0 8px; line-height: 1.55; }
 
 .test-output { background: #111; color: #d1fae5; padding: 12px; border-radius: 5px; white-space: pre-wrap; font-size: 12px; min-height: 20px; max-height: 300px; overflow: auto; }
 
@@ -115,6 +120,10 @@ button:disabled { background: #cbd5e1; cursor: not-allowed; }
 .panel.hidden { display: none; }
 .date-row { display: flex; gap: 16px; }
 .date-row label { flex: 1; }
+.date-input-group { display: flex; gap: 6px; align-items: stretch; }
+.date-input-group input[type="date"] { flex: 0 0 auto; min-width: 0; }
+.date-input-group input[type="text"],
+.date-input-group input#date-input { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 .drop-zone {
   border: 2px dashed var(--border); border-radius: 6px; padding: 26px;
@@ -189,6 +198,10 @@ textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 13px; b
 .checks-card h2 { margin: 0 0 4px; font-size: 16px; }
 .checks-row { display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
               margin-top: 6px; }
+.optional-tag { display: inline-block; vertical-align: middle; margin-left: 8px;
+                font-size: 11px; font-weight: 500; color: #64748b;
+                background: #f1f5f9; border: 1px solid #cbd5e1;
+                border-radius: 10px; padding: 2px 8px; }
 
 .doctor-block { border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin: 10px 0; }
 .doctor-block h3 { margin: 0 0 6px; color: var(--accent); }

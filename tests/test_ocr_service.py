@@ -220,5 +220,169 @@ def test_write_to_sheet_applies_when_confirmed(monkeypatch):
     )
     assert r["needs_confirm"] is False
     assert r["rows"] == 2
-    assert len(write_calls) == 1
-    assert write_calls[0][0] == "A2:L3"
+    # write_range called for A2:L body, plus the sub-table refresh on diff
+    assert any(c[0] == "A2:L3" for c in write_calls)
+
+
+# --------------------- sub-table auto-update ---------------------
+
+from app.services import format_check_service as _fcs  # noqa: E402
+
+
+def _build_grid(main_rows: list[list[str]],
+                subs: list[tuple[str, list[list[str]]]]) -> list[list[str]]:
+    """
+    Build an A1:H grid: header row + main rows (padded to 8 cols), 2 blank
+    rows, then each sub-table as title row + subheader + patient rows + 2
+    blank separator (except after the last).
+    """
+    grid: list[list[str]] = []
+    grid.append(["實際住院日","開刀日","科別","主治醫師","主診斷(ICD)","姓名","性別","年齡"])
+    for r in main_rows:
+        grid.append((r + [""] * 8)[:8])
+    grid.append([""] * 8)
+    grid.append([""] * 8)
+    for i, (doctor, patients) in enumerate(subs):
+        grid.append([f"{doctor}（{len(patients)}人）", "", "", "", "", "", "", ""])
+        grid.append(["姓名","病歷號","EMR","summary","入院序","術前診斷","預計心導管","註記"])
+        for p in patients:
+            grid.append((p + [""] * 8)[:8])
+        if i < len(subs) - 1:
+            grid.append([""] * 8)
+            grid.append([""] * 8)
+    return grid
+
+
+class _FakeWS:
+    id = 1
+
+
+def test_subtable_sync_removes_cancelled_patient(monkeypatch):
+    grid = _build_grid(
+        main_rows=[
+            ["2026-05-01","","CV","李文煌","CAD","甲","","",],
+            ["2026-05-01","","CV","柯呈諭","AS", "乙","","",],
+        ],
+        subs=[
+            ("李文煌", [["甲","111","","","","CAD","PCI",""]]),
+            ("柯呈諭", [["乙","222","","","","AS","TAVI",""]]),
+        ],
+    )
+    writes: list = []
+    clears: list = []
+    monkeypatch.setattr(ocr_service.sheet_service, "write_range",
+                        lambda ws, a1, body, raw=False: writes.append((a1, body)))
+    monkeypatch.setattr(ocr_service.sheet_service, "clear_range",
+                        lambda ws, a1: clears.append(a1))
+
+    diff = {
+        "added": [],
+        "removed": [{"chart_no": "111", "name": "甲", "doctor": "李文煌"}],
+        "doctor_changed": [],
+    }
+    result = ocr_service._apply_diff_to_subtables(
+        _FakeWS(), grid, diff, new_patients=[], fmt_svc=_fcs,
+    )
+    assert result["updated"] is True
+    assert result["removed"] == ["111"]
+    # Find the title row for 李文煌 in the written body — should now be 0 人
+    a1, body = writes[-1]
+    titles = [row[0] for row in body if "人）" in (row[0] or "")]
+    assert "李文煌（0人）" in titles
+    assert "柯呈諭（1人）" in titles
+
+
+def test_subtable_sync_appends_added_patient_to_its_doctor(monkeypatch):
+    grid = _build_grid(
+        main_rows=[["2026-05-01","","CV","李文煌","CAD","甲","","",]],
+        subs=[("李文煌", [["甲","111","","","","CAD","PCI",""]])],
+    )
+    writes: list = []
+    monkeypatch.setattr(ocr_service.sheet_service, "write_range",
+                        lambda ws, a1, body, raw=False: writes.append((a1, body)))
+    monkeypatch.setattr(ocr_service.sheet_service, "clear_range",
+                        lambda ws, a1: None)
+
+    diff = {
+        "added": [{"chart_no": "333", "name": "丙", "doctor": "李文煌"}],
+        "removed": [],
+        "doctor_changed": [],
+    }
+    new_patients = [_new("111", "甲", "李文煌"), _new("333", "丙", "李文煌")]
+    result = ocr_service._apply_diff_to_subtables(
+        _FakeWS(), grid, diff, new_patients=new_patients, fmt_svc=_fcs,
+    )
+    assert result["updated"] is True
+    assert len(result["added"]) == 1
+    a1, body = writes[-1]
+    titles = [row[0] for row in body if "人）" in (row[0] or "")]
+    assert "李文煌（2人）" in titles
+    # The new patient row appears in body
+    new_rows = [row for row in body if row[1] == "333"]
+    assert len(new_rows) == 1
+    assert new_rows[0][0] == "丙"
+
+
+def test_subtable_sync_moves_doctor_changed_patient(monkeypatch):
+    grid = _build_grid(
+        main_rows=[
+            ["2026-05-01","","CV","李文煌","CAD","甲","","",],
+            ["2026-05-01","","CV","劉秉彥","AS", "乙","","",],
+        ],
+        subs=[
+            ("李文煌", [["甲","111","","","2","CAD","PCI",""]]),
+            ("劉秉彥", [["乙","222","","","","AS","TAVI",""]]),
+        ],
+    )
+    writes: list = []
+    monkeypatch.setattr(ocr_service.sheet_service, "write_range",
+                        lambda ws, a1, body, raw=False: writes.append((a1, body)))
+    monkeypatch.setattr(ocr_service.sheet_service, "clear_range",
+                        lambda ws, a1: None)
+
+    diff = {
+        "added": [],
+        "removed": [],
+        "doctor_changed": [
+            {"chart_no": "111", "name": "甲", "old": "李文煌", "new": "劉秉彥"},
+        ],
+    }
+    result = ocr_service._apply_diff_to_subtables(
+        _FakeWS(), grid, diff, new_patients=[_new("111", "甲", "劉秉彥")],
+        fmt_svc=_fcs,
+    )
+    assert result["updated"] is True
+    assert len(result["moved"]) == 1
+    a1, body = writes[-1]
+    titles = [row[0] for row in body if "人）" in (row[0] or "")]
+    assert "李文煌（0人）" in titles
+    assert "劉秉彥（2人）" in titles
+    # E (入院序) should be cleared on move so it doesn't pollute new doctor
+    moved_rows = [row for row in body if row[1] == "111"]
+    assert len(moved_rows) == 1
+    assert moved_rows[0][4] == ""   # was "2" before, cleared on move
+
+
+def test_subtable_sync_reports_unattached_added_for_unknown_doctor(monkeypatch):
+    grid = _build_grid(
+        main_rows=[["2026-05-01","","CV","李文煌","CAD","甲","","",]],
+        subs=[("李文煌", [["甲","111","","","","CAD","PCI",""]])],
+    )
+    writes: list = []
+    monkeypatch.setattr(ocr_service.sheet_service, "write_range",
+                        lambda ws, a1, body, raw=False: writes.append((a1, body)))
+    monkeypatch.setattr(ocr_service.sheet_service, "clear_range",
+                        lambda ws, a1: None)
+
+    diff = {
+        "added": [{"chart_no": "999", "name": "戊", "doctor": "新醫師"}],
+        "removed": [],
+        "doctor_changed": [],
+    }
+    result = ocr_service._apply_diff_to_subtables(
+        _FakeWS(), grid, diff,
+        new_patients=[_new("999", "戊", "新醫師")], fmt_svc=_fcs,
+    )
+    assert result["added"] == []
+    assert len(result["unattached_added"]) == 1
+    assert result["unattached_added"][0]["chart_no"] == "999"

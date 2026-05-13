@@ -201,28 +201,193 @@ def write_to_sheet(date: str, patients: list[dict],
     and return the diff — caller must re-submit with allow_overwrite=True
     after the user confirms the add/remove list.
 
-    Note: this MVP only rewrites A-L. Sub-tables (below main data) and N-V
-    ordering are NOT auto-rebuilt — caller should rerun Steps 2-4 after
-    significant adds/removes. Cancelled patients still linger in sub-tables
-    until cleaned up manually or in a later phase.
+    On overwrite, also auto-updates existing per-doctor sub-tables to reflect
+    added / removed / doctor-changed patients (preserves F/G/E/H for kept
+    patients; new patients start blank — run Step 3 EMR to fill F/G).
+    N-V 入院序 is still NOT auto-rebuilt — rerun Step 2 + Step 4 for that.
     """
+    from . import format_check_service  # local import to avoid cycle
     ws = sheet_service.ensure_date_sheet(date)
     if not patients:
         return {"rows": 0, "sheet": date}
 
-    if not allow_overwrite:
-        existing = sheet_service.read_range(ws, "A2:L200")
-        while existing and not any((c or "").strip() for c in existing[-1]):
-            existing.pop()
-        if existing:
-            diff = diff_main_data(existing, patients)
-            diff["sheet_has_data"] = True
-            diff["needs_confirm"]  = True
-            diff["sheet"]          = date
-            return diff
+    existing = sheet_service.read_range(ws, "A2:L200")
+    while existing and not any((c or "").strip() for c in existing[-1]):
+        existing.pop()
+
+    if existing and not allow_overwrite:
+        diff = diff_main_data(existing, patients)
+        diff["sheet_has_data"] = True
+        diff["needs_confirm"]  = True
+        diff["sheet"]          = date
+        return diff
+
+    # Snapshot sub-table state BEFORE overwriting A-L (the sub-tables live
+    # below main_end and aren't touched by the A:L write, but we read once
+    # for consistency).
+    pre_grid = sheet_service.read_range(ws, "A1:H500")
+    diff = diff_main_data(existing, patients) if existing else None
 
     body = _patients_to_ab_rows(patients)
     end_row = 1 + len(body)
     sheet_service.write_range(ws, f"A2:L{end_row}", body, raw=False)
-    return {"rows": len(body), "sheet": date,
-            "range": f"A2:L{end_row}", "needs_confirm": False}
+    # Clear residual A-L rows if new patient list is shorter
+    old_main_end = 1 + len(existing)
+    if old_main_end > end_row:
+        sheet_service.clear_range(ws, f"A{end_row + 1}:L{old_main_end}")
+
+    sub_result: dict = {"updated": False}
+    if diff and (diff["added"] or diff["removed"] or diff["doctor_changed"]):
+        sub_result = _apply_diff_to_subtables(
+            ws, pre_grid, diff, patients, format_check_service,
+        )
+
+    return {
+        "rows": len(body), "sheet": date,
+        "range": f"A2:L{end_row}", "needs_confirm": False,
+        "subtable_update": sub_result,
+    }
+
+
+# ----------------------- sub-table sync (Phase 9) -----------------------
+
+def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc) -> dict:
+    """
+    Re-render the sub-table area (below main data) so that:
+      - patients in `diff.removed` are dropped from whichever sub-table
+        currently holds them
+      - patients in `diff.doctor_changed` are moved from old → new doctor's
+        sub-table (if new doctor has an existing sub-table)
+      - patients in `diff.added` are appended to their A-L doctor's
+        sub-table (if that doctor has an existing sub-table)
+
+    Preserves existing C/D/E/F/G/H cells for kept patients. New rows start
+    blank apart from name + chart_no. If an add/change targets a doctor
+    without an existing sub-table, the patient is reported in
+    `unattached_added` / `unattached_changed` and left for the user.
+    """
+    col_a = [(row[0] if row else "") for row in grid]
+    structure = fmt_svc.parse_structure(col_a)
+    real_subs = [s for s in structure["subs"]
+                 if s.get("doctor") and not s.get("orphan")]
+    if not real_subs:
+        return {"updated": False, "reason": "no existing sub-tables"}
+
+    SUB_HEADER = ["姓名", "病歷號", "EMR", "summary", "入院序",
+                  "術前診斷", "預計心導管", "註記"]
+
+    # Build current per-doctor patient lists (preserve original order on sheet)
+    subs_by_doctor: dict[str, list[list[str]]] = {}
+    doctor_order: list[str] = []
+    for s in real_subs:
+        doc = s["doctor"]
+        doctor_order.append(doc)
+        rows = []
+        if s["first_patient_row"] and s["last_patient_row"]:
+            for r in range(s["first_patient_row"], s["last_patient_row"] + 1):
+                raw = grid[r - 1] if r - 1 < len(grid) else []
+                rows.append(((raw or []) + [""] * 8)[:8])
+        subs_by_doctor[doc] = rows
+
+    # chart_no → (doctor, row_data) reverse lookup
+    chart_loc: dict[str, str] = {}
+    for doc, rows in subs_by_doctor.items():
+        for r in rows:
+            ch = (r[1] or "").strip()
+            if ch:
+                chart_loc[ch] = doc
+
+    new_by_chart: dict[str, dict] = {}
+    for p in new_patients:
+        ch = (p.get("chart_no") or "").strip()
+        if ch:
+            new_by_chart[ch] = p
+
+    removed_done: list[str] = []
+    moved_done: list[dict] = []
+    unattached_changed: list[dict] = []
+    added_done: list[dict] = []
+    unattached_added: list[dict] = []
+
+    # 1) Removed: drop from wherever they are
+    for r in diff.get("removed", []):
+        ch = r["chart_no"]
+        doc = chart_loc.get(ch)
+        if not doc:
+            continue
+        subs_by_doctor[doc] = [row for row in subs_by_doctor[doc]
+                               if (row[1] or "").strip() != ch]
+        chart_loc.pop(ch, None)
+        removed_done.append(ch)
+
+    # 2) Doctor changed: move row between sub-tables (clear E on move so the
+    # new doctor's sub-table E-sort isn't polluted by an unrelated number)
+    for ch_info in diff.get("doctor_changed", []):
+        ch = ch_info["chart_no"]
+        new_doc = ch_info["new"]
+        old_doc = chart_loc.get(ch) or ch_info.get("old", "")
+        moved_row = None
+        if old_doc in subs_by_doctor:
+            kept = []
+            for row in subs_by_doctor[old_doc]:
+                if (row[1] or "").strip() == ch:
+                    moved_row = list(row)
+                else:
+                    kept.append(row)
+            subs_by_doctor[old_doc] = kept
+        if moved_row is None:
+            moved_row = [ch_info.get("name", ""), ch, "", "", "", "", "", ""]
+        # Reset E (manual order) for the new sub-table
+        moved_row[4] = ""
+        if new_doc in subs_by_doctor:
+            subs_by_doctor[new_doc].append(moved_row)
+            chart_loc[ch] = new_doc
+            moved_done.append({"chart_no": ch, "old": old_doc, "new": new_doc})
+        else:
+            unattached_changed.append({"chart_no": ch, "name": ch_info.get("name", ""),
+                                       "old": old_doc, "new": new_doc})
+
+    # 3) Added: append to their A-L doctor's sub-table
+    for a in diff.get("added", []):
+        ch = a["chart_no"]
+        doc = a.get("doctor") or (new_by_chart.get(ch) or {}).get("doctor", "")
+        name = a.get("name") or (new_by_chart.get(ch) or {}).get("name", "")
+        if doc in subs_by_doctor:
+            subs_by_doctor[doc].append([name, ch, "", "", "", "", "", ""])
+            chart_loc[ch] = doc
+            added_done.append({"chart_no": ch, "name": name, "doctor": doc})
+        else:
+            unattached_added.append({"chart_no": ch, "name": name, "doctor": doc})
+
+    # Build the rendered block and write it back
+    start_row = real_subs[0]["title_row"]
+    block: list[list[str]] = []
+    for i, doc in enumerate(doctor_order):
+        rows = subs_by_doctor.get(doc, [])
+        block.append([f"{doc}（{len(rows)}人）", "", "", "", "", "", "", ""])
+        block.append(SUB_HEADER)
+        for row in rows:
+            block.append(row)
+        if i < len(doctor_order) - 1:
+            block.append([""] * 8)
+            block.append([""] * 8)
+
+    new_end = start_row + len(block) - 1
+    old_last = real_subs[-1]
+    old_end = (old_last["last_patient_row"]
+               or old_last["subheader_row"]
+               or old_last["title_row"])
+    # Clear residual rows from the old sub-table area before writing
+    if old_end > new_end:
+        sheet_service.clear_range(ws, f"A{new_end + 1}:H{old_end}")
+    sheet_service.write_range(ws, f"A{start_row}:H{new_end}", block, raw=False)
+
+    return {
+        "updated": True,
+        "range": f"A{start_row}:H{new_end}",
+        "removed": removed_done,
+        "moved":   moved_done,
+        "added":   added_done,
+        "unattached_added":   unattached_added,
+        "unattached_changed": unattached_changed,
+    }

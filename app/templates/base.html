@@ -15,6 +15,12 @@
     <a href="/admission">入院清單</a>
     <a href="/settings">設定</a>
     <a href="#" id="viewer-link">📋 查閱</a>
+    {% if cfg.sheet_id %}
+    <a href="https://docs.google.com/spreadsheets/d/{{ cfg.sheet_id }}/edit" target="_blank" rel="noopener" title="在新分頁開啟入院清單 Google Sheet">🔗 入院 Sheet</a>
+    {% endif %}
+    {% if cfg.schedule_sheet_id %}
+    <a href="https://docs.google.com/spreadsheets/d/{{ cfg.schedule_sheet_id }}/edit" target="_blank" rel="noopener" title="在新分頁開啟排班 Google Sheet">🔗 排班 Sheet</a>
+    {% endif %}
     <a href="#" id="help-link">說明</a>
   </nav>
   <div id="upstream-bar" class="upstream-bar">

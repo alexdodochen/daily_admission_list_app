@@ -12,9 +12,12 @@
 <section class="card">
   <div class="date-row">
     <label>日期（Sheet 分頁名稱）
-      <input id="date-input" placeholder="例：20260420">
+      <span class="date-input-group">
+        <input type="date" id="date-picker">
+        <input id="date-input" placeholder="例：20260420" inputmode="numeric" pattern="\d{8}" maxlength="8">
+      </span>
     </label>
-    <label>星期（Step 2 抽籤表用）
+    <label>星期（隔天 = 開刀日，抽籤表用）
       <select id="weekday">
         <option value="">—</option>
         <option>週一</option><option>週二</option><option>週三</option>
@@ -25,8 +28,8 @@
 </section>
 
 <section class="card checks-card">
-  <h2>資料檢查</h2>
-  <p class="hint">用上方日期分頁。格式檢查找表頭 / 子表格 / 病歷號文字格式問題，可一鍵修正；定案檢查確認 D/F/I + 子表格 F/G + N 列數，達成才能進 Step 5/6。</p>
+  <h2>資料檢查 <span class="optional-tag">選用</span></h2>
+  <p class="hint"><strong>需要整理 Google Sheet 格式問題時再使用即可，平常可略過。</strong>用上方日期分頁。格式檢查找表頭 / 子表格 / 病歷號文字格式問題，可一鍵修正；定案檢查確認 D/F/I + 子表格 F/G + N 列數，達成才能進 Step 5/6。</p>
   <div class="checks-row">
     <div class="format-check-wrap">
       <button id="fmt-check-btn" type="button">檢查格式</button>

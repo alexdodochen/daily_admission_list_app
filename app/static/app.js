@@ -320,6 +320,7 @@ if (document.querySelector('.stepper')) {
   const m = String(tp.getMonth() + 1).padStart(2, '0');
   const d = String(tp.getDate()).padStart(2, '0');
   $('#date-input').value = `${y}${m}${d}`;
+  setupDateInputs();
 
   setupStep1();
   setupStep2();
@@ -330,6 +331,56 @@ if (document.querySelector('.stepper')) {
   setupFormatCheck();
   setupFinalizeCheck();
 }
+
+// ---------- Date picker + auto weekday ----------
+// Two synced inputs: a native <input type="date"> for the calendar
+// picker and the existing text input for YYYYMMDD manual entry.
+// Both drive the weekday <select>, which shows the *next day's*
+// weekday (= 開刀日, the day the lottery table is keyed by).
+function setupDateInputs() {
+  const text   = $('#date-input');
+  const picker = $('#date-picker');
+  const week   = $('#weekday');
+  if (!text || !picker || !week) return;
+
+  const WEEK_LABELS = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
+
+  const ymdToIso  = (s) => /^\d{8}$/.test(s) ? `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}` : '';
+  const isoToYmd  = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) ? s.replace(/-/g, '') : '';
+
+  function nextDayWeekdayLabel(ymd) {
+    if (!/^\d{8}$/.test(ymd)) return '';
+    const y = Number(ymd.slice(0, 4));
+    const m = Number(ymd.slice(4, 6)) - 1;
+    const d = Number(ymd.slice(6, 8));
+    const dt = new Date(Date.UTC(y, m, d + 1));
+    if (isNaN(dt.getTime())) return '';
+    return WEEK_LABELS[dt.getUTCDay()];
+  }
+
+  function syncFromText() {
+    const ymd = text.value.trim();
+    picker.value = ymdToIso(ymd);
+    const label = nextDayWeekdayLabel(ymd);
+    // Only set weekday if next day is Mon-Fri (dropdown has no Sat/Sun).
+    week.value = ['週一','週二','週三','週四','週五'].includes(label) ? label : '';
+  }
+
+  function syncFromPicker() {
+    const ymd = isoToYmd(picker.value);
+    if (ymd) text.value = ymd;
+    syncFromText();
+  }
+
+  text.addEventListener('input',  syncFromText);
+  text.addEventListener('change', syncFromText);
+  picker.addEventListener('change', syncFromPicker);
+
+  // Initial: text input already populated to today's YYYYMMDD above;
+  // mirror into picker + autofill weekday.
+  syncFromText();
+}
+
 
 // ---------- Format check ----------
 const FMT_LABELS = {
@@ -554,7 +605,7 @@ function showStep1DiffAndConfirm(diff) {
       ${rowHtml('added',   '新增',   diff.added)}
       ${rowHtml('removed', '取消',   diff.removed)}
       ${rowHtml('changed', '換醫師', diff.doctor_changed)}
-      <p class="hint">確認後：A-L 主資料會覆蓋為新清單。子表格與 N-V 入院序「不會自動更新」—— 新增/取消病人需手動在 Step 2/3/4 重跑。</p>
+      <p class="hint">確認後：A-L 主資料覆蓋為新清單；**子表格自動跟著動**（取消的列刪除、新增的病人掛到對應主治、換醫師的列搬到新醫師），新列 F/G 留白待 Step 3 EMR 填。<strong>N-V 入院序仍不會自動更新</strong> — 動到病人數量請手動重跑 Step 2 + Step 4。</p>
       <button id="diff-confirm-btn" class="primary">確認覆蓋</button>
       <button id="diff-cancel-btn">取消</button>
     </div>

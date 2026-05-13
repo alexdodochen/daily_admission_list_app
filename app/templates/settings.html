@@ -105,9 +105,13 @@
       </label>
     </fieldset>
 
+    <p class="hint button-order-hint">
+      <strong>順序很重要：</strong>先按 <strong>① 儲存</strong> 把上面填的值寫進設定檔，再按 <strong>② 測試連線</strong>。
+      <br>（測試連線跑的是已儲存的設定，不是畫面上正在編輯的值；沒先存就測，等於在測舊設定。）
+    </p>
     <div class="actions">
-      <button type="submit">儲存</button>
-      <button type="button" id="test-btn">測試連線</button>
+      <button type="submit" class="primary">① 儲存</button>
+      <button type="button" id="test-btn">② 測試連線</button>
       <span id="save-msg" class="msg"></span>
     </div>
   </form>

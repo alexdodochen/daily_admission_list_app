@@ -70,7 +70,7 @@ The 6 cumulative stat keys read from `值班總數統計` (平日/週五/週六/
 
 Each step is a `/api/step{N}/...` endpoint group in `main.py` delegating to one service module under `app/services/`. The Step → service map is the entire backend:
 
-1. **OCR** (`ocr_service.py`) — LLM vision parses admission-list screenshot → A-L preview → diff-update write (never overwrite filled rows blindly; preserves EMR / F / G already populated).
+1. **OCR** (`ocr_service.py`) — LLM vision parses admission-list screenshot → A-L preview → diff-update write (never overwrite filled rows blindly; preserves EMR / F / G already populated). On overwrite, `_apply_diff_to_subtables` also reconciles existing per-doctor sub-tables: removed rows dropped, doctor-changed rows moved (E cleared on move), added rows appended to their A-L doctor's sub-table. Patients whose doctor has no existing sub-table are reported as `unattached_added` / `unattached_changed`, never silently dropped. N-V 入院序 is NOT auto-rebuilt — user reruns Step 2 + Step 4.
 2. **Lottery** (`lottery_service.py`) — read 主治醫師抽籤表, draw N tickets, round-robin into N-S.
 3. **EMR** (`emr_service.py`) — Playwright drives the user's already-logged-in browser session (user pastes session URL); LLM summarises SOAP HTML into 4 sections. Hospital-specific selectors in `fetch_raw_html()` — default is NCKUH pattern.
 4. **Ordering** (`ordering_service.py`) — read per-doctor subtables → integrate back into N-W on main sheet. `POST /api/step4/cell` is the inline-edit endpoint that backs F/G contenteditable cells.
@@ -81,6 +81,10 @@ Two cross-cutting services gate Steps 5–6:
 
 - `format_check_service.py` — read-back verification + auto-fix for layout drift (headers, subtable counts, ≥2-row gap, 病歷號 TEXT format).
 - `finalize_service.py` — read-only 定案 readiness checklist (D/F/I non-empty, subtable F/G complete, N-row count matches main, 改期 column shape).
+
+### Read-only sheet viewer (global)
+
+`GET /api/sheet/read?date=YYYYMMDD` reads the A:W block of a date tab and returns it split into three sections: main A-L, ordering N-W, and per-doctor sub-tables (uses `format_check_service.parse_structure` to slice). The `📋 查閱` topbar link on every page opens a modal that lists every YYYYMMDD tab (via `/api/sheet/list`) and renders the selected one read-only — no need to leave the app to inspect data. Topbar also has `🔗 入院 Sheet` / `🔗 排班 Sheet` links that open the live Google Sheet in a new tab (only render if respective `cfg.*_sheet_id` is set).
 
 ### Config & bundling
 
@@ -121,15 +125,23 @@ Headers are the source of truth — `format_check_service.EXPECTED_MAIN_HEADER` 
 
 ## Status & pending direction
 
-**Done (2026-05-11):** 3-card home delivered. Card 1 (排班) ported from `CV-Schedulling-APP` — `cv_solver.py` + `scheduling_service.py` (renamed gsheet_io) + `schedule_gen.html` + 4 routes under `/api/sched/`. Card 3 (入院清單) moved to `/admission` route, otherwise unchanged. Card 2 (Key 班) is a disabled placeholder card.
+**Done (2026-05-13):** 3-card home + Phase A/B/C admission rule backport + Phase 8 packaged distribution + Phase 9 UI usability pass merged into `main` via `3d03c54` (combining two diverged lines: local `e5fb122` 3-card port and origin's `d784152..fd9b465` rule sync + .exe + self-update).
+
+Phase 9 highlights (`92c8458`):
+- Global `📋 查閱` sheet viewer (`/api/sheet/read`) + 🔗 Sheet topbar links
+- Native date picker + auto-weekday (= admission + 1, see [[feedback-weekday-field-is-op-day]] in memory)
+- 資料檢查 standalone card, marked `[選用]`
+- Sub-table auto-update on Step 1 OCR overwrite (`ocr_service._apply_diff_to_subtables`)
+- /settings button order hint + green primary 儲存 button
 
 **Still pending:**
 
 - **Card 2 (Key 班)** — port `keyin_routes.py + keyin_scheduler.py + keyin_excel_parser.py + keyin_index.html` from `CV-Schedulling-APP` once they exist there (CV-Schedulling-APP's own home calls it "即將推出").
-- **Admission rule sync** — existing `app/services/*.py` was last synced 2026-04-19. Known post-sync rule deltas not yet merged in: cathlab third doctor (recommendationDoctor), Mon EP forces 洪晨惠 as 2nd, 25 房 ROOM_CODES, EMR age from DOB (not screenshot), WEBCVIS DEL via chk-checkbox, week-scan Mon–Fri before any ADD, `_normalize_diag` angina→CAD, reschedule full-move (V mark + main copy + subtable rebuild), 詹世鴻 Friday → non-schedule, 陳則瑋+劉秉彥 OPD → attendingdoctor2=劉秉彥, 張獻元 Wed → same-day PM C2.
+- **N-V 入院序 auto-rebuild** on OCR diff — sub-tables now auto-sync, but ordering does not. User must rerun Step 2 + Step 4 after material add/remove.
+- **Auto-create sub-table for newly-appeared doctor** — patients added with a doctor that has no existing sub-table land in `unattached_added` (reported, not silently dropped). Layout/gap guessing is fragile, so left manual.
 - **Dropped:** the 5/4 LLM-EMR-summary feature — D column stays a header placeholder, not autofilled.
 - **Auth:** intentionally stripped from the 排班 port (single-user local app). Don't reintroduce login/users/audit — those belong to the server-deployed `CV-Schedulling-APP`, not this local-only app.
-- **Missing static data:** `app/data/` is `.gitignored` and an empty clone has no `app/data/static/cathlab_id_maps.json` / `doctor_codes.json` / `cathlab_schedule.json`. Card 3 Step 5 will 500 until these are copied in from the private workflow repo. 26 cathlab tests fail for the same reason — pre-existing, not a regression.
+- **Missing static data:** `app/data/` is `.gitignored` and an empty clone has no `app/data/static/cathlab_id_maps.json` / `doctor_codes.json` / `cathlab_schedule.json`. Card 3 Step 5 will 500 until these are copied in from the private workflow repo. ~35 cathlab tests fail for the same reason — pre-existing, not a regression.
 
 ## Test conventions
 
