@@ -17,6 +17,111 @@
 })();
 
 
+// ---------- Sheet viewer modal (runs on every page) ----------
+(function () {
+  const link    = document.getElementById('viewer-link');
+  const modal   = document.getElementById('viewer-modal');
+  const close   = document.getElementById('viewer-close');
+  const select  = document.getElementById('viewer-date-select');
+  const refresh = document.getElementById('viewer-refresh');
+  const msg     = document.getElementById('viewer-msg');
+  const body    = document.getElementById('viewer-body');
+  if (!link || !modal) return;
+
+  const MAIN_HEADER  = ['實際住院日','開刀日','科別','主治醫師','主診斷(ICD)','姓名','性別','年齡','病歷號碼','病床號','入院提示','住急'];
+  const ORDER_HEADER = ['序號','主治醫師','病人姓名','備註(住服)','備註','病歷號','術前診斷','預計心導管','每日續等清單','改期'];
+  const SUB_HEADER   = ['日期','科別','主治','姓名','病歷號','術前診斷','預計心導管'];
+
+  const esc = (s) => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  function setMsg(text, kind) {
+    msg.textContent = text;
+    msg.className = 'msg ' + (kind || '');
+  }
+
+  function isYmd(s) { return /^\d{8}$/.test(String(s || '')); }
+
+  function todayYmd() {
+    const now = new Date();
+    const tp = new Date(now.getTime() + (now.getTimezoneOffset() + 480) * 60000);
+    return `${tp.getFullYear()}${String(tp.getMonth()+1).padStart(2,'0')}${String(tp.getDate()).padStart(2,'0')}`;
+  }
+
+  function renderTable(headers, rows, startRow) {
+    if (!rows.length) return '<p class="viewer-empty">（無資料）</p>';
+    const thead = '<tr><th></th>' + headers.map(h => `<th>${esc(h)}</th>`).join('') + '</tr>';
+    const tbody = rows.map((r, i) => {
+      const cells = headers.map((_, c) => `<td>${esc(r[c] || '')}</td>`).join('');
+      return `<tr><td class="viewer-rowidx">${startRow + i}</td>${cells}</tr>`;
+    }).join('');
+    return `<table><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+  }
+
+  function renderSub(sub) {
+    const mismatchTag = (sub.declared != null && sub.actual_count !== sub.declared)
+      ? ` <span class="viewer-count-mismatch">（標題 ${sub.declared} ≠ 實際 ${sub.actual_count}）</span>`
+      : '';
+    const title = `<h4>${esc(sub.doctor || '(未命名)')}（${sub.declared ?? '?'} 人）${mismatchTag}</h4>`;
+    return `<div class="viewer-sub">${title}${renderTable(SUB_HEADER, sub.rows || [], sub.title_row || 1)}</div>`;
+  }
+
+  function render(data) {
+    const mainRows  = (data.main  || []).slice(1);   // strip header row
+    const orderRows = (data.ordering || []).slice(1);
+    const main  = `<div class="viewer-section"><h3>主資料 A-L（${mainRows.length} 列）</h3>${renderTable(MAIN_HEADER, mainRows, 2)}</div>`;
+    const order = `<div class="viewer-section"><h3>入院序 N-W（${orderRows.length} 列）</h3>${renderTable(ORDER_HEADER, orderRows, 2)}</div>`;
+    const subsHtml = (data.subs && data.subs.length)
+      ? `<div class="viewer-section"><h3>子表格（${data.subs.length} 位醫師）</h3>${data.subs.map(renderSub).join('')}</div>`
+      : '<div class="viewer-section"><h3>子表格</h3><p class="viewer-empty">（無子表格）</p></div>';
+    body.innerHTML = main + order + subsHtml;
+  }
+
+  async function loadSheets() {
+    setMsg('讀取分頁清單…', 'ok');
+    try {
+      const r = await api('/api/sheet/list');
+      const dates = (r.sheets || []).filter(isYmd).sort((a, b) => b.localeCompare(a));
+      const today = todayYmd();
+      const opts = ['<option value="">— 選擇日期 —</option>']
+        .concat(dates.map(d => `<option value="${d}"${d === today ? ' selected' : ''}>${d}</option>`));
+      select.innerHTML = opts.join('');
+      setMsg(`共 ${dates.length} 個日期分頁`, 'ok');
+      if (dates.includes(today)) loadDate(today);
+    } catch (err) {
+      setMsg('✗ ' + err.message, 'err');
+    }
+  }
+
+  async function loadDate(date) {
+    if (!date) { body.innerHTML = '<p class="hint">選一個日期分頁開始查閱。</p>'; return; }
+    setMsg('讀取 ' + date + ' …', 'ok');
+    body.innerHTML = '<p class="hint">載入中…</p>';
+    try {
+      const r = await api(`/api/sheet/read?date=${encodeURIComponent(date)}`);
+      if (r.error) { setMsg('✗ ' + r.error, 'err'); body.innerHTML = `<p class="viewer-empty">${esc(r.error)}</p>`; return; }
+      render(r);
+      setMsg('✓ ' + date, 'ok');
+    } catch (err) {
+      setMsg('✗ ' + err.message, 'err');
+      body.innerHTML = '<p class="viewer-empty">讀取失敗。</p>';
+    }
+  }
+
+  link.addEventListener('click', (e) => {
+    e.preventDefault();
+    modal.hidden = false;
+    if (!select.options.length || select.options[0].value === '') loadSheets();
+  });
+  if (close) close.addEventListener('click', () => { modal.hidden = true; });
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.hidden = true; });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !modal.hidden) modal.hidden = true;
+  });
+  select.addEventListener('change', () => loadDate(select.value));
+  refresh.addEventListener('click', () => loadSheets());
+})();
+
+
 // ---------- Multi-source upstream check (runs on every page) ----------
 // 3 個來源：self（本 App）/ admission（入院清單上游）/ schedule（排班+Key 班上游）
 // 啟動時打 /api/update/check_all → 渲染 topbar 的 upstream panel；任一來源

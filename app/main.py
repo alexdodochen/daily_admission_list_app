@@ -507,6 +507,68 @@ async def api_sheet_list():
         raise HTTPException(500, str(e))
 
 
+@app.get("/api/sheet/read")
+async def api_sheet_read(date: str):
+    """Read a YYYYMMDD date sheet — A:L main + N:W ordering + sub-tables.
+
+    Read-only sheet viewer endpoint. Returns the raw cells (so the viewer can
+    show exactly what's on the sheet) plus the parsed sub-table structure so
+    the UI can render distinct sections.
+    """
+    date = (date or "").strip()
+    if not date:
+        raise HTTPException(400, "missing date")
+    try:
+        ws = sheet_service.get_worksheet(date)
+        if ws is None:
+            return {"ok": False, "error": f"找不到分頁 {date}"}
+        rows = sheet_service.read_range(ws, "A:W")
+        col_a = [(r[0] if r else "") for r in rows]
+        structure = format_check_service.parse_structure(col_a)
+        main_end = structure["main_end"]
+
+        def slice_block(r0: int, r1: int, c0: int, c1: int) -> list[list[str]]:
+            out: list[list[str]] = []
+            for r in range(r0, min(r1 + 1, len(rows) + 1)):
+                row = rows[r - 1] if r - 1 < len(rows) else []
+                cells = [
+                    (row[c - 1] if c - 1 < len(row) else "")
+                    for c in range(c0, c1 + 1)
+                ]
+                out.append(cells)
+            return out
+
+        main_block = slice_block(1, main_end, 1, 12) if main_end >= 1 else []
+        order_block = slice_block(1, main_end, 14, 23) if main_end >= 1 else []
+
+        sub_blocks = []
+        for s in structure["subs"]:
+            if s.get("orphan") or not s.get("title_row"):
+                continue
+            r0 = s["title_row"]
+            r1 = s["last_patient_row"] or s["subheader_row"] or r0
+            sub_blocks.append({
+                "doctor": s["doctor"],
+                "declared": s["declared"],
+                "actual_count": s["actual_count"],
+                "title_row": r0,
+                "rows": slice_block(r0, r1, 1, 7),
+            })
+
+        return {
+            "ok": True,
+            "date": date,
+            "main_end_row": main_end,
+            "main": main_block,
+            "ordering": order_block,
+            "subs": sub_blocks,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 # ------------------------------ Card 1 — 排班 ------------------------------
 
 def _parse_iso_date(s: str) -> date:

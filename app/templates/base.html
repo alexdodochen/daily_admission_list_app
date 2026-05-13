@@ -14,6 +14,7 @@
     <a href="/sched">排班</a>
     <a href="/admission">入院清單</a>
     <a href="/settings">設定</a>
+    <a href="#" id="viewer-link">📋 查閱</a>
     <a href="#" id="help-link">說明</a>
   </nav>
   <div id="upstream-bar" class="upstream-bar">
@@ -50,6 +51,30 @@
 <main>
 {% block body %}{% endblock %}
 </main>
+
+<!-- Sheet viewer modal — read-only browse of any YYYYMMDD date sheet -->
+<div id="viewer-modal" class="help-modal viewer-modal" hidden>
+  <div class="help-content viewer-content">
+    <header>
+      <h2>📋 查閱每日工作表</h2>
+      <button id="viewer-close" class="help-close" type="button">✕</button>
+    </header>
+    <section>
+      <div class="viewer-toolbar">
+        <label>日期分頁
+          <select id="viewer-date-select">
+            <option value="">載入中…</option>
+          </select>
+        </label>
+        <button id="viewer-refresh" type="button">重新載入</button>
+        <span id="viewer-msg" class="msg"></span>
+      </div>
+      <div id="viewer-body" class="viewer-body">
+        <p class="hint">選一個日期分頁開始查閱（唯讀，不會改 Sheet）。</p>
+      </div>
+    </section>
+  </div>
+</div>
 
 <!-- Help modal — toggled by #help-link in the topbar -->
 <div id="help-modal" class="help-modal" hidden>

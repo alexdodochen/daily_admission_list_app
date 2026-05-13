@@ -163,6 +163,33 @@ textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 13px; b
               color: #64748b; padding: 4px 8px; }
 .help-close:hover { color: #0f172a; }
 
+/* Sheet viewer modal (read-only) */
+.viewer-content { max-width: 1080px; }
+.viewer-toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+                  padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.viewer-toolbar label { display: flex; gap: 6px; align-items: center; }
+.viewer-toolbar select { min-width: 160px; padding: 4px 6px; }
+.viewer-body { margin-top: 12px; }
+.viewer-section { margin-top: 14px; }
+.viewer-section h3 { margin: 0 0 6px; color: var(--accent); font-size: 14px; }
+.viewer-section table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.viewer-section th, .viewer-section td { border: 1px solid var(--border);
+                                          padding: 3px 6px; vertical-align: top;
+                                          white-space: nowrap; max-width: 240px;
+                                          overflow: hidden; text-overflow: ellipsis; }
+.viewer-section th { background: #f1f5f9; font-weight: 600; text-align: left; }
+.viewer-section td.viewer-rowidx { color: #94a3b8; text-align: right; width: 28px; }
+.viewer-section .viewer-empty { color: #94a3b8; font-style: italic; }
+.viewer-sub { margin-top: 10px; border: 1px solid var(--border);
+              border-radius: 6px; padding: 8px; }
+.viewer-sub h4 { margin: 0 0 4px; font-size: 13px; }
+.viewer-sub .viewer-count-mismatch { color: #b91c1c; font-weight: 600; }
+
+/* 資料檢查 card */
+.checks-card h2 { margin: 0 0 4px; font-size: 16px; }
+.checks-row { display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
+              margin-top: 6px; }
+
 .doctor-block { border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin: 10px 0; }
 .doctor-block h3 { margin: 0 0 6px; color: var(--accent); }
 

@@ -219,3 +219,61 @@ def test_sheet_list_error_returns_500(client, monkeypatch):
     r = client.get("/api/sheet/list")
     assert r.status_code == 500
     assert "no creds" in r.text
+
+
+# ---------------- /api/sheet/read ----------------
+
+def test_sheet_read_missing_date_returns_400(client):
+    r = client.get("/api/sheet/read?date=")
+    assert r.status_code == 400
+
+
+def test_sheet_read_missing_sheet_returns_error_payload(client, monkeypatch):
+    monkeypatch.setattr(sheet_service, "get_worksheet", lambda name: None)
+    r = client.get("/api/sheet/read?date=20260420")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert "20260420" in body["error"]
+
+
+def test_sheet_read_slices_main_ordering_subs(client, monkeypatch):
+    # Synthesise rows: header + 2 main rows + 2 blank + sub-table for 李文煌(1)
+    header_main  = ["實際住院日","開刀日","科別","主治醫師","主診斷(ICD)",
+                    "姓名","性別","年齡","病歷號碼","病床號","入院提示","住急"]
+    header_order = ["序號","主治醫師","病人姓名","備註(住服)","備註",
+                    "病歷號","術前診斷","預計心導管","每日續等清單","改期"]
+    row_main_1 = ["2026-04-20","","CV","李文煌","CAD","王小明","M","60","1234","A301","",""]
+    row_main_2 = ["2026-04-20","","CV","劉秉彥","AS",  "張小華","F","70","5678","A302","",""]
+
+    rows: list[list[str]] = [
+        header_main + [""] + header_order,
+        row_main_1 + [""] + ["1","李文煌","王小明","","","1234","CAD","PCI","","" ],
+        row_main_2 + [""] + ["2","劉秉彥","張小華","","","5678","AS", "TAVI","",""],
+        [""] * 23,
+        [""] * 23,
+        ["李文煌（1人）"],
+        ["姓名"],
+        ["王小明","","","","1234","CAD","PCI"],
+    ]
+
+    class FakeWS:
+        def get(self, a1):
+            return rows
+
+    monkeypatch.setattr(sheet_service, "get_worksheet", lambda name: FakeWS())
+    r = client.get("/api/sheet/read?date=20260420")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["date"] == "20260420"
+    # main_end should point at the last filled main-data row (row 3 = 1-indexed)
+    assert body["main_end_row"] == 3
+    assert len(body["main"]) == 3            # header + 2 data
+    assert len(body["ordering"]) == 3        # same row range, columns N-W
+    assert body["main"][1][5] == "王小明"
+    assert body["ordering"][1][1] == "李文煌"
+    assert len(body["subs"]) == 1
+    assert body["subs"][0]["doctor"] == "李文煌"
+    assert body["subs"][0]["declared"] == 1
+    assert body["subs"][0]["actual_count"] == 1
