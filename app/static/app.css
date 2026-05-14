@@ -107,6 +107,38 @@ button:disabled { background: #cbd5e1; cursor: not-allowed; }
 button.primary { background: #16a34a; }
 button.primary:hover:not(:disabled) { background: #15803d; }
 
+/* Busy state: button is in flight on an async call.
+   Override the generic :disabled grey so user knows it's *working*, not unavailable. */
+button.busy {
+  background: #f59e0b !important;
+  color: #fff;
+  cursor: progress;
+  position: relative;
+  padding-left: 30px;
+}
+button.busy::before {
+  content: '';
+  position: absolute;
+  left: 10px; top: 50%;
+  width: 12px; height: 12px; margin-top: -6px;
+  border: 2px solid rgba(255,255,255,.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: busy-spin .8s linear infinite;
+}
+@keyframes busy-spin { to { transform: rotate(360deg); } }
+
+/* Provider info expandable (Gemini free-tier table on /settings) */
+.provider-info { margin-top: 8px; padding: 8px 12px; background: #f3f4f6; border-radius: 6px; }
+.provider-info summary { cursor: pointer; padding: 4px 0; }
+.provider-info[open] summary { margin-bottom: 8px; }
+.provider-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.provider-table th, .provider-table td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+.provider-table th { background: #e0e7ff; font-weight: 600; }
+.provider-table tr.recommended { background: #ecfdf5; }
+.provider-table tr.recommended td:first-child { color: #065f46; font-weight: 600; }
+.provider-table code { background: #fff; padding: 1px 4px; border-radius: 3px; }
+
 .button-order-hint { background: #fef3c7; border-left: 3px solid #f59e0b;
                      padding: 8px 12px; margin: 12px 0 8px; line-height: 1.55; }
 
@@ -212,6 +244,30 @@ td.editable:focus { background: #fff; outline: 2px solid var(--accent); }
 td.editable.saving { background: #dbeafe; }
 td.editable.saved { background: #d1fae5; transition: background 1s; }
 td.editable.error { background: #fee2e2; }
+td.editable-pin { background: #ecfeff; min-width: 50px; max-width: 60px; text-align: center; font-weight: 600; }
+td.editable-pin:hover { background: #cffafe; }
+td.editable-pin:focus { background: #fff; outline: 2px solid #06b6d4; }
+
+input.fg-input { padding: 4px 6px; font-size: 13px; width: 180px;
+  border: 1px solid var(--border); border-radius: 4px; background: #fffbe6;
+  font-family: inherit; }
+input.fg-input:hover { background: #fef3c7; }
+input.fg-input:focus { background: #fff; outline: 2px solid var(--accent); }
+input.fg-input.saving { background: #dbeafe; }
+input.fg-input.saved  { background: #d1fae5; transition: background 1s; }
+input.fg-input.error  { background: #fee2e2; }
+
+/* Step 4 pin panels — patient global pin + doctor RR pin */
+#pin-wrap { margin: 12px 0; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 800px) { #pin-wrap { grid-template-columns: 1fr; } }
+.pin-panel { background: #f8fafc; border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 12px; }
+.pin-panel summary { cursor: pointer; font-size: 14px; padding: 4px 0; }
+.pin-panel[open] summary { margin-bottom: 6px; border-bottom: 1px dashed var(--border); padding-bottom: 6px; }
+.pin-panel table { width: 100%; margin-top: 6px; font-size: 13px; }
+.pin-panel input.pin-input { width: 60px; padding: 3px 6px; text-align: center;
+  border: 1px solid var(--border); border-radius: 3px; font-weight: 600; }
+.pin-panel input.pin-input:focus { background: #ecfeff; outline: 2px solid #06b6d4; }
 
 /* Home — 3-feature card grid */
 .feature-grid {

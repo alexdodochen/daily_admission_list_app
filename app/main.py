@@ -16,7 +16,7 @@ from datetime import date, datetime
 
 from . import config as appconfig
 from . import llm as llm_module
-from .services import sheet_service, ocr_service, lottery_service
+from .services import sheet_service, ocr_service, lottery_service, subtable_service
 from .services import emr_service, ordering_service, line_service
 from .services import updater, cathlab_service, format_check_service, finalize_service
 from .services import cv_solver, scheduling_service
@@ -31,6 +31,11 @@ templates = Jinja2Templates(directory=BASE / "templates")
 # re-running the solver. Single-user local app, so a plain dict is fine.
 _solve_cache: dict = {}
 
+# Per-startup version stamp injected into static asset URLs so every
+# server restart busts the browser cache for app.css / app.js.
+import time as _time
+_STATIC_VERSION = str(int(_time.time()))
+
 
 def _ctx(request: Request, **kw):
     cfg = appconfig.load()
@@ -38,6 +43,7 @@ def _ctx(request: Request, **kw):
     kw.setdefault("ready", cfg.is_ready())
     kw.setdefault("providers", llm_module.PROVIDERS)
     kw.setdefault("bundled", appconfig.bundled_flags())
+    kw.setdefault("static_version", _STATIC_VERSION)
     return templates.TemplateResponse(request, kw.pop("template"), kw)
 
 
@@ -187,7 +193,21 @@ async def api_step1_write(date: str = Form(...), rows: str = Form(...),
         raise HTTPException(500, str(e))
 
 
-# ------------------------------ Step 2 Lottery ------------------------------
+# ------------------------------ Step 2 Build subtables ------------------------------
+
+@app.post("/api/step2/build_subtables")
+async def api_step2_build_subtables(date: str = Form(...)):
+    """Generate per-doctor sub-tables from main A-L (no lottery)."""
+    try:
+        result = subtable_service.build_subtables_from_main(date)
+        return {"ok": True, **result}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ------------------------------ Step 2 Lottery (legacy — kept for future use) ------------------------------
 
 @app.get("/api/step2/context")
 async def api_step2_context(date: str, weekday: str = ""):
@@ -224,18 +244,51 @@ async def api_step2_write(date: str = Form(...), ordered_json: str = Form(...)):
         raise HTTPException(500, str(e))
 
 
+# ------------------------------ F/G canonical options ------------------------------
+
+@app.get("/api/options/fg")
+async def api_options_fg():
+    """Return canonical F (術前診斷) and G (預計心導管) option lists for dropdowns.
+
+    Sourced from emr_service.DIAG_RULES / CATH_RULES + a few common extras
+    (s/p PCI, Cover stent) the auto-detector doesn't infer.
+    """
+    f_opts = [out for _, out in emr_service.DIAG_RULES]
+    g_opts = [out for _, out in emr_service.CATH_RULES]
+    for extra in ("s/p PCI",):
+        if extra not in f_opts:
+            f_opts.append(extra)
+    for extra in ("Cover stent",):
+        if extra not in g_opts:
+            g_opts.append(extra)
+    return {"ok": True, "f": f_opts, "g": g_opts}
+
+
 # ------------------------------ Step 3 EMR ------------------------------
 
 @app.post("/api/step3/run")
 async def api_step3_run(session_url: str = Form(...),
                         patients_json: str = Form(...),
-                        admission_date: str = Form("")):
+                        admission_date: str = Form(""),
+                        date: str = Form("")):
+    """Fetch EMR for each patient and (if `date` given) write C/F/G back to
+    the doctor sub-tables on the YYYYMMDD sheet.
+    """
     import json as _json
     try:
         patients = _json.loads(patients_json)
         results = await emr_service.extract_patients(
             session_url, patients, admission_date=admission_date)
-        return {"ok": True, "results": results}
+        write_info: dict = {"written": 0, "missing": [], "skipped": True}
+        target_date = (date or admission_date or "").strip()
+        if target_date:
+            try:
+                write_info = emr_service.write_results_to_subtables(target_date, results)
+                write_info["skipped"] = False
+            except Exception as we:
+                write_info = {"written": 0, "missing": [], "skipped": True,
+                              "error": str(we)}
+        return {"ok": True, "results": results, "writeback": write_info}
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -256,6 +309,31 @@ async def api_step4_integrate(date: str = Form(...)):
     try:
         result = ordering_service.integrate_ordering(date)
         return {"ok": True, **result}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/step4/lottery")
+async def api_step4_lottery(date: str = Form(...),
+                            weekday: str = Form(""),
+                            patient_pins_json: str = Form("{}"),
+                            doctor_pins_json: str = Form("{}")):
+    """First-time lottery + write N-V.
+
+    Pin layers (independent):
+      * Sub-table E col (per-doctor) — within-doctor sort
+      * `patient_pins_json` {chart_no: seq} — global patient pin
+      * `doctor_pins_json`  {doctor: rank}  — RR doctor order pin
+    """
+    import json as _json
+    try:
+        patient_pins = _json.loads(patient_pins_json or "{}") or {}
+        doctor_pins  = _json.loads(doctor_pins_json  or "{}") or {}
+        result = lottery_service.lottery_with_pins(
+            date, weekday, patient_pins=patient_pins, doctor_pins=doctor_pins)
+        return {"ok": True, **result}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -503,6 +581,35 @@ async def _startup_check_upstreams():
 async def api_sheet_list():
     try:
         return {"ok": True, "sheets": sheet_service.list_sheets()}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/sheet/raw")
+async def api_sheet_raw(name: str):
+    """Read ANY worksheet by exact tab name and return a raw A:Z grid.
+
+    Used by the viewer modal to inspect non-date tabs (主治醫師抽籤表,
+    值班總數統計, 改期清單, etc.) without imposing the date-sheet structure.
+    """
+    name = (name or "").strip()
+    if not name:
+        raise HTTPException(400, "missing name")
+    try:
+        ws = sheet_service.get_worksheet(name)
+        if ws is None:
+            return {"ok": False, "error": f"找不到分頁 {name}"}
+        rows = sheet_service.read_range(ws, "A:Z")
+        # Trim fully-blank trailing rows
+        while rows and not any((c or "").strip() for c in rows[-1]):
+            rows.pop()
+        # Find max non-blank column to size the table
+        max_cols = 0
+        for r in rows:
+            for i, c in enumerate(r):
+                if (c or "").strip():
+                    max_cols = max(max_cols, i + 1)
+        return {"ok": True, "name": name, "rows": rows, "cols": max_cols}
     except Exception as e:
         raise HTTPException(500, str(e))
 

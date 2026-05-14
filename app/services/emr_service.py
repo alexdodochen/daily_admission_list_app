@@ -363,36 +363,181 @@ def process_patient(emr_text: str,
     }
 
 
+# ---------------------------- Sheet writeback ----------------------------
+
+def write_results_to_subtables(date: str, results: list[dict]) -> dict:
+    """Write per-patient EMR data back to the doctor sub-tables.
+
+    For each result entry whose chart_no matches a sub-table row, patches:
+      C col (col 3) = c_text         (age/gender prefix + truncated SOAP)
+      F col (col 6) = f              (auto-detected 術前診斷)
+      G col (col 7) = g              (auto-detected 預計心導管)
+
+    Returns {"written": int, "missing": [chart_no, ...]}. Errors-only
+    patients (where extract failed and c_text is empty) are skipped.
+    """
+    from . import sheet_service, ordering_service
+
+    ws = sheet_service.get_worksheet(date)
+    if ws is None:
+        raise ValueError(f"找不到工作表 {date}")
+    tables = ordering_service.read_doctor_subtables(date)
+
+    chart_to_row: dict[str, int] = {}
+    for _, pts in tables.items():
+        for p in pts:
+            ch = (p.get("chart_no") or "").strip()
+            if ch:
+                chart_to_row[ch] = p["row"]
+
+    patches: list[tuple[str, str]] = []
+    missing: list[str] = []
+    written = 0
+    for r in results:
+        chart = (r.get("chart_no") or "").strip()
+        if not chart:
+            continue
+        if chart not in chart_to_row:
+            missing.append(chart)
+            continue
+        if r.get("error"):
+            continue
+        row = chart_to_row[chart]
+        c_text = r.get("c_text") or ""
+        f_val  = r.get("f") or ""
+        g_val  = r.get("g") or ""
+        if c_text:
+            patches.append((f"C{row}", c_text))
+        if f_val:
+            patches.append((f"F{row}", f_val))
+        if g_val:
+            patches.append((f"G{row}", g_val))
+        written += 1
+
+    sheet_service.batch_write_cells(ws, patches)
+    return {"written": written, "missing": missing, "patches_count": len(patches)}
+
+
 # ---------------------------- Playwright orchestration ----------------------------
 
-async def fetch_raw_html(page, session_url: str, chart_no: str) -> tuple[str, str]:
-    """
-    Load EMR, query by chart number, return (soap_text, divUserSpec_raw).
-    `divUserSpec` is the always-populated patient header (name/DOB/gender) —
-    available even if the chart has no clinic visit history.
-    """
-    await page.goto(session_url, wait_until="networkidle")
-    try:
-        await page.fill("input[name='chartno']", chart_no, timeout=3000)
-        await page.press("input[name='chartno']", "Enter")
-        await page.wait_for_load_state("networkidle")
-    except Exception:
-        pass
+# Fallback doctors used when the assigned 主治醫師 has no 一年內門診紀錄 —
+# port of FALLBACK_DOCTORS from daily-admission-list-public/fetch_emr.py.
+FALLBACK_DOCTORS = ["劉秉彥", "趙庭興", "蔡惟全", "許志新", "陳柏升", "李貽恒"]
 
-    soap = await page.evaluate("""
-        () => {
-            const blocks = document.querySelectorAll('div.small');
-            if (!blocks.length) return document.body.innerText || '';
-            return Array.from(blocks).map(b => b.innerText).join('\\n---\\n');
-        }
+
+async def fetch_raw_html(page, session_url: str, chart_no: str,
+                         doctor: str = "") -> tuple[str, str, str]:
+    """
+    NCKU-EMR frameset query. Returns (soap_text, divUserSpec_raw, visit_label).
+
+    Flow (ported from `daily-admission-list-public/fetch_emr.py`):
+      1. Navigate to session URL (frameset entry).
+      2. Inside topFrame: fill `#txtChartNo` + click `#BTQuery`.
+      3. Wait for leftFrame to repopulate with anchors.
+      4. Click the first anchor whose text contains '門ديل' AND `doctor`;
+         if none, iterate FALLBACK_DOCTORS until match found.
+      5. Wait for mainFrame; read `div.small` blocks → join.
+      6. Read `#divUserSpec` from any frame as patient header.
+
+    `visit_label` is the chosen clinic visit's anchor text — useful for
+    surfacing which doctor's record we actually used.
+    """
+    await page.goto(session_url, wait_until="domcontentloaded")
+    await page.wait_for_timeout(1200)
+
+    submit = await page.evaluate(f"""
+        () => {{
+            const tryFrames = [window.top, ...Array.from(window.top.frames)];
+            for (const w of tryFrames) {{
+                try {{
+                    const d = w.document;
+                    const inp = d.getElementById('txtChartNo') || d.querySelector("input[name='txtChartNo']");
+                    const btn = d.getElementById('BTQuery') || d.querySelector("input[name='BTQuery']");
+                    if (inp && btn) {{
+                        inp.value = {chart_no!r};
+                        btn.click();
+                        return {{ok: true}};
+                    }}
+                }} catch (e) {{ /* cross-origin frame */ }}
+            }}
+            return {{ok: false, reason: 'no_query_form'}};
+        }}
     """)
+    if not submit.get("ok"):
+        return "", "", ""
+
+    await page.wait_for_timeout(2200)
+
+    candidates = []
+    if doctor:
+        candidates.append(doctor)
+    for fb in FALLBACK_DOCTORS:
+        if fb not in candidates:
+            candidates.append(fb)
+    import json as _json
+    candidates_js = _json.dumps(candidates, ensure_ascii=False)
+
+    click = await page.evaluate(f"""
+        () => {{
+            const allow = {candidates_js};
+            const frames = [window.top, ...Array.from(window.top.frames)];
+            for (const fb of allow) {{
+                for (const w of frames) {{
+                    try {{
+                        const links = w.document.querySelectorAll('a');
+                        for (const link of links) {{
+                            const t = (link.innerText || link.textContent || '').trim();
+                            if (t.includes('門診') && t.includes(fb)) {{
+                                link.click();
+                                return {{ok: true, visit: t, doctor_used: fb}};
+                            }}
+                        }}
+                    }} catch (e) {{ /* cross-origin */ }}
+                }}
+            }}
+            return {{ok: false, reason: 'no_clinic_record'}};
+        }}
+    """)
+    visit_label = ""
+    soap = ""
+    if click.get("ok"):
+        visit_label = click.get("visit", "")
+        await page.wait_for_timeout(1500)
+        soap = await page.evaluate("""
+            () => {
+                const frames = [window.top, ...Array.from(window.top.frames)];
+                for (const w of frames) {
+                    try {
+                        const blocks = w.document.querySelectorAll('div.small');
+                        if (blocks.length) {
+                            return Array.from(blocks).map(b => b.innerText).join('\\n---\\n');
+                        }
+                    } catch (e) { /* cross-origin */ }
+                }
+                // Fallback: mainFrame's body
+                for (const w of frames) {
+                    try {
+                        const body = w.document.body;
+                        if (body && (body.innerText || '').length > 100) return body.innerText;
+                    } catch (e) {}
+                }
+                return '';
+            }
+        """) or ""
+
     div_spec = await page.evaluate("""
         () => {
-            const el = document.getElementById('divUserSpec');
-            return el ? el.innerText : '';
+            const frames = [window.top, ...Array.from(window.top.frames)];
+            for (const w of frames) {
+                try {
+                    const el = w.document.getElementById('divUserSpec');
+                    if (el) return el.innerText || '';
+                } catch (e) {}
+            }
+            return '';
         }
-    """)
-    return soap or "", div_spec or ""
+    """) or ""
+    return soap, div_spec, visit_label
 
 
 async def extract_patients(session_url: str,
@@ -416,7 +561,8 @@ async def extract_patients(session_url: str,
         try:
             for p in patients:
                 try:
-                    soap, div_spec = await fetch_raw_html(page, session_url, p["chart_no"])
+                    soap, div_spec, visit = await fetch_raw_html(
+                        page, session_url, p["chart_no"], p.get("doctor", ""))
                     info = process_patient(soap, div_spec, admit)
                     results.append({
                         **p,
@@ -427,6 +573,7 @@ async def extract_patients(session_url: str,
                         "age": info["age"],
                         "gender": info["gender"],
                         "has_record": info["has_record"],
+                        "visit_label": visit,
                         "error": "",
                     })
                 except Exception as e:

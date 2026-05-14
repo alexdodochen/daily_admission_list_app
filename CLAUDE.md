@@ -70,11 +70,18 @@ The 6 cumulative stat keys read from `值班總數統計` (平日/週五/週六/
 
 Each step is a `/api/step{N}/...` endpoint group in `main.py` delegating to one service module under `app/services/`. The Step → service map is the entire backend:
 
-1. **OCR** (`ocr_service.py`) — LLM vision parses admission-list screenshot → A-L preview → diff-update write (never overwrite filled rows blindly; preserves EMR / F / G already populated). On overwrite, `_apply_diff_to_subtables` also reconciles existing per-doctor sub-tables: removed rows dropped, doctor-changed rows moved (E cleared on move), added rows appended to their A-L doctor's sub-table. Patients whose doctor has no existing sub-table are reported as `unattached_added` / `unattached_changed`, never silently dropped. N-V 入院序 is NOT auto-rebuilt — user reruns Step 2 + Step 4.
-2. **Lottery** (`lottery_service.py`) — read 主治醫師抽籤表, draw N tickets, round-robin into N-S.
-3. **EMR** (`emr_service.py`) — Playwright drives the user's already-logged-in browser session (user pastes session URL); LLM summarises SOAP HTML into 4 sections. Hospital-specific selectors in `fetch_raw_html()` — default is NCKUH pattern.
-4. **Ordering** (`ordering_service.py`) — read per-doctor subtables → integrate back into N-W on main sheet. `POST /api/step4/cell` is the inline-edit endpoint that backs F/G contenteditable cells.
-5. **Cathlab** (`cathlab_service.py`) — `plan` (dry-run) / `verify` (cross-check WEBCVIS) / `keyin` (Phase 1 ADD + Phase 2 UPT). Static lookup tables in `app/data/static/` (`cathlab_id_maps.json`, `doctor_codes.json`, `cathlab_schedule.json`) — **never hardcode IDs in `.py`**.
+1. **OCR** (`ocr_service.py`) — LLM vision parses admission-list screenshot → A-L preview → diff-update write (never overwrite filled rows blindly; preserves EMR / F / G already populated). On overwrite, `_apply_diff_to_subtables` also reconciles existing per-doctor sub-tables: removed rows dropped, doctor-changed rows moved (E cleared on move), added rows appended to their A-L doctor's sub-table. Patients whose doctor has no existing sub-table are reported as `unattached_added` / `unattached_changed`, never silently dropped.
+2. **Build sub-tables** (`subtable_service.py`) — `POST /api/step2/build_subtables` reads main A-L, groups patients by 主治醫師 in first-appearance order, writes per-doctor sub-table blocks (title `醫師（N人）` + sub-header + patient rows, ≥2-row gap between blocks). Refuses to overwrite if sub-tables already exist (preserves any user-filled F/G/E/H). **No lottery in this step** — that's Step 4. The legacy `/api/step2/run`, `/api/step2/write` lottery routes remain in `main.py` but are no longer wired to the UI.
+3. **EMR** (`emr_service.py`) — Playwright drives the user's already-logged-in browser session (user pastes session URL); extracts SOAP + `divUserSpec`. NCKUH-specific frame walk: `#txtChartNo` + `#BTQuery` in topFrame, clinic visit anchors in leftFrame, `div.small` SOAP in mainFrame. Falls back to `FALLBACK_DOCTORS = ['劉秉彥','趙庭興','蔡惟全','許志新','陳柏升','李貽恒']` when the assigned 主治醫師 has no 一年內門診紀錄. **Endpoint MUST call `write_results_to_subtables(date, results)` to persist C/F/G back to the sheet** — returning to the UI alone is a bug.
+4. **Lottery + Ordering** (`lottery_service.py` + `ordering_service.py`) — three independent pin layers (see [[pin-layers-separated]]):
+   - **`POST /api/step4/lottery`** runs `lottery_with_pins(date, weekday, patient_pins, doctor_pins)`:
+     - L1: sub-table E col → within-doctor sort (`sort_by_manual_e`).
+     - L2: `patient_pins` `{chart_no: seq}` → forces a patient to global 序號 N.
+     - L3: `doctor_pins` `{doctor: rank}` → forces a doctor to be N-th in RR draw order.
+     - Returns 400 on duplicate / out-of-range pin values.
+   - **`POST /api/step4/integrate`** re-runs `ordering_service.integrate_ordering(date)` — preserves existing N-V (Q 住服 / V 改期) while patching T/U from current sub-table F/G + re-applying L1 sort.
+   - **`POST /api/step4/cell`** is the inline-edit endpoint for any sub-table cell (used by both the editable-pin E col and the F/G datalist inputs).
+5. **Cathlab** (`cathlab_service.py`) — `plan` (dry-run) / `verify` (cross-check WEBCVIS) / `keyin` (Phase 1 ADD + Phase 2 UPT). Static lookup tables in `app/data/static/` (`cathlab_id_maps.json`, `doctor_codes.json`, `cathlab_schedule.json`) — **never hardcode IDs in `.py`**. `resolve_diag` falls back to `OTHERS_PDI = "PDI20090908120008"` for any unresolved text so user-typed F values still key into WEBCVIS (under "OTHERS" with the label as free text). `resolve_proc` returns `("","")` for unresolved G → existing logic appends the cath text to `note_out` (WEBCVIS 備註).
 6. **LINE push** (`line_service.py`) — read N-Q → preview → push to user-configured group.
 
 Two cross-cutting services gate Steps 5–6:
@@ -84,7 +91,23 @@ Two cross-cutting services gate Steps 5–6:
 
 ### Read-only sheet viewer (global)
 
-`GET /api/sheet/read?date=YYYYMMDD` reads the A:W block of a date tab and returns it split into three sections: main A-L, ordering N-W, and per-doctor sub-tables (uses `format_check_service.parse_structure` to slice). The `📋 查閱` topbar link on every page opens a modal that lists every YYYYMMDD tab (via `/api/sheet/list`) and renders the selected one read-only — no need to leave the app to inspect data. Topbar also has `🔗 入院 Sheet` / `🔗 排班 Sheet` links that open the live Google Sheet in a new tab (only render if respective `cfg.*_sheet_id` is set).
+Two endpoints, one modal:
+- `GET /api/sheet/read?date=YYYYMMDD` — date sheet view (structured: main A-L + ordering N-W + per-doctor sub-tables via `format_check_service.parse_structure`).
+- `GET /api/sheet/raw?name=<tab>` — generic A:Z read for any non-date tab (主治醫師抽籤表 / 值班總數統計 / 改期清單…).
+
+The `📋 查閱` topbar link opens the viewer modal; the dropdown groups options into "日期分頁 (YYYYMMDD)" + "其他工作表" via JS (`isYmd()` check). Topbar also has `🔗 入院 Sheet` / `🔗 排班 Sheet` links that open the live Google Sheet in a new tab (only render if respective `cfg.*_sheet_id` is set).
+
+### Step 4 pin storage (browser-local)
+
+The patient and doctor pin panels persist to `localStorage[pin_YYYYMMDD]` so reloading the page keeps the user's input. Pin state is NOT synced to the sheet — it's a per-browser, per-day, transient layer that the lottery endpoint consumes once per run. Sub-table E col is the only pin layer that touches the sheet.
+
+### Cache-buster for static assets
+
+`_STATIC_VERSION = str(int(time.time()))` is set once per server startup and injected into every template context as `static_version`. `base.html` references `/static/app.css?v={{ static_version }}` and `/static/app.js?v={{ static_version }}` so browsers reload the bundle on every restart — no need for `Ctrl+F5`.
+
+### Button loading states
+
+Every async click handler in `app.js` wraps its body with `await withBusy(btn, busyText, async () => {...})`. The helper disables the button, swaps its text to `busyText`, adds `class="busy"` (orange background + spinning border via CSS), then restores on `finally`. Apply to any new async button.
 
 ### Config & bundling
 
@@ -125,7 +148,7 @@ Headers are the source of truth — `format_check_service.EXPECTED_MAIN_HEADER` 
 
 ## Status & pending direction
 
-**Done (2026-05-13):** 3-card home + Phase A/B/C admission rule backport + Phase 8 packaged distribution + Phase 9 UI usability pass merged into `main` via `3d03c54` (combining two diverged lines: local `e5fb122` 3-card port and origin's `d784152..fd9b465` rule sync + .exe + self-update).
+**Done (2026-05-14):** Phase 1–10 shipped. Phases 1–8 = 3-card home + Phase A/B/C admission rule backport + Phase 8 packaged distribution. Phase 9 (2026-05-13) = UI usability pass. Phase 10 (2026-05-14) = workflow re-architecture + EMR/UI overhaul.
 
 Phase 9 highlights (`92c8458`):
 - Global `📋 查閱` sheet viewer (`/api/sheet/read`) + 🔗 Sheet topbar links
@@ -133,6 +156,17 @@ Phase 9 highlights (`92c8458`):
 - 資料檢查 standalone card, marked `[選用]`
 - Sub-table auto-update on Step 1 OCR overwrite (`ocr_service._apply_diff_to_subtables`)
 - /settings button order hint + green primary 儲存 button
+
+Phase 10 highlights (uncommitted at time of writing):
+- **Step 2 redesign** — `subtable_service.build_subtables_from_main` replaces the old lottery flow. See [[step2-no-lottery]].
+- **Step 4 redesign** — `lottery_service.lottery_with_pins` with 3 independent pin layers. UI: 2× `<details>` pin panels above sub-tables. See [[pin-layers-separated]].
+- **EMR fetch frame-walk** — `fetch_raw_html` rewritten for the NCKUH frameset with `FALLBACK_DOCTORS`. See [[nckuh-emr-frameset]].
+- **EMR writeback** — `write_results_to_subtables` + `sheet_service.batch_write_cells`. See [[step3-must-writeback]].
+- **F/G datalist** — `<input list>` combobox; custom F → OTHERS_PDI, custom G → 備註. See [[fg-combobox-not-select]].
+- **Sheet viewer all-worksheets** — `/api/sheet/raw` for non-date tabs.
+- **Button loading states** — `withBusy()` helper on all 14 async buttons.
+- **Cache-buster** — `?v={static_version}` per-startup timestamp.
+- **Gemini info on /settings** — RPM/RPD/TPM comparison table. See [[gemini-free-tier-2026]].
 
 **Still pending:**
 

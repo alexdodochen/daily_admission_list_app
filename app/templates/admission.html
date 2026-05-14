@@ -2,7 +2,7 @@
 {% block body %}
 <section class="stepper">
   <div class="step active" data-step="1">① 匯入名單</div>
-  <div class="step" data-step="2">② 抽籤排序</div>
+  <div class="step" data-step="2">② 生成 subtable</div>
   <div class="step" data-step="3">③ EMR 擷取</div>
   <div class="step" data-step="4">④ 入院序整合</div>
   <div class="step" data-step="5">⑤ 導管排程</div>
@@ -62,16 +62,14 @@
 
 <!-- Step 2 -->
 <section class="card panel hidden" data-panel="2">
-  <h2>Step 2 — 抽籤 + Round-Robin</h2>
+  <h2>Step 2 — 生成 subtable（依主表順序）</h2>
+  <p class="hint">依 Step 1 主表 A-L 出現順序，把病人依主治醫師分組，產生子表格寫到主表下方。<strong>此步不抽籤、不寫 N-V</strong>。
+    若該日已有 subtable，會拒絕覆寫（請改用 Step 1 OCR 覆寫以保留已填的 F/G）。</p>
   <div class="actions">
-    <button id="load2-btn">讀取主資料 + 抽籤表</button>
-    <button id="run2-btn" disabled>執行抽籤</button>
-    <button id="write2-btn" disabled>寫入 N-S</button>
+    <button id="build2-btn">生成 subtable</button>
     <span id="s2-msg" class="msg"></span>
   </div>
-  <div id="tickets-wrap"></div>
-  <div id="drawn-wrap"></div>
-  <div id="ordered-wrap"></div>
+  <div id="s2-output"></div>
 </section>
 
 <!-- Step 3 -->
@@ -92,11 +90,18 @@
 
 <!-- Step 4 -->
 <section class="card panel hidden" data-panel="4">
-  <h2>Step 4 — F/G 檢查 + 整合入院序</h2>
-  <p class="hint">確認子表格 F/G 都填好（也可手動設定 E 欄入院序）後，整合寫入 N-V 9 欄：序號 / 主治 / 姓名 / 備註(住服) / 備註 / 病歷號 / 術前診斷 / 預計心導管 / 改期。Q (住服) 與 V (改期) 為手動標記，重跑時保留。</p>
+  <h2>Step 4 — F/G 檢查 + 抽籤 + 入院序</h2>
+  <p class="hint">流程：
+    <strong>① 讀取子表格</strong> → 三層 pin 設定 → <strong>② 首次抽籤</strong> → 需要時 <strong>③ 整合寫入</strong>。<br>
+    Pin 層 1：<strong>E 欄</strong> = 同醫師內排序（例：詹P 三位病人 E 填 1/2/3 就照寫）<br>
+    Pin 層 2：<strong>📌 病人 pin</strong> 面板 = 指定特定病人為全域第 N 位<br>
+    Pin 層 3：<strong>📌 醫師 pin</strong> 面板 = 指定某醫師為 RR 第 N 順位<br>
+    F/G 為下拉 + 可自填（自填內容會被 Step 5 keyin 走 WEBCVIS 的 OTHERS / 備註）。
+    Q（備註(住服)）/ V（改期）為手動標記，重跑時保留。</p>
   <div class="actions">
-    <button id="load4-btn">讀取醫師子表格</button>
-    <button id="integrate4-btn" disabled>整合寫入 N-V</button>
+    <button id="load4-btn">① 讀取醫師子表格</button>
+    <button id="lottery4-btn" disabled>② 首次抽籤 + 寫入 N-V</button>
+    <button id="integrate4-btn" disabled>③ 整合寫入 N-V</button>
     <span id="s4-msg" class="msg"></span>
   </div>
   <div id="subtables-wrap"></div>

@@ -1,48 +1,66 @@
 ============================================
-  交班文件 — Last Updated: 2026-05-13 (session end)
+  交班文件 — Last Updated: 2026-05-14 (session end)
 ============================================
 
 【本次 session 做了什麼】
-  1. 合併兩條分岔線 (merge commit 3d03c54)：本地 e5fb122 (3-card port) + origin 6 commits (Phase A/B/C admission rules + .exe 打包 + in-app self-update + multi-source upstream check)
-  2. Phase 9 UI 一輪 (commit 92c8458)：全域 📋 查閱 modal、🔗 Sheet topbar 連結、admission 頁日期月曆 + 自動帶星期、資料檢查獨立 card 標 [選用]、Step 1 OCR 覆寫時子表格自動 add/remove/move、設定頁按鈕順序提示
-  3. 設定頁 SA JSON 路徑欄踩坑除錯：使用者連續 2 次貼 JSON 內容（含 RSA 私鑰）到欄位 → 提醒 rotate key、解釋欄位要的是檔案路徑、教 Shift+複製路徑要去引號
+  1. Phase 10 工作流程重新切分：Step 2 改成「生成 subtable（依主表順序）」(新 subtable_service.py)；
+     Step 4 改成「抽籤 + 3 層 pin 寫入 N-V」(lottery_with_pins) — 病人 pin / 醫師 pin / E 欄內排序分三層獨立
+  2. EMR 三大修：(a) frameset 改用 frame-walk + #txtChartNo/#BTQuery + FALLBACK_DOCTORS (b) 補上 sheet
+     writeback (sheet_service.batch_write_cells + emr_service.write_results_to_subtables) (c) F/G 改 datalist
+     combobox，custom 字串走 OTHERS_PDI / 備註
+  3. UI 通用化：withBusy() 包 14 顆 async 按鈕，cache-buster ?v={timestamp}，viewer 看全部工作表，
+     設定頁加 Gemini RPM/RPD/TPM 對照表
 
 【當前狀態】
-  - Branch / Worktree: main, clean (working tree)
-  - 本地 vs origin: 都是 92c8458 (ahead 0 / behind 0 — push 已完成)
-  - 最新 commit: 92c8458 feat: global sheet viewer + standalone 資料檢查 card
-  - 本 session 還有未 commit 的改動：日期 picker、設定按鈕提示、選用標、Sheet 連結、子表格 sync — workflow-docs 階段一併 commit
-  - 開發 server (背景 task be0ug902m) 跑中，但載的是舊 Python (sub-table sync 在 ocr_service.py，需重啟才生效)
+  - Branch / Worktree: main, dirty (workflow-docs 流程內 commit + push 中)
+  - 部署/執行狀態: dev server (PID 19464) 跑在 127.0.0.1:8766，最新版本 cache-buster v=1778754719
+  - 最新 commit: 5323350 feat: Phase 9 UI usability + sub-table auto-sync + HANDOFF
+  - 本 session 變動：10 個檔（含新增 subtable_service.py），待 commit
 
 【下一步該做什麼】
-  - 使用者實機測試新版 server（重啟後）的兩個關鍵流程：Step 1 OCR 覆寫帶 add/remove → 子表格是否正確同步；/admission 日期 picker 切換 → 星期欄是否自動帶 (admission+1)
-  - 若驗證 OK → 後續可考慮 Card 2 (Key 班) port — 但要先確認 `C:\Users\dr\Downloads\Y\排班 APP\` 已有 keyin_* 檔案，目前還沒
-  - 若驗證有 bug → 用 viewer 看 sheet 實際狀態當第一手資料
+  - 使用者實機驗證：(a) Step 1 OCR → Step 2 生成 subtable → Step 3 EMR 是否 C/F/G 寫回 sheet
+    (用 viewer 點該日期分頁看 sub-table C 欄有沒有 "<age> y/o <gender>\n<truncated SOAP>") (b) Step 4
+    pin 三層是否如預期 — 試填病人 pin = 某人第 1 位，醫師 pin = 某醫師第 1 順位，跑「② 首次抽籤」，
+    看 N-V 結果
+  - 若 EMR fetch 還是抓不到 (visit_label 為空)：很可能 frame 名不是 topFrame/leftFrame/mainFrame；
+    我的實作用 frame-walk 兜底，但可能找不到 #txtChartNo — 看 Playwright console 確認
+  - F/G 自填走 OTHERS_PDI 的 cathlab keyin 路徑 — 還沒實機驗證過 WEBCVIS 是否真的會選 OTHERS
 
 【已知問題 / 卡關】
-  - SA private key 外洩 (0612bef3...)：使用者選擇不 rotate，風險自負；新使用的 key 是另一把 dailyadmission-62eb7b48d0e0.json
-  - cathlab 35 個測試持續 fail (FileNotFoundError on app/data/static/*.json) — pre-existing，需從 `C:\Users\dr\Downloads\Y\每日入院名單 Claude\` copy 三個 JSON 過來才會通
-  - Card 2 (Key 班) 仍是 placeholder card — 上游 CV-Schedulling-APP 也還沒做完
+  - cathlab 35 個 pytest 仍 fail (app/data/static/*.json 缺) — pre-existing，要從 `C:\Users\dr\Downloads\Y\
+    每日入院名單 Claude\` copy 三個 JSON (cathlab_id_maps / doctor_codes / cathlab_schedule) 過來
+  - Step 2 build_subtables 拒覆寫已存在 subtable — 若使用者想重建，得手動清掉 sub-table 區或走 Step 1
+    OCR 覆寫的 diff 路徑
 
 【不要重蹈覆轍】
-  - 不要在沒有 explicit Bash permission rule 時嘗試 `git push origin main` — auto-mode 會擋；改請使用者用 `!` prefix 自己跑或加 permissions
-  - 不要嘗試寫 Claude 自己的 permissions config (`.claude/settings.local.json`) — auto-mode hard block
-  - 不要把 `home directory` 全掃 credential file (`find ~/ -name "*.json"`) — auto-mode 擋為 credential exploration
-  - 不要把 weekday 寫成「住院日的星期」— 是「住院日+1 (= 開刀日) 的星期」, [[feedback-weekday-field-is-op-day]]
-  - `!` 預設 shell 是 bash，不是 PowerShell — 需要 PS cmdlet 時要明確寫 `!powershell -Command "..."`
+  - 不要把 Step 2 改回 lottery — 使用者明確要求 Step 2 = 純結構 (build subtable)、Step 4 = 決策 (抽籤)
+    [[step2-no-lottery]]
+  - 不要把 F/G 改回 `<select>` 嚴格下拉 — 必須是 datalist combobox 允許自填 [[fg-combobox-not-select]]
+  - 不要把三層 pin 揉成一欄 — E (within-doctor) / patient pin / doctor pin 是獨立概念 [[pin-layers-separated]]
+  - 不要假設 NCKUH EMR DOM 是平的 — 永遠用 frame-walk pattern [[nckuh-emr-frameset]]
+  - Step 3 endpoint 永遠要做 sheet writeback — `extract_patients` 只回 data，writeback 是 endpoint 責任
+    [[step3-must-writeback]]
+  - 寫 console.log 之類前端 debug 訊息看不到，因為使用者沒開 DevTools — 用 flash() 訊息或 alert()
 
 【相關檔案】
-  - app/services/ocr_service.py — 新 _apply_diff_to_subtables
-  - app/main.py — 新 /api/sheet/read endpoint
-  - app/templates/base.html — topbar viewer-link + 🔗 sheet links + viewer modal
-  - app/templates/admission.html — 日期 picker、資料檢查 card 抽出
-  - app/templates/settings.html — 按鈕順序提示
-  - app/static/app.js — viewer modal IIFE + setupDateInputs + OCR diff 警語
-  - app/static/app.css — viewer / picker / checks-card / button-order-hint 樣式
-  - tests/test_ocr_service.py — 4 個新測試 (sub-table remove/add/move/unattached)
-  - tests/test_main_endpoints.py — 3 個新測試 (/api/sheet/read)
+  - app/services/subtable_service.py (NEW) — build_subtables_from_main
+  - app/services/lottery_service.py — lottery_with_pins (rewritten with 3-layer pin)
+  - app/services/emr_service.py — fetch_raw_html (frameset walk + FALLBACK_DOCTORS), write_results_to_subtables
+  - app/services/cathlab_service.py — resolve_diag (any unresolved → OTHERS_PDI)
+  - app/services/sheet_service.py — batch_write_cells
+  - app/main.py — /api/step2/build_subtables, /api/step4/lottery, /api/sheet/raw, /api/options/fg, _STATIC_VERSION
+  - app/static/app.js — withBusy, fgInput/Datalist, renderPinPanels, lottery handler with patient_pins+doctor_pins
+  - app/static/app.css — button.busy spinner, input.fg-input, .pin-panel, .provider-table
+  - app/templates/admission.html — Step 2/4 panel rewrites
+  - app/templates/base.html — viewer modal (查閱 Google Sheet), cache-buster ?v={static_version}
+  - app/templates/settings.html — Gemini info <details>
 
 【重要 memory 檔】
-  - project_3card_app_state.md (updated — Phase 9 列入 Delivered)
-  - feedback_weekday_field_is_op_day.md (new)
-  - MEMORY.md index (updated)
+  - project_3card_app_state.md (updated — Phase 10 列入 Delivered)
+  - feedback_step2_no_lottery.md (new)
+  - feedback_pin_layers_separated.md (new)
+  - feedback_fg_combobox_not_select.md (new)
+  - feedback_step3_must_writeback.md (new)
+  - reference_nckuh_emr_frameset.md (new)
+  - reference_gemini_free_tier.md (new)
+  - MEMORY.md index (updated — +6 lines)

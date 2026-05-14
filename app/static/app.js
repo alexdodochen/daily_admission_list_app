@@ -76,31 +76,70 @@
     body.innerHTML = main + order + subsHtml;
   }
 
+  function renderRaw(data) {
+    const rows = data.rows || [];
+    const cols = data.cols || 0;
+    if (!rows.length || !cols) {
+      body.innerHTML = '<p class="viewer-empty">（此分頁無資料）</p>';
+      return;
+    }
+    const colLetter = (i) => {
+      let n = i; let s = '';
+      do { s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26) - 1; } while (n >= 0);
+      return s;
+    };
+    const headCols = Array.from({ length: cols }, (_, i) =>
+      `<th class="viewer-rawcol">${colLetter(i)}</th>`).join('');
+    const tbody = rows.map((r, i) => {
+      const cells = Array.from({ length: cols }, (_, c) => `<td>${esc(r[c] || '')}</td>`).join('');
+      return `<tr><td class="viewer-rowidx">${i + 1}</td>${cells}</tr>`;
+    }).join('');
+    body.innerHTML = `<div class="viewer-section"><h3>${esc(data.name)}（${rows.length} 列 × ${cols} 欄）</h3>
+      <table><thead><tr><th></th>${headCols}</tr></thead><tbody>${tbody}</tbody></table></div>`;
+  }
+
   async function loadSheets() {
     setMsg('讀取分頁清單…', 'ok');
     try {
       const r = await api('/api/sheet/list');
-      const dates = (r.sheets || []).filter(isYmd).sort((a, b) => b.localeCompare(a));
+      const all = r.sheets || [];
+      const dates = all.filter(isYmd).sort((a, b) => b.localeCompare(a));
+      const others = all.filter(s => !isYmd(s));
       const today = todayYmd();
-      const opts = ['<option value="">— 選擇日期 —</option>']
-        .concat(dates.map(d => `<option value="${d}"${d === today ? ' selected' : ''}>${d}</option>`));
+      const opts = ['<option value="">— 選擇分頁 —</option>'];
+      if (dates.length) {
+        opts.push('<optgroup label="日期分頁 (YYYYMMDD)">');
+        opts.push(...dates.map(d => `<option value="${d}"${d === today ? ' selected' : ''}>${d}</option>`));
+        opts.push('</optgroup>');
+      }
+      if (others.length) {
+        opts.push('<optgroup label="其他工作表">');
+        opts.push(...others.map(s => `<option value="${s}">${s}</option>`));
+        opts.push('</optgroup>');
+      }
       select.innerHTML = opts.join('');
-      setMsg(`共 ${dates.length} 個日期分頁`, 'ok');
-      if (dates.includes(today)) loadDate(today);
+      setMsg(`日期分頁 ${dates.length}、其他工作表 ${others.length}`, 'ok');
+      if (dates.includes(today)) loadSheet(today);
     } catch (err) {
       setMsg('✗ ' + err.message, 'err');
     }
   }
 
-  async function loadDate(date) {
-    if (!date) { body.innerHTML = '<p class="hint">選一個日期分頁開始查閱。</p>'; return; }
-    setMsg('讀取 ' + date + ' …', 'ok');
+  async function loadSheet(name) {
+    if (!name) { body.innerHTML = '<p class="hint">選一個分頁開始查閱。</p>'; return; }
+    setMsg('讀取 ' + name + ' …', 'ok');
     body.innerHTML = '<p class="hint">載入中…</p>';
     try {
-      const r = await api(`/api/sheet/read?date=${encodeURIComponent(date)}`);
-      if (r.error) { setMsg('✗ ' + r.error, 'err'); body.innerHTML = `<p class="viewer-empty">${esc(r.error)}</p>`; return; }
-      render(r);
-      setMsg('✓ ' + date, 'ok');
+      if (isYmd(name)) {
+        const r = await api(`/api/sheet/read?date=${encodeURIComponent(name)}`);
+        if (r.error) { setMsg('✗ ' + r.error, 'err'); body.innerHTML = `<p class="viewer-empty">${esc(r.error)}</p>`; return; }
+        render(r);
+      } else {
+        const r = await api(`/api/sheet/raw?name=${encodeURIComponent(name)}`);
+        if (r.error) { setMsg('✗ ' + r.error, 'err'); body.innerHTML = `<p class="viewer-empty">${esc(r.error)}</p>`; return; }
+        renderRaw(r);
+      }
+      setMsg('✓ ' + name, 'ok');
     } catch (err) {
       setMsg('✗ ' + err.message, 'err');
       body.innerHTML = '<p class="viewer-empty">讀取失敗。</p>';
@@ -117,7 +156,7 @@
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !modal.hidden) modal.hidden = true;
   });
-  select.addEventListener('change', () => loadDate(select.value));
+  select.addEventListener('change', () => loadSheet(select.value));
   refresh.addEventListener('click', () => loadSheets());
 })();
 
@@ -266,6 +305,26 @@ function flash(el, msg, kind = 'ok') {
   setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 5000);
 }
 
+// Wrap an async block with button-loading state.
+// Disables the button, swaps its label to `busyText` (with spinner via CSS),
+// and restores everything (text + disabled state) when the work resolves/throws.
+// Use inside click handlers AFTER any confirm() so cancelled confirms don't flicker.
+async function withBusy(btn, busyText, fn) {
+  if (!btn) return await fn();
+  const origText = btn.textContent;
+  const wasDisabled = btn.disabled;
+  btn.disabled = true;
+  btn.classList.add('busy');
+  btn.textContent = busyText;
+  try {
+    return await fn();
+  } finally {
+    btn.textContent = origText;
+    btn.disabled = wasDisabled;
+    btn.classList.remove('busy');
+  }
+}
+
 // ============================ settings page ============================
 
 if (document.getElementById('settings-form')) {
@@ -276,7 +335,11 @@ if (document.getElementById('settings-form')) {
   };
   const sel = $('#llm_provider');
   const help = $('#provider-help');
-  const updateHelp = () => { help.textContent = PROVIDER_HELP[sel.value] || ''; };
+  const geminiInfo = $('#gemini-info');
+  const updateHelp = () => {
+    help.textContent = PROVIDER_HELP[sel.value] || '';
+    if (geminiInfo) geminiInfo.hidden = sel.value !== 'gemini';
+  };
   sel.addEventListener('change', updateHelp);
   updateHelp();
 
@@ -292,13 +355,15 @@ if (document.getElementById('settings-form')) {
   });
 
   $('#test-btn').addEventListener('click', async () => {
-    $('#test-output').textContent = '測試中…';
-    try {
-      const r = await api('/api/settings/test');
-      $('#test-output').textContent = JSON.stringify(r, null, 2);
-    } catch (err) {
-      $('#test-output').textContent = err.message;
-    }
+    await withBusy($('#test-btn'), '測試中…', async () => {
+      $('#test-output').textContent = '測試中…';
+      try {
+        const r = await api('/api/settings/test');
+        $('#test-output').textContent = JSON.stringify(r, null, 2);
+      } catch (err) {
+        $('#test-output').textContent = err.message;
+      }
+    });
   });
 }
 
@@ -397,6 +462,7 @@ function setupFormatCheck() {
   $('#fmt-check-btn').addEventListener('click', async () => {
     const date = $('#date-input').value.trim();
     if (!date) return flash($('#fmt-msg'), '請先填日期', 'err');
+    await withBusy($('#fmt-check-btn'), '檢查中…', async () => {
     flash($('#fmt-msg'), '檢查中…', 'ok');
     try {
       const r = await api(`/api/format/check?date=${encodeURIComponent(date)}`);
@@ -420,6 +486,7 @@ function setupFormatCheck() {
     } catch (err) {
       flash($('#fmt-msg'), '✗ ' + err.message, 'err');
     }
+    });
   });
 
   $('#fmt-fix-btn').addEventListener('click', async () => {
@@ -428,6 +495,7 @@ function setupFormatCheck() {
     const types = [...new Set(lastIssues.filter(i => i.fixable).map(i => i.type))];
     // Always include chart_text_format — it's safe repeatCell formatting
     if (!types.includes('chart_text_format')) types.push('chart_text_format');
+    await withBusy($('#fmt-fix-btn'), '修正中…', async () => {
     flash($('#fmt-msg'), '修正中…', 'ok');
     const fd = new FormData();
     fd.append('date', date);
@@ -443,6 +511,7 @@ function setupFormatCheck() {
     } catch (err) {
       flash($('#fmt-msg'), '✗ ' + err.message, 'err');
     }
+    });
   });
 }
 
@@ -451,21 +520,23 @@ function setupFinalizeCheck() {
   $('#final-check-btn').addEventListener('click', async () => {
     const date = $('#date-input').value.trim();
     if (!date) return flash($('#final-msg'), '請先填日期', 'err');
-    flash($('#final-msg'), '檢查中…', 'ok');
-    try {
-      const r = await api(`/api/finalize/check?date=${encodeURIComponent(date)}`);
-      if (r.error) {
-        flash($('#final-msg'), '✗ ' + r.error, 'err');
-        $('#final-output').innerHTML = '';
-        return;
+    await withBusy($('#final-check-btn'), '檢查中…', async () => {
+      flash($('#final-msg'), '檢查中…', 'ok');
+      try {
+        const r = await api(`/api/finalize/check?date=${encodeURIComponent(date)}`);
+        if (r.error) {
+          flash($('#final-msg'), '✗ ' + r.error, 'err');
+          $('#final-output').innerHTML = '';
+          return;
+        }
+        renderFinalizeChecks(r.checks);
+        flash($('#final-msg'),
+          r.ready ? '✓ 全部通過，可以進 Step 5/6' : '✗ 尚未達到定案條件',
+          r.ready ? 'ok' : 'err');
+      } catch (err) {
+        flash($('#final-msg'), '✗ ' + err.message, 'err');
       }
-      renderFinalizeChecks(r.checks);
-      flash($('#final-msg'),
-        r.ready ? '✓ 全部通過，可以進 Step 5/6' : '✗ 尚未達到定案條件',
-        r.ready ? 'ok' : 'err');
-    } catch (err) {
-      flash($('#final-msg'), '✗ ' + err.message, 'err');
-    }
+    });
   });
 }
 
@@ -533,25 +604,29 @@ function setupStep1() {
 
   $('#ocr-btn').addEventListener('click', async () => {
     if (!currentFile) return;
-    flash($('#ocr-msg'), 'LLM 辨識中（可能需 10-30 秒）…', 'ok');
-    const fd = new FormData();
-    fd.append('image', currentFile);
-    try {
-      const r = await api('/api/step1/ocr', { method: 'POST', body: fd });
-      ocrRows = r.rows;
-      renderOcrTable(ocrRows);
-      flash($('#ocr-msg'), `✓ 辨識到 ${ocrRows.length} 筆`, 'ok');
-      $('#write1-btn').disabled = ocrRows.length === 0;
-    } catch (err) {
-      flash($('#ocr-msg'), '✗ ' + err.message, 'err');
-    }
+    await withBusy($('#ocr-btn'), '辨識中…', async () => {
+      flash($('#ocr-msg'), 'LLM 辨識中（可能需 10-30 秒）…', 'ok');
+      const fd = new FormData();
+      fd.append('image', currentFile);
+      try {
+        const r = await api('/api/step1/ocr', { method: 'POST', body: fd });
+        ocrRows = r.rows;
+        renderOcrTable(ocrRows);
+        flash($('#ocr-msg'), `✓ 辨識到 ${ocrRows.length} 筆`, 'ok');
+        $('#write1-btn').disabled = ocrRows.length === 0;
+      } catch (err) {
+        flash($('#ocr-msg'), '✗ ' + err.message, 'err');
+      }
+    });
   });
 
   $('#write1-btn').addEventListener('click', async () => {
     const date = $('#date-input').value.trim();
     if (!date) return flash($('#ocr-msg'), '請先填日期', 'err');
     const rows = collectOcrTable();
-    await step1Write(date, rows, /* allowOverwrite */ false);
+    await withBusy($('#write1-btn'), '寫入中…', async () => {
+      await step1Write(date, rows, /* allowOverwrite */ false);
+    });
   });
 }
 
@@ -653,86 +728,41 @@ function collectOcrTable() {
   return rows.filter(r => r && (r.name || '').trim());
 }
 
-// ---------- Step 2: Lottery ----------
-let step2Patients = [];
-let step2Ordered = [];
+// ---------- Step 2: Build sub-tables (no lottery here) ----------
+let step2Ordered = [];  // flat patient list from main A-L, used as Step 3 EMR default
 
 function setupStep2() {
-  $('#load2-btn').addEventListener('click', async () => {
+  $('#build2-btn').addEventListener('click', async () => {
     const date = $('#date-input').value.trim();
-    const weekday = $('#weekday').value;
     if (!date) return flash($('#s2-msg'), '請填日期', 'err');
-    try {
-      const r = await api(`/api/step2/context?date=${date}&weekday=${encodeURIComponent(weekday)}`);
-      step2Patients = r.patients;
-      renderTickets(r.tickets, step2Patients);
-      flash($('#s2-msg'), `✓ ${r.patients.length} 位病人，抽籤表 ${Object.keys(r.tickets).length} 位醫師`, 'ok');
-      $('#run2-btn').disabled = false;
-    } catch (err) {
-      flash($('#s2-msg'), '✗ ' + err.message, 'err');
-    }
-  });
-
-  $('#run2-btn').addEventListener('click', async () => {
-    const tickets = collectTickets();
-    const date = $('#date-input').value.trim();
-    const fd = new FormData();
-    fd.append('date', date);
-    fd.append('tickets_json', JSON.stringify(tickets));
-    fd.append('seed', Math.floor(Math.random() * 1e6));
-    try {
-      const r = await api('/api/step2/run', { method: 'POST', body: fd });
-      step2Ordered = r.ordered;
-      renderOrdered(r.ordered);
-      flash($('#s2-msg'), `✓ Round-robin ${r.ordered.length} 位`, 'ok');
-      $('#write2-btn').disabled = false;
-    } catch (err) {
-      flash($('#s2-msg'), '✗ ' + err.message, 'err');
-    }
-  });
-
-  $('#write2-btn').addEventListener('click', async () => {
-    const date = $('#date-input').value.trim();
-    const fd = new FormData();
-    fd.append('date', date);
-    fd.append('ordered_json', JSON.stringify(step2Ordered));
-    try {
-      const r = await api('/api/step2/write', { method: 'POST', body: fd });
-      flash($('#s2-msg'), `✓ 已寫入 ${r.range}`, 'ok');
-    } catch (err) {
-      flash($('#s2-msg'), '✗ ' + err.message, 'err');
-    }
+    await withBusy($('#build2-btn'), '生成 subtable 中…', async () => {
+      flash($('#s2-msg'), '依主表順序產生 subtable…', 'ok');
+      const fd = new FormData();
+      fd.append('date', date);
+      try {
+        const r = await api('/api/step2/build_subtables', { method: 'POST', body: fd });
+        step2Ordered = r.patients || [];
+        renderStep2Subtables(r.doctors || []);
+        flash($('#s2-msg'),
+          `✓ 已寫入 ${r.range}（${r.doctors.length} 位醫師、共 ${step2Ordered.length} 位病人）`, 'ok');
+      } catch (err) {
+        flash($('#s2-msg'), '✗ ' + err.message, 'err');
+        $('#s2-output').innerHTML = '';
+      }
+    });
   });
 }
 
-function renderTickets(tickets, patients) {
-  const doctorsInData = [...new Set(patients.map(p => p.doctor).filter(Boolean))];
-  // Merge: include doctors-from-sheet who aren't in tickets yet (they'll be "non-schedule")
-  const all = { ...tickets };
-  doctorsInData.forEach(d => { if (!(d in all)) all[d] = 0; });
-  const html = Object.entries(all).map(([d, n]) =>
-    `<div class="t"><label>${d}</label><input data-doc="${d}" type="number" min="0" value="${n}"></div>`
-  ).join('');
-  $('#tickets-wrap').innerHTML = `<h3>籤數（0 = 非時段）</h3><div class="tickets">${html}</div>`;
-}
-
-function collectTickets() {
-  const out = {};
-  $$('#tickets-wrap input[data-doc]').forEach(i => {
-    const n = parseInt(i.value, 10) || 0;
-    if (n > 0) out[i.dataset.doc] = n;
-  });
-  return out;
-}
-
-function renderOrdered(rows) {
-  const body = rows.map((r, i) =>
-    `<tr><td>${i + 1}</td><td>${r.doctor}</td><td>${r.name}</td><td>${r.chart_no || ''}</td></tr>`
-  ).join('');
-  $('#ordered-wrap').innerHTML = `
-    <h3>抽籤結果 (round-robin)</h3>
-    <table class="data"><thead><tr><th>序</th><th>主治</th><th>姓名</th><th>病歷號</th></tr></thead>
-    <tbody>${body}</tbody></table>`;
+function renderStep2Subtables(doctors) {
+  const esc = s => String(s || '').replace(/</g, '&lt;');
+  const html = doctors.map(d => {
+    const rows = (d.patients || []).map((p, i) =>
+      `<tr><td>${i + 1}</td><td>${esc(p.name)}</td><td>${esc(p.chart_no)}</td></tr>`).join('');
+    return `<div class="doctor-block"><h3>${esc(d.doctor)}（${d.count}人）</h3>
+      <table class="data"><thead><tr><th>#</th><th>姓名</th><th>病歷號</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+  }).join('');
+  $('#s2-output').innerHTML = html || '<p class="hint">沒有可寫入的醫師資料</p>';
 }
 
 // ---------- Step 3: EMR ----------
@@ -750,17 +780,27 @@ function setupStep3() {
     if (!url || !patients || !patients.length)
       return flash($('#s3-msg'), '請填 session URL 並確定有病人清單', 'err');
 
-    flash($('#s3-msg'), `擷取中… (${patients.length} 位)`, 'ok');
-    const fd = new FormData();
-    fd.append('session_url', url);
-    fd.append('patients_json', JSON.stringify(patients));
-    try {
-      const r = await api('/api/step3/run', { method: 'POST', body: fd });
-      renderEmrResults(r.results);
-      flash($('#s3-msg'), `✓ 完成 ${r.results.length} 位`, 'ok');
-    } catch (err) {
-      flash($('#s3-msg'), '✗ ' + err.message, 'err');
-    }
+    const date = $('#date-input').value.trim();
+    await withBusy($('#run3-btn'), `EMR 擷取中… (${patients.length} 位)`, async () => {
+      flash($('#s3-msg'), `擷取中… (${patients.length} 位)`, 'ok');
+      const fd = new FormData();
+      fd.append('session_url', url);
+      fd.append('patients_json', JSON.stringify(patients));
+      fd.append('date', date);
+      fd.append('admission_date', date);
+      try {
+        const r = await api('/api/step3/run', { method: 'POST', body: fd });
+        renderEmrResults(r.results);
+        const wb = r.writeback || {};
+        const missing = (wb.missing || []).length;
+        const skippedNote = wb.skipped ? '（未寫回 — 缺日期）' :
+          `；寫回子表格 ${wb.written} 位${missing ? `，${missing} 位查無子表格` : ''}`;
+        flash($('#s3-msg'),
+          `✓ 完成 ${r.results.length} 位${skippedNote}`, 'ok');
+      } catch (err) {
+        flash($('#s3-msg'), '✗ ' + err.message, 'err');
+      }
+    });
   });
 }
 
@@ -787,26 +827,60 @@ function setupStep4() {
   $('#load4-btn').addEventListener('click', async () => {
     const date = $('#date-input').value.trim();
     if (!date) return flash($('#s4-msg'), '請填日期', 'err');
-    try {
-      const r = await api(`/api/step4/subtables?date=${date}`);
-      renderSubtables(r.tables);
-      flash($('#s4-msg'), `✓ ${Object.keys(r.tables).length} 位醫師子表格`, 'ok');
-      $('#integrate4-btn').disabled = false;
-    } catch (err) {
-      flash($('#s4-msg'), '✗ ' + err.message, 'err');
-    }
+    await withBusy($('#load4-btn'), '讀取中…', async () => {
+      flash($('#s4-msg'), '讀取子表格中…', 'ok');
+      try {
+        const r = await api(`/api/step4/subtables?date=${date}`);
+        renderSubtables(r.tables);
+        flash($('#s4-msg'), `✓ ${Object.keys(r.tables).length} 位醫師子表格`, 'ok');
+        $('#lottery4-btn').disabled = false;
+        $('#integrate4-btn').disabled = false;
+      } catch (err) {
+        flash($('#s4-msg'), '✗ ' + err.message, 'err');
+      }
+    });
+  });
+
+  $('#lottery4-btn').addEventListener('click', async () => {
+    const date    = $('#date-input').value.trim();
+    const weekday = $('#weekday').value;
+    if (!date) return flash($('#s4-msg'), '請填日期', 'err');
+    const { patient_pins, doctor_pins } = pinsForPayload();
+    if (!confirm(
+      '這會用主治醫師抽籤表（依星期）+ pin 設定，重寫 N-V。\n' +
+      '原 N-V 內容會被覆蓋（含 Q 住服、V 改期欄）。確定繼續？'
+    )) return;
+    await withBusy($('#lottery4-btn'), '抽籤中…', async () => {
+      flash($('#s4-msg'), '抽籤 + 寫入 N-V…', 'ok');
+      const fd = new FormData();
+      fd.append('date', date);
+      fd.append('weekday', weekday);
+      fd.append('patient_pins_json', JSON.stringify(patient_pins));
+      fd.append('doctor_pins_json',  JSON.stringify(doctor_pins));
+      try {
+        const r = await api('/api/step4/lottery', { method: 'POST', body: fd });
+        const tix = (r.ticket_doctors || []).join('、') || '（無）';
+        flash($('#s4-msg'),
+          `✓ ${r.range}（病人 pin ${r.pinned_patients} / 醫師 pin ${r.pinned_doctors}；抽籤表 ${weekday}：${tix}）`, 'ok');
+      } catch (err) {
+        flash($('#s4-msg'), '✗ ' + err.message, 'err');
+      }
+    });
   });
 
   $('#integrate4-btn').addEventListener('click', async () => {
     const date = $('#date-input').value.trim();
     const fd = new FormData();
     fd.append('date', date);
-    try {
-      const r = await api('/api/step4/integrate', { method: 'POST', body: fd });
-      flash($('#s4-msg'), `✓ 已整合 ${r.rows} 筆到 ${r.range}`, 'ok');
-    } catch (err) {
-      flash($('#s4-msg'), '✗ ' + err.message, 'err');
-    }
+    await withBusy($('#integrate4-btn'), '整合中…', async () => {
+      flash($('#s4-msg'), '整合 N-W 中…', 'ok');
+      try {
+        const r = await api('/api/step4/integrate', { method: 'POST', body: fd });
+        flash($('#s4-msg'), `✓ 已整合 ${r.rows} 筆到 ${r.range}`, 'ok');
+      } catch (err) {
+        flash($('#s4-msg'), '✗ ' + err.message, 'err');
+      }
+    });
   });
 }
 
@@ -832,19 +906,23 @@ function setupStep5() {
   $('#plan5-btn').addEventListener('click', async () => {
     const date = $('#date-input').value.trim();
     if (!date) return flash($('#s5-msg'), '請填日期', 'err');
-    try {
-      const r = await api(`/api/step5/plan?date=${date}`);
-      out().innerHTML = renderPlan(r.plan, r.skipped);
-      flash($('#s5-msg'), '✓ 計畫已產出（未寫入 WEBCVIS）', 'ok');
-    } catch (err) {
-      flash($('#s5-msg'), '✗ ' + err.message, 'err');
-    }
+    await withBusy($('#plan5-btn'), '產出計畫中…', async () => {
+      flash($('#s5-msg'), '產出計畫中…', 'ok');
+      try {
+        const r = await api(`/api/step5/plan?date=${date}`);
+        out().innerHTML = renderPlan(r.plan, r.skipped);
+        flash($('#s5-msg'), '✓ 計畫已產出（未寫入 WEBCVIS）', 'ok');
+      } catch (err) {
+        flash($('#s5-msg'), '✗ ' + err.message, 'err');
+      }
+    });
   });
 
   $('#verify5-btn').addEventListener('click', async () => {
     const date = $('#date-input').value.trim();
     if (!date) return flash($('#s5-msg'), '請填日期', 'err');
     if (!confirm('這會開啟 Playwright 登入 WEBCVIS 查詢排程，繼續？')) return;
+    await withBusy($('#verify5-btn'), '驗證中…', async () => {
     flash($('#s5-msg'), '登入 WEBCVIS 查詢中…', 'ok');
     const fd = new FormData(); fd.append('date', date);
     try {
@@ -859,12 +937,14 @@ function setupStep5() {
     } catch (err) {
       flash($('#s5-msg'), '✗ ' + err.message, 'err');
     }
+    });
   });
 
   $('#keyin5-btn').addEventListener('click', async () => {
     const date = $('#date-input').value.trim();
     if (!date) return flash($('#s5-msg'), '請填日期', 'err');
     if (!confirm('這會開啟 Playwright 實際新增導管排程到 WEBCVIS（ADD + UPT）。確定繼續？')) return;
+    await withBusy($('#keyin5-btn'), 'Key in 中…', async () => {
     flash($('#s5-msg'), '寫入 WEBCVIS 中…（會開瀏覽器）', 'ok');
     const fd = new FormData(); fd.append('date', date); fd.append('dry_run', 'no');
     try {
@@ -883,6 +963,7 @@ function setupStep5() {
     } catch (err) {
       flash($('#s5-msg'), '✗ ' + err.message, 'err');
     }
+    });
   });
 }
 
@@ -891,13 +972,16 @@ function setupStep6() {
   $('#preview6-btn').addEventListener('click', async () => {
     const date = $('#date-input').value.trim();
     if (!date) return flash($('#s6-msg'), '請填日期', 'err');
-    try {
-      const r = await api(`/api/step6/preview?date=${date}`);
-      $('#line-preview').textContent = r.text;
-      flash($('#s6-msg'), '✓ 預覽完成（尚未推播）', 'ok');
-    } catch (err) {
-      flash($('#s6-msg'), '✗ ' + err.message, 'err');
-    }
+    await withBusy($('#preview6-btn'), '預覽中…', async () => {
+      flash($('#s6-msg'), '預覽 LINE 中…', 'ok');
+      try {
+        const r = await api(`/api/step6/preview?date=${date}`);
+        $('#line-preview').textContent = r.text;
+        flash($('#s6-msg'), '✓ 預覽完成（尚未推播）', 'ok');
+      } catch (err) {
+        flash($('#s6-msg'), '✗ ' + err.message, 'err');
+      }
+    });
   });
 
   $('#push6-btn').addEventListener('click', async () => {
@@ -907,32 +991,182 @@ function setupStep6() {
     const fd = new FormData();
     fd.append('date', date);
     fd.append('group_id', $('#line-group').value);
-    try {
-      const r = await api('/api/step6/push', { method: 'POST', body: fd });
-      $('#line-preview').textContent = r.preview;
-      flash($('#s6-msg'), `✓ 已推到 ${r.sent_to}（${r.length} 字）`, 'ok');
-    } catch (err) {
-      flash($('#s6-msg'), '✗ ' + err.message, 'err');
-    }
+    await withBusy($('#push6-btn'), '推送中…', async () => {
+      flash($('#s6-msg'), '推送 LINE 中…', 'ok');
+      try {
+        const r = await api('/api/step6/push', { method: 'POST', body: fd });
+        $('#line-preview').textContent = r.preview;
+        flash($('#s6-msg'), `✓ 已推到 ${r.sent_to}（${r.length} 字）`, 'ok');
+      } catch (err) {
+        flash($('#s6-msg'), '✗ ' + err.message, 'err');
+      }
+    });
   });
 }
 
-function renderSubtables(tables) {
+// ---------- Step 4 pin panels (patient + doctor) ----------
+// Patient pin = "this specific patient gets global 序號 N" (overrides RR).
+// Doctor pin  = "this doctor is the N-th in the round-robin draw order".
+// Pins persist in localStorage keyed by date so reloading the page keeps them.
+const pinStorageKey = (date) => `pin_${date}`;
+function loadPins() {
+  const date = $('#date-input').value.trim();
+  try {
+    return JSON.parse(localStorage.getItem(pinStorageKey(date)) || '{}') || {};
+  } catch (_) {
+    return {};
+  }
+}
+function savePins(patch) {
+  const date = $('#date-input').value.trim();
+  const cur = loadPins();
+  Object.assign(cur, patch);
+  localStorage.setItem(pinStorageKey(date), JSON.stringify(cur));
+}
+function pinsForPayload() {
+  // Read live values from the rendered inputs (source of truth for the click)
+  const patient_pins = {};
+  $$('#pin-patient-wrap input[data-chart]').forEach(i => {
+    const v = parseInt((i.value || '').trim(), 10);
+    if (v > 0) patient_pins[i.dataset.chart] = v;
+  });
+  const doctor_pins = {};
+  $$('#pin-doctor-wrap input[data-doc]').forEach(i => {
+    const v = parseInt((i.value || '').trim(), 10);
+    if (v > 0) doctor_pins[i.dataset.doc] = v;
+  });
+  return { patient_pins, doctor_pins };
+}
+
+function renderPinPanels(tables) {
   const esc = s => String(s || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const saved = loadPins();
+  const patPin = saved.patient_pins || {};
+  const docPin = saved.doctor_pins  || {};
+
+  const flat = [];
+  Object.entries(tables).forEach(([doc, pts]) => {
+    pts.forEach(p => flat.push({ doctor: doc, name: p.name, chart_no: p.chart_no }));
+  });
+  const patBody = flat.map(p => {
+    const cur = patPin[p.chart_no] || '';
+    return `<tr><td>${esc(p.name)}</td><td>${esc(p.chart_no)}</td><td>${esc(p.doctor)}</td>
+      <td><input data-chart="${esc(p.chart_no)}" type="number" min="1" value="${esc(cur)}" placeholder="—" class="pin-input"></td></tr>`;
+  }).join('');
+  const patHtml = `<details class="pin-panel" ${Object.keys(patPin).length ? 'open' : ''}>
+    <summary><strong>📌 病人入院序 pin</strong>（指定特定病人為第 N 位；空白 = 走抽籤）</summary>
+    <table class="data"><thead><tr><th>姓名</th><th>病歷號</th><th>主治</th><th>第幾位</th></tr></thead>
+    <tbody>${patBody}</tbody></table></details>`;
+
+  const docBody = Object.entries(tables).map(([doc, pts]) => {
+    const cur = docPin[doc] || '';
+    return `<tr><td>${esc(doc)}</td><td>${pts.length}</td>
+      <td><input data-doc="${esc(doc)}" type="number" min="1" value="${esc(cur)}" placeholder="—" class="pin-input"></td></tr>`;
+  }).join('');
+  const docHtml = `<details class="pin-panel" ${Object.keys(docPin).length ? 'open' : ''}>
+    <summary><strong>📌 醫師抽籤順位 pin</strong>（指定某醫師排第 N 順位；空白 = 抽籤表權重決定）</summary>
+    <table class="data"><thead><tr><th>主治醫師</th><th>病人數</th><th>第幾順位</th></tr></thead>
+    <tbody>${docBody}</tbody></table></details>`;
+
+  let host = $('#pin-wrap');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'pin-wrap';
+    $('#subtables-wrap').insertAdjacentElement('beforebegin', host);
+  }
+  host.innerHTML =
+    `<div id="pin-patient-wrap">${patHtml}</div>` +
+    `<div id="pin-doctor-wrap">${docHtml}</div>`;
+
+  // Auto-save into localStorage on every input change so page reloads keep state
+  $$('#pin-wrap input.pin-input').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const { patient_pins, doctor_pins } = pinsForPayload();
+      savePins({ patient_pins, doctor_pins });
+    });
+  });
+}
+
+let _fgOptions = null;
+
+async function ensureFgOptions() {
+  if (_fgOptions) return _fgOptions;
+  try {
+    const r = await api('/api/options/fg');
+    _fgOptions = { f: r.f || [], g: r.g || [] };
+  } catch (_) {
+    _fgOptions = { f: [], g: [] };
+  }
+  return _fgOptions;
+}
+
+function fgInput(col, value, row, options, listId) {
+  const esc = s => String(s || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  return `<input class="fg-input" type="text" list="${listId}"
+            data-row="${row}" data-col="${col}" value="${esc(value)}"
+            placeholder="可選清單或自填">`;
+}
+
+function fgDatalist(id, options) {
+  const esc = s => String(s || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  return `<datalist id="${id}">` +
+    options.map(o => `<option value="${esc(o)}">`).join('') + '</datalist>';
+}
+
+async function renderSubtables(tables) {
+  const opts = await ensureFgOptions();
+  const esc = s => String(s || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  // Datalists are shared across all rows; render once at the top
+  const datalists = fgDatalist('fg-f-list', opts.f) + fgDatalist('fg-g-list', opts.g);
   const html = Object.entries(tables).map(([doc, pts]) => {
     const body = pts.map(p => `
       <tr>
         <td>${esc(p.name)}</td><td>${esc(p.chart_no)}</td>
-        <td class="editable" data-row="${p.row}" data-col="6" contenteditable="true">${esc(p.diagnosis)}</td>
-        <td class="editable" data-row="${p.row}" data-col="7" contenteditable="true">${esc(p.cathlab)}</td>
+        <td class="editable editable-pin" data-row="${p.row}" data-col="5" contenteditable="true" title="填數字 = 同醫師內排序（1/2/3）">${esc(p.manual)}</td>
+        <td>${fgInput(6, p.diagnosis, p.row, opts.f, 'fg-f-list')}</td>
+        <td>${fgInput(7, p.cathlab,   p.row, opts.g, 'fg-g-list')}</td>
         <td>${esc(p.note)}</td>
       </tr>`).join('');
     return `<div class="doctor-block"><h3>${doc}（${pts.length}人）</h3>
-      <table class="data"><thead><tr><th>姓名</th><th>病歷號</th><th>術前診斷(F) 點擊編輯</th><th>預計心導管(G) 點擊編輯</th><th>註記</th></tr></thead>
+      <table class="data"><thead><tr><th>姓名</th><th>病歷號</th><th>同醫師內排序(E)</th><th>術前診斷(F)</th><th>預計心導管(G)</th><th>註記</th></tr></thead>
       <tbody>${body}</tbody></table></div>`;
   }).join('');
-  $('#subtables-wrap').innerHTML = html || '<p class="hint">沒找到子表格</p>';
+  $('#subtables-wrap').innerHTML = datalists + html || '<p class="hint">沒找到子表格</p>';
+  renderPinPanels(tables);
   wireEditableCells();
+  wireFgInputs();
+}
+
+function wireFgInputs() {
+  const date = $('#date-input').value.trim();
+  $$('#subtables-wrap input.fg-input').forEach(inp => {
+    inp.dataset.original = inp.value;
+    const save = async () => {
+      const val = inp.value.trim();
+      if (val === inp.dataset.original) return;
+      inp.classList.add('saving');
+      try {
+        const fd = new FormData();
+        fd.append('date', date);
+        fd.append('row', inp.dataset.row);
+        fd.append('col', inp.dataset.col);
+        fd.append('value', val);
+        await api('/api/step4/cell', { method: 'POST', body: fd });
+        inp.dataset.original = val;
+        inp.classList.remove('saving');
+        inp.classList.add('saved');
+        setTimeout(() => inp.classList.remove('saved'), 1200);
+        flash($('#s4-msg'),
+          `✓ 已存 ${String.fromCharCode(64 + parseInt(inp.dataset.col))}${inp.dataset.row} = ${val || '(空)'}`, 'ok');
+      } catch (err) {
+        inp.classList.remove('saving');
+        inp.classList.add('error');
+        flash($('#s4-msg'), '✗ ' + err.message, 'err');
+      }
+    };
+    inp.addEventListener('change', save);
+    inp.addEventListener('blur', save);
+  });
 }
 
 function wireEditableCells() {

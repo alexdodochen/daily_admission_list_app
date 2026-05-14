@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>每日入院名單 — 本地版</title>
-<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/app.css?v={{ static_version }}">
 </head>
 <body>
 <header class="topbar">
@@ -58,16 +58,16 @@
 {% block body %}{% endblock %}
 </main>
 
-<!-- Sheet viewer modal — read-only browse of any YYYYMMDD date sheet -->
+<!-- Sheet viewer modal — read-only browse of every worksheet (date + others) -->
 <div id="viewer-modal" class="help-modal viewer-modal" hidden>
   <div class="help-content viewer-content">
     <header>
-      <h2>📋 查閱每日工作表</h2>
+      <h2>📋 查閱 Google Sheet</h2>
       <button id="viewer-close" class="help-close" type="button">✕</button>
     </header>
     <section>
       <div class="viewer-toolbar">
-        <label>日期分頁
+        <label>分頁
           <select id="viewer-date-select">
             <option value="">載入中…</option>
           </select>
@@ -76,7 +76,7 @@
         <span id="viewer-msg" class="msg"></span>
       </div>
       <div id="viewer-body" class="viewer-body">
-        <p class="hint">選一個日期分頁開始查閱（唯讀，不會改 Sheet）。</p>
+        <p class="hint">選一個分頁開始查閱（唯讀，不會改 Sheet）。日期分頁會分區顯示（主資料 / 入院序 / 子表格），其他工作表（抽籤表 / 統計 等）顯示為原始 A:Z 表格。</p>
       </div>
     </section>
   </div>
@@ -119,7 +119,7 @@
     </section>
   </div>
 </div>
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v={{ static_version }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

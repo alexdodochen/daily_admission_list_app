@@ -19,9 +19,40 @@
         <input type="password" name="llm_api_key" placeholder="{% if cfg.llm_api_key %}（已儲存，留白則不變）{% else %}sk-…或 AIza…{% endif %}">
       </label>
       <label>模型名稱（選填，預設會用各家建議的模型）
-        <input name="llm_model" value="{{ cfg.llm_model }}" placeholder="例：claude-sonnet-4-6 / gpt-4o / gemini-2.0-flash">
+        <input name="llm_model" value="{{ cfg.llm_model }}" placeholder="例：claude-sonnet-4-6 / gpt-4o / gemini-2.5-flash-lite">
       </label>
       <p class="hint" id="provider-help"></p>
+      <details id="gemini-info" class="hint provider-info" hidden>
+        <summary><strong>Gemini 免費 tier 模型對照（2026 年）</strong> — 點開看哪個額度最高</summary>
+        <table class="provider-table">
+          <thead>
+            <tr><th>模型</th><th>RPM</th><th>RPD<br>(次/日)</th><th>TPM</th><th>適用情境</th></tr>
+          </thead>
+          <tbody>
+            <tr class="recommended">
+              <td><code>gemini-2.5-flash-lite</code> ⭐</td>
+              <td>15</td><td><strong>1,000</strong></td><td>250K</td>
+              <td>OCR 截圖辨識（額度最高，本 App 推薦）</td>
+            </tr>
+            <tr>
+              <td><code>gemini-2.5-flash</code></td>
+              <td>10</td><td>500</td><td>250K</td>
+              <td>平衡能力 + 額度</td>
+            </tr>
+            <tr>
+              <td><code>gemini-2.5-pro</code></td>
+              <td>5</td><td>100</td><td>250K</td>
+              <td>最強推理，每日次數少（不建議跑批次）</td>
+            </tr>
+          </tbody>
+        </table>
+        <ul style="margin-top:8px;">
+          <li>所有模型共用 1M token context window</li>
+          <li>RPD 太平洋時間半夜重置（台灣下午 3-4 點）</li>
+          <li>額度按 <strong>專案</strong> 算，不是 API key</li>
+          <li>2026/3/3 起 <code>gemini-2.0-flash</code> 已停用，請改用 2.5 系列</li>
+        </ul>
+      </details>
     </fieldset>
 
     <fieldset>

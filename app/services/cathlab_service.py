@@ -141,15 +141,21 @@ def _resolve_id(text: str, table: dict) -> tuple[str, str]:
 def resolve_diag(text: str) -> tuple[str, str]:
     """
     Resolve 術前診斷 → (label, id). Applies _normalize_diag first
-    (angina/unstable → CAD per feedback_diag_angina_false_positive.md), then
-    falls back to OTHERS_PDI when input is 'Others:XXX' not in id maps.
+    (angina/unstable → CAD per feedback_diag_angina_false_positive.md). Any
+    non-empty text that can't be matched to a known id falls back to OTHERS_PDI
+    so user-typed custom diagnoses always make it to WEBCVIS — the cathlab
+    keyin then picks "OTHERS" in the dropdown and types the label as free text.
     """
     norm = emr_service.normalize_diag_for_cathlab(text)
     label, idv = _resolve_id(norm, id_maps().get("diag", {}))
     if idv:
         return label, idv
-    if norm.startswith("Others:"):
-        return norm, OTHERS_PDI
+    if norm.strip():
+        # Preserve `Others:` prefix if user used it; otherwise add it so the
+        # WEBCVIS keyin layer can distinguish "this is a free-text OTHERS"
+        # from a known label.
+        out_label = norm if norm.startswith("Others:") else f"Others:{norm}"
+        return out_label, OTHERS_PDI
     return "", ""
 
 

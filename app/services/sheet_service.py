@@ -80,6 +80,19 @@ def clear_range(ws, a1: str):
     ws.batch_clear([a1])
 
 
+def batch_write_cells(ws, patches: list[tuple[str, str]], raw: bool = False):
+    """Apply many scattered (a1, value) cell writes in one API call.
+
+    Empty `patches` is a no-op (gspread errors on empty body).
+    """
+    if not patches:
+        return
+    ws.batch_update(
+        [{"range": a1, "values": [[val]]} for a1, val in patches],
+        value_input_option="RAW" if raw else "USER_ENTERED",
+    )
+
+
 def format_header(ws, row: int, ncols: int, start_col: int = 1):
     sh = get_spreadsheet()
     sh.batch_update({"requests": [{
