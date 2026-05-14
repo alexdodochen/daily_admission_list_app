@@ -124,6 +124,11 @@ def test_resolve_diag_unknown_falls_back_to_others_pdi():
     assert label == "Others:阿嬤 的 感冒"
 
 
+def test_resolve_diag_empty():
+    assert cs.resolve_diag("") == ("", "")
+    assert cs.resolve_diag("   ") == ("", "")
+
+
 def test_resolve_proc_exact():
     label, idv = cs.resolve_proc("Left heart cath.")
     assert idv == "PHC20090907120001"
