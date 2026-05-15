@@ -22,6 +22,7 @@ from .services import updater, cathlab_service, format_check_service, finalize_s
 from .services import cv_solver, scheduling_service
 from .services import reschedule_service, upstream
 from .services import keyin_routes
+from .services import draft_service
 
 BASE = Path(__file__).parent
 app = FastAPI(title="心臟內科總醫師 — 本地版")
@@ -255,15 +256,25 @@ async def api_options_fg():
     Sourced from emr_service.DIAG_RULES / CATH_RULES + a few common extras
     (s/p PCI, Cover stent) the auto-detector doesn't infer.
     """
-    f_opts = [out for _, out in emr_service.DIAG_RULES]
-    g_opts = [out for _, out in emr_service.CATH_RULES]
-    for extra in ("s/p PCI",):
-        if extra not in f_opts:
-            f_opts.append(extra)
-    for extra in ("Cover stent",):
-        if extra not in g_opts:
-            g_opts.append(extra)
-    return {"ok": True, "f": f_opts, "g": g_opts}
+    # emr_service.get_fg_options() reads 下拉選單 first, falls back to
+    # hardcoded DIAG_RULES/CATH_RULES outputs.
+    f_opts, g_opts = emr_service.get_fg_options()
+    src = "sheet" if sheet_service.read_fg_options_from_sheet() else "fallback"
+    return {"ok": True, "f": f_opts, "g": g_opts, "source": src}
+
+
+@app.post("/api/options/fg/refresh")
+async def api_options_fg_refresh():
+    """Force re-read of 下拉選單 from Sheet (busts cache)."""
+    sheet_service.reset_cache()
+    try:
+        sheet_opts = sheet_service.read_fg_options_from_sheet()
+    except Exception as e:
+        raise HTTPException(500, f"refresh failed: {e}")
+    if not sheet_opts:
+        return {"ok": False, "msg": "下拉選單 worksheet 不存在或為空"}
+    f_opts, g_opts = sheet_opts
+    return {"ok": True, "f_count": len(f_opts), "g_count": len(g_opts)}
 
 
 # ------------------------------ Step 3 EMR ------------------------------
@@ -282,6 +293,7 @@ async def api_step3_run(session_url: str = Form(...),
         results = await emr_service.extract_patients(
             session_url, patients, admission_date=admission_date)
         write_info: dict = {"written": 0, "missing": [], "skipped": True}
+        main_fixes: dict = {"patches_count": 0, "fixes": [], "skipped": True}
         target_date = (date or admission_date or "").strip()
         if target_date:
             try:
@@ -290,7 +302,28 @@ async def api_step3_run(session_url: str = Form(...),
             except Exception as we:
                 write_info = {"written": 0, "missing": [], "skipped": True,
                               "error": str(we)}
-        return {"ok": True, "results": results, "writeback": write_info}
+            # Auto-correct main A-L (姓名/性別/年齡) from EMR (independent of
+            # sub-table writeback — even if sub-tables fail we still try main).
+            try:
+                main_fixes = emr_service.apply_emr_main_fixes(target_date, results)
+            except Exception as me:
+                main_fixes = {"patches_count": 0, "fixes": [], "skipped": True,
+                              "error": str(me)}
+            # Enrich each result with sub-table row so the UI can inline-edit
+            # F/G and POST /api/step4/cell with the correct row.
+            try:
+                tables = ordering_service.read_doctor_subtables(target_date)
+                chart_to_row = {(p.get("chart_no") or "").strip(): p["row"]
+                                for _, pts in tables.items() for p in pts
+                                if (p.get("chart_no") or "").strip()}
+                for r in results:
+                    ch = (r.get("chart_no") or "").strip()
+                    if ch in chart_to_row:
+                        r["row"] = chart_to_row[ch]
+            except Exception:
+                pass  # row enrichment is optional UI sugar
+        return {"ok": True, "results": results,
+                "writeback": write_info, "main_fixes": main_fixes}
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -581,27 +614,52 @@ async def _startup_check_upstreams():
 
 @app.get("/api/sheet/list")
 async def api_sheet_list():
+    """Combined tab list across both spreadsheets so the viewer can browse
+    入院清單 sheets AND 排班 sheets from one dropdown.
+
+    Returns:
+      sheets: legacy flat list (admission only) — kept for backward compat
+      admission: tabs of cfg.sheet_id (admission/cathlab)
+      schedule:  tabs of cfg.schedule_sheet_id (duty roster) — empty if not configured
+    """
     try:
-        return {"ok": True, "sheets": sheet_service.list_sheets()}
+        admission_tabs = sheet_service.list_sheets()
     except Exception as e:
         raise HTTPException(500, str(e))
+    schedule_tabs: list[str] = []
+    cfg = appconfig.load()
+    if cfg.schedule_sheet_id:
+        try:
+            schedule_tabs = [ws.title for ws in scheduling_service.get_sheet().worksheets()]
+        except Exception:
+            schedule_tabs = []  # silent — keep admission viewer working
+    return {"ok": True, "sheets": admission_tabs,
+            "admission": admission_tabs, "schedule": schedule_tabs}
 
 
 @app.post("/api/sheet/write_cell")
 async def api_sheet_write_cell(sheet: str = Form(...),
                                 row: int = Form(...),
                                 col: int = Form(...),
-                                value: str = Form("")):
+                                value: str = Form(""),
+                                source: str = Form("admission")):
     """Write one cell on ANY worksheet. Powers the inline-editable cells in
     the 📋 查閱 modal so any in-app tweak lands in Google Sheet immediately.
 
     `row` and `col` are 1-indexed (col A = 1).
+    `source` ∈ {"admission", "schedule"} routes to the right spreadsheet.
     """
     name = (sheet or "").strip()
     if not name:
         raise HTTPException(400, "missing sheet name")
     try:
-        ws = sheet_service.get_worksheet(name)
+        if source == "schedule":
+            try:
+                ws = scheduling_service.get_sheet().worksheet(name)
+            except Exception:
+                raise HTTPException(404, f"找不到分頁 {name}（排班 Sheet）")
+        else:
+            ws = sheet_service.get_worksheet(name)
         if ws is None:
             raise HTTPException(404, f"找不到分頁 {name}")
         # If we're writing into a chart-no column on a date sheet, make sure
@@ -622,20 +680,26 @@ async def api_sheet_write_cell(sheet: str = Form(...),
 
 
 @app.get("/api/sheet/raw")
-async def api_sheet_raw(name: str):
+async def api_sheet_raw(name: str, source: str = "admission"):
     """Read ANY worksheet by exact tab name and return a raw A:Z grid.
 
-    Used by the viewer modal to inspect non-date tabs (主治醫師抽籤表,
-    值班總數統計, 改期清單, etc.) without imposing the date-sheet structure.
+    `source` ∈ {"admission", "schedule"} chooses which spreadsheet to read.
+    Default = admission (backward compat). schedule reads from cfg.schedule_sheet_id.
     """
     name = (name or "").strip()
     if not name:
         raise HTTPException(400, "missing name")
     try:
-        ws = sheet_service.get_worksheet(name)
+        if source == "schedule":
+            try:
+                ws = scheduling_service.get_sheet().worksheet(name)
+            except Exception:
+                return {"ok": False, "error": f"找不到分頁 {name}（排班 Sheet）"}
+        else:
+            ws = sheet_service.get_worksheet(name)
         if ws is None:
             return {"ok": False, "error": f"找不到分頁 {name}"}
-        rows = sheet_service.read_range(ws, "A:Z")
+        rows = ws.get("A:Z") or []
         # Trim fully-blank trailing rows
         while rows and not any((c or "").strip() for c in rows[-1]):
             rows.pop()
@@ -845,6 +909,18 @@ async def api_sched_write(payload: dict):
 
     try:
         sheet = scheduling_service.get_sheet()
+        # Read previously-written monthly stats for this same month BEFORE
+        # we overwrite the calendar / monthly stats sheets. If they exist,
+        # subtract them in update_cumulative_stats so re-running the same
+        # month doesn't double-count in 值班總數統計. (Per upstream 5/12.)
+        prev_monthly: dict = {}
+        try:
+            prev_monthly = scheduling_service.read_monthly_stats(
+                sheet, f"{sheet_name} 班數統計"
+            ) or {}
+        except Exception:
+            prev_monthly = {}
+
         scheduling_service.write_calendar_sheet(
             sheet, sheet_name, year, month, schedule,
             scheduling_service.is_taiwan_holiday,
@@ -853,8 +929,101 @@ async def api_sched_write(payload: dict):
             sheet, f"{sheet_name} 班數統計", stats_rows,
             headers=scheduling_service.DEFAULT_MONTHLY_HEADERS + ["QOD次數"],
         )
-        scheduling_service.update_cumulative_stats(sheet, baseline, monthly_stats_map)
+        scheduling_service.update_cumulative_stats(
+            sheet, baseline, monthly_stats_map,
+            previous_monthly=prev_monthly,
+        )
     except Exception as e:
         return {"ok": False, "error": f"寫入失敗：{e}"}
 
-    return {"ok": True, "sheet_name": sheet_name}
+    return {"ok": True, "sheet_name": sheet_name,
+            "had_prev_monthly": bool(prev_monthly)}
+
+
+@app.post("/api/sched/handoff-to-keyin")
+async def api_sched_handoff(payload: dict):
+    """Bridge: take cached cv_solver schedule, stage as Card 2 keyin prefill.
+
+    Splits {date: name} into vs_schedule (VS_LIST) + cr_schedule
+    (CRS + INTER_MID) keyed by day-of-month. Records tw_holidays for the
+    month. Prefill is one-shot — consumed by next /keyin/api/prefill call.
+    """
+    year  = int(payload["year"])
+    month = int(payload["month"])
+    cache_key = f"{year}{month:02d}"
+    cached = _solve_cache.get(cache_key)
+    if cached is None:
+        return {"ok": False,
+                "error": "請先按「solve」產生班表，再進入 key 班"}
+
+    schedule = cached["schedule"]
+    vs_schedule: dict[int, str] = {}
+    cr_schedule: dict[int, str] = {}
+    for d, name in schedule.items():
+        if name in cv_solver.VS_LIST:
+            vs_schedule[d.day] = name
+        elif name in cv_solver.CRS or name in cv_solver.INTER_MID:
+            cr_schedule[d.day] = name
+
+    tw_holidays = [
+        d.strftime("%Y-%m-%d")
+        for d in cv_solver.month_days(year, month)
+        if cv_solver.is_taiwan_holiday(d)
+    ]
+
+    keyin_routes._set_prefill({
+        "year": year,
+        "month": month,
+        "vs_schedule": vs_schedule,
+        "cr_schedule": cr_schedule,
+        "tw_holidays": tw_holidays,
+    })
+    return {"ok": True, "redirect": "/keyin",
+            "vs_count": len(vs_schedule), "cr_count": len(cr_schedule)}
+
+
+# ----------------------- Drafts (Card 1 排班 + Card 2 Key 班) -----------------------
+# Single-user local app — no auth. Bucket = "sched" or "keyin". UI provides
+# the name; backend slugifies it. Files stored under <user_data>/drafts/<bucket>/.
+
+def _draft_bucket(bucket: str) -> str:
+    if bucket not in ("sched", "keyin"):
+        raise HTTPException(400, f"unknown bucket: {bucket}")
+    return bucket
+
+
+@app.post("/api/draft/{bucket}/save")
+async def api_draft_save(bucket: str, payload: dict):
+    b = _draft_bucket(bucket)
+    name = (payload.get("name") or "").strip() or f"自動存檔_{int(__import__('time').time())}"
+    state = payload.get("state") or {}
+    try:
+        meta = draft_service.save(b, name, state)
+        return {"ok": True, **meta}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/draft/{bucket}/list")
+async def api_draft_list(bucket: str):
+    b = _draft_bucket(bucket)
+    return {"ok": True, "drafts": draft_service.list_drafts(b)}
+
+
+@app.get("/api/draft/{bucket}/load")
+async def api_draft_load(bucket: str, name: str):
+    b = _draft_bucket(bucket)
+    data = draft_service.load(b, name)
+    if data is None:
+        raise HTTPException(404, f"draft not found: {name}")
+    return {"ok": True, **data}
+
+
+@app.post("/api/draft/{bucket}/delete")
+async def api_draft_delete(bucket: str, payload: dict):
+    b = _draft_bucket(bucket)
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "missing name")
+    ok = draft_service.delete(b, name)
+    return {"ok": ok}

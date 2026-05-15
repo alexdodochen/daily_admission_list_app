@@ -21,6 +21,7 @@ Rules:
 from __future__ import annotations
 
 import calendar
+import random
 from datetime import date, timedelta
 from typing import Optional
 
@@ -87,6 +88,11 @@ JK_WEEKDAY_CAP = 3
 VS_TOTAL_CAP = 2
 VS_HOLIDAY_CAP = 1
 
+# QOD 豁免：所有 VS + 展瀚 + 建寬。CR 才被嚴格 QOD 規則約束。
+QOD_EXEMPT_NAMES: set[str] = set(VS_LIST) | {"展瀚", "建寬"}
+# QOD 漸進放寬上限：solver 嘗試 max_qod=0..QOD_RELAX_CAP，回傳最少違規解。
+QOD_RELAX_CAP = 10
+
 
 # ── Public helpers ──────────────────────────────────────────────────
 def month_days(year: int, month: int) -> list[date]:
@@ -101,8 +107,23 @@ def month_h_w(year: int, month: int) -> tuple[int, int]:
 
 
 # ── Step 2/3: compute counts before preferences are collected ───────
-def compute_initial_targets(year: int, month: int, X: int, baseline: dict) -> dict:
-    """Headline counts the UI shows after the user supplies X."""
+def compute_initial_targets(
+    year: int,
+    month: int,
+    X: int,
+    baseline: dict,
+    vs_holiday_exempt: Optional[list[str]] = None,
+) -> dict:
+    """Headline counts the UI shows after the user supplies X.
+
+    `vs_holiday_exempt`: names of VS who do NOT take any holiday shift this
+    month (e.g. ["朝允", "昭佑"]). Holiday slots distribute only among
+    remaining (non-exempt) VS; unmet demand absorbed by CRs (reflected in
+    cr_holiday_total). Weekday distribution unaffected.
+
+    Adds projected CR-side numbers (cr_holiday_total / cr_weekday_total /
+    cr_per_doctor) so the UI can preview each CR's expected workload.
+    """
     days = month_days(year, month)
     H, W = month_h_w(year, month)
     get_stat_type = make_stat_type_fn(is_taiwan_holiday)
@@ -111,18 +132,28 @@ def compute_initial_targets(year: int, month: int, X: int, baseline: dict) -> di
     vs_h_total = max(0, H - 6)
     vs_w_total = max(0, W - 15 - X - jk)
 
+    exempt_set = {n for n in (vs_holiday_exempt or []) if n in VS_LIST}
+    non_exempt = [n for n in VS_LIST if n not in exempt_set]
+
     warnings: list[str] = []
     if vs_w_total > VS_TOTAL_CAP * len(VS_LIST):
         warnings.append("VS 平日缺額已超過 4 人 × 1 班的容量；展瀚 X 可能太低")
-    if vs_h_total > VS_HOLIDAY_CAP * len(VS_LIST):
-        warnings.append(
-            f"假日缺 {vs_h_total} 班，超過 4 位 VS × 1 = 4 班；CR 假日 ≤ 2 軟上限可能放寬到 3"
-        )
+    if vs_h_total > VS_HOLIDAY_CAP * len(non_exempt or VS_LIST):
+        shortfall = vs_h_total - VS_HOLIDAY_CAP * len(non_exempt)
+        if exempt_set:
+            warnings.append(
+                f"假日需 {vs_h_total} 班，但僅 {len(non_exempt)} 位 VS 可值"
+                f"（{ '、'.join(exempt_set) } 豁免）；CR 將額外吃 {max(0, shortfall)} 班假日"
+            )
+        else:
+            warnings.append(
+                f"假日缺 {vs_h_total} 班，超過 4 位 VS × 1 = 4 班；CR 假日 ≤ 2 軟上限可能放寬到 3"
+            )
 
     vs_per_doctor: dict[str, dict[str, int]] = {n: {"holiday": 0, "weekday": 0} for n in VS_LIST}
 
     holiday_order = sorted(
-        VS_LIST,
+        non_exempt,
         key=lambda n: (
             baseline.get(n, {}).get("假日", 0),
             -(baseline.get(n, {}).get("假日", 0)
@@ -132,13 +163,13 @@ def compute_initial_targets(year: int, month: int, X: int, baseline: dict) -> di
     )
     h_remaining = vs_h_total
     idx = 0
-    while h_remaining > 0:
-        vs = holiday_order[idx % len(VS_LIST)]
+    while h_remaining > 0 and holiday_order:
+        vs = holiday_order[idx % len(holiday_order)]
         if vs_per_doctor[vs]["holiday"] < VS_HOLIDAY_CAP:
             vs_per_doctor[vs]["holiday"] += 1
             h_remaining -= 1
         idx += 1
-        if idx > len(VS_LIST) * 3:
+        if idx > len(holiday_order) * 3:
             break
 
     weekday_order = sorted(
@@ -161,16 +192,62 @@ def compute_initial_targets(year: int, month: int, X: int, baseline: dict) -> di
     cr_sat_total = sum(1 for d in days if get_stat_type(d) == "週六班")
     cr_sun_total = sum(1 for d in days if get_stat_type(d) == "週日班")
 
+    # CR 總班數推算 — vs_h_total / vs_w_total 是「需求」可能超過 VS 容量；
+    # vs_per_doctor 才是實際吃下的量；剩下的扣 X / jk 才是 CR 要值的量。
+    actual_vs_h = sum(v["holiday"] for v in vs_per_doctor.values())
+    actual_vs_w = sum(v["weekday"] for v in vs_per_doctor.values())
+    cr_holiday_total = max(0, H - actual_vs_h)
+    cr_weekday_total = max(0, W - X - jk - actual_vs_w)
+    cr_total = cr_holiday_total + cr_weekday_total
+    cr_per_avg = cr_total / 3 if cr_total else 0
+
+    if cr_total > CR_TOTAL_CAP * len(CRS):
+        warnings.append(
+            f"⚠️ CR 三人需值 {cr_total} 班，超過硬上限 {CR_TOTAL_CAP}×3={CR_TOTAL_CAP*len(CRS)} 班；"
+            f"請把展瀚 X 調高 ≥ {X + cr_total - CR_TOTAL_CAP * len(CRS)}，否則 solver 會找不到解。"
+        )
+
+    # Per-CR projected count: same balance rule the solver applies, at totals level.
+    base_h = cr_holiday_total // 3
+    sur_h = cr_holiday_total % 3
+    order_h = sorted(CRS, key=lambda n: baseline.get(n, {}).get("假日", 0))
+    cr_holiday_split = {n: base_h for n in CRS}
+    for i in range(sur_h):
+        cr_holiday_split[order_h[i]] += 1
+
+    base_w = cr_weekday_total // 3
+    sur_w = cr_weekday_total % 3
+    order_w = sorted(CRS, key=lambda n: baseline.get(n, {}).get("平日", 0)
+                                          + baseline.get(n, {}).get("週五", 0))
+    cr_weekday_split = {n: base_w for n in CRS}
+    for i in range(sur_w):
+        cr_weekday_split[order_w[i]] += 1
+
+    cr_per_doctor = {
+        n: {
+            "holiday": cr_holiday_split[n],
+            "weekday": cr_weekday_split[n],
+            "total": cr_holiday_split[n] + cr_weekday_split[n],
+        }
+        for n in CRS
+    }
+
     return {
         "H": H,
         "W": W,
         "vs_holiday_total": vs_h_total,
         "vs_weekday_total": vs_w_total,
         "vs_per_doctor": vs_per_doctor,
+        "vs_holiday_exempt": sorted(exempt_set),
         "jk_count": jk,
         "cr_fri_total": cr_fri_total,
         "cr_sat_total": cr_sat_total,
         "cr_sun_total": cr_sun_total,
+        "cr_holiday_total": cr_holiday_total,
+        "cr_weekday_total": cr_weekday_total,
+        "cr_total": cr_total,
+        "cr_per_avg": cr_per_avg,
+        "cr_per_doctor": cr_per_doctor,
         "warnings": warnings,
     }
 
@@ -184,32 +261,55 @@ def solve_month(
     avoid: dict[str, list[date]],
     baseline: dict,
     jk_target: Optional[int] = None,
+    seed: Optional[int] = None,
+    prev_tail: Optional[dict[date, str]] = None,
+    vs_holiday_exempt: Optional[list[str]] = None,
 ) -> Optional[dict]:
-    """Backtracking solver. None when no feasible schedule even after
-    relaxing QOD; otherwise {schedule, stats_rows, monthly_stats_map,
-    qod_violations, qod_relaxed, targets}.
+    """Backtracking solver. None when no feasible schedule.
+
+    QOD policy: try max_qod=0..QOD_RELAX_CAP, return min-violation feasible.
+    `seed=None` → fresh randomness each call → re-running yields different
+    valid schedules (lets user pick alternates).
+    `prev_tail` = {date: name} from last 2 days of previous month, used so
+    back-to-back / QOD checks span the month boundary.
+    `vs_holiday_exempt` forwarded to compute_initial_targets for fast-fail.
     """
     days = month_days(year, month)
     get_stat_type = make_stat_type_fn(is_taiwan_holiday)
+    rng = random.Random(seed)
+    prev_tail = prev_tail or {}
 
     if jk_target is None:
         H, W = month_h_w(year, month)
         jk_target = max(0, min(JK_WEEKDAY_CAP, W - 15 - X))
 
+    # Fast-fail: even optimistic CR demand exceeds 3 × CR_TOTAL_CAP → no solution.
+    init = compute_initial_targets(year, month, X, baseline,
+                                    vs_holiday_exempt=vs_holiday_exempt)
+    if init["cr_total"] > CR_TOTAL_CAP * len(CRS):
+        return None
+
+    # 週五 independent (no holiday overlap). 週六/週日 DERIVED from
+    # cr_holiday_target so sat[n]+sun[n] always equals holiday_target[n] —
+    # otherwise the three caps can be jointly infeasible.
     cr_fri_target = _category_target(days, fixed, baseline, get_stat_type, "週五班", "週五")
-    cr_sat_target = _category_target(days, fixed, baseline, get_stat_type, "週六班", "週六")
-    cr_sun_target = _category_target(days, fixed, baseline, get_stat_type, "週日班", "週日")
+    cr_holiday_target = _holiday_target(days, fixed, baseline)
+    cr_sat_target, cr_sun_target = _derive_sat_sun_caps(
+        days, fixed, baseline, get_stat_type, cr_holiday_target,
+    )
 
     targets = {
         "cr_fri_target": cr_fri_target,
         "cr_sat_target": cr_sat_target,
         "cr_sun_target": cr_sun_target,
+        "cr_holiday_target": cr_holiday_target,
     }
 
-    for strict in (True, False):
+    for max_qod in range(QOD_RELAX_CAP + 1):
         result = _backtrack_run(
             days, fixed, avoid, baseline, jk_target,
-            get_stat_type, targets, strict_qod=strict,
+            get_stat_type, targets, max_qod=max_qod, rng=rng,
+            prev_tail=prev_tail,
         )
         if result is not None:
             schedule = result
@@ -220,7 +320,8 @@ def solve_month(
                 "stats_rows": stats_rows,
                 "monthly_stats_map": monthly_map,
                 "qod_violations": qod_violations,
-                "qod_relaxed": not strict,
+                "qod_relaxed": max_qod > 0,
+                "max_qod": max_qod,
                 "targets": targets,
             }
     return None
@@ -257,12 +358,89 @@ def _category_target(
     return target
 
 
+# ── Internal: total CR holiday target (3-3-2 split when >6) ────────
+def _holiday_target(
+    days: list[date],
+    fixed: dict[date, str],
+    baseline: dict,
+) -> dict[str, int]:
+    """Per-CR cap on total 假日 shifts. Distribute CR-eligible holiday slots
+    evenly across CRs; surplus → CRs with LOWEST cumulative 假日 in baseline.
+    e.g. 8 holidays → 3-3-2 with the highest-cumulative CR getting the 2.
+    """
+    cr_eligible = [
+        d for d in days
+        if is_taiwan_holiday(d)
+        and (d not in fixed or fixed[d] in CRS)
+    ]
+    fixed_in_cat = {n: 0 for n in CRS}
+    for d in cr_eligible:
+        if d in fixed:
+            fixed_in_cat[fixed[d]] += 1
+
+    n_total = len(cr_eligible)
+    base = n_total // len(CRS)
+    surplus = n_total % len(CRS)
+    order = sorted(CRS, key=lambda n: baseline.get(n, {}).get("假日", 0) + fixed_in_cat[n])
+    target = {n: base for n in CRS}
+    for i in range(surplus):
+        target[order[i]] += 1
+    for n in CRS:
+        if target[n] < fixed_in_cat[n]:
+            target[n] = fixed_in_cat[n]
+    return target
+
+
+# ── Internal: derive 週六/週日 caps from holiday cap ────────────────
+def _derive_sat_sun_caps(
+    days: list[date],
+    fixed: dict[date, str],
+    baseline: dict,
+    get_stat_type,
+    holiday_target: dict[str, int],
+) -> tuple[dict[str, int], dict[str, int]]:
+    """Split each CR's holiday_target into 週六/週日 sub-caps such that
+    sat[n]+sun[n]=holiday_target[n] AND sum across CRs equals total sat days.
+    Greedy: assign each remaining 週六 slot to the CR with the lowest current
+    sat (tiebreak by cumulative 週六). Capped per CR at holiday_target[n].
+    """
+    cr_eligible_sat = [
+        d for d in days
+        if get_stat_type(d) == "週六班"
+        and (d not in fixed or fixed[d] in CRS)
+    ]
+    fixed_sat = {n: 0 for n in CRS}
+    for d in cr_eligible_sat:
+        if d in fixed:
+            fixed_sat[fixed[d]] += 1
+
+    sat_cap = dict(fixed_sat)
+    remaining = len(cr_eligible_sat) - sum(fixed_sat.values())
+    for _ in range(remaining):
+        eligible = [n for n in CRS if sat_cap[n] < holiday_target.get(n, 99)]
+        if not eligible:
+            break
+        pick = min(
+            eligible,
+            key=lambda n: (
+                sat_cap[n] - fixed_sat[n],
+                baseline.get(n, {}).get("週六", 0),
+            ),
+        )
+        sat_cap[pick] += 1
+
+    sun_cap = {n: max(0, holiday_target.get(n, 0) - sat_cap[n]) for n in CRS}
+    return sat_cap, sun_cap
+
+
 def _backtrack_run(
     days, fixed, avoid, baseline, jk_target,
-    get_stat_type, targets, strict_qod: bool,
+    get_stat_type, targets, max_qod: int, rng: random.Random,
+    prev_tail: Optional[dict[date, str]] = None,
 ) -> Optional[dict[date, str]]:
     num_days = len(days)
     schedule: dict[date, str] = dict(fixed)
+    prev_tail = prev_tail or {}
     cr_w = {n: 0 for n in CRS}
     cr_h = {n: 0 for n in CRS}
     cr_fri = {n: 0 for n in CRS}
@@ -292,32 +470,53 @@ def _backtrack_run(
     if jk_count > jk_target:
         return None
 
+    # Pre-existing QOD pairs from `fixed` count against the budget.
+    fixed_pairs = 0
+    for d, name in fixed.items():
+        if name in QOD_EXEMPT_NAMES:
+            continue
+        d2 = d + timedelta(days=2)
+        if fixed.get(d2) == name:
+            fixed_pairs += 1
+        d_minus_2 = d - timedelta(days=2)
+        if prev_tail.get(d_minus_2) == name:
+            fixed_pairs += 1
+    if fixed_pairs > max_qod:
+        return None
+    qod_used = fixed_pairs
+
     open_days = [d for d in days if d not in fixed]
+    # 隨機處理順序：每次跑 solver 從不同日期開始決策 → 探索不同分支 → 不同合規班表
+    rng.shuffle(open_days)
     cr_fri_target = targets["cr_fri_target"]
     cr_sat_target = targets["cr_sat_target"]
     cr_sun_target = targets["cr_sun_target"]
+    cr_holiday_target = targets["cr_holiday_target"]
+
+    for n in CRS:
+        if cr_h[n] > cr_holiday_target.get(n, 99):
+            return None
+
+    def neighbor_doctor(target_idx: int) -> Optional[str]:
+        """Doctor at relative day index target_idx; falls back to prev_tail
+        for indices before day 1 (cross-month boundary check)."""
+        if 0 <= target_idx < num_days:
+            return schedule.get(days[target_idx])
+        if target_idx < 0:
+            return prev_tail.get(days[0] + timedelta(days=target_idx))
+        return None
 
     def qod_score(name: str, d_idx: int) -> int:
-        if name == "展瀚":
+        if name in QOD_EXEMPT_NAMES:
             return 0
         s = 0
         for off in (-2, 2):
-            j = d_idx + off
-            if 0 <= j < num_days and schedule.get(days[j]) == name:
+            if neighbor_doctor(d_idx + off) == name:
                 s += 1
         return s
 
-    def is_qod_conflict(name: str, d_idx: int) -> bool:
-        if name == "展瀚":
-            return False
-        for off in (-2, 2):
-            j = d_idx + off
-            if 0 <= j < num_days and schedule.get(days[j]) == name:
-                return True
-        return False
-
     def backtrack(i: int) -> bool:
-        nonlocal jk_count
+        nonlocal jk_count, qod_used
         if i == len(open_days):
             return True
         d = open_days[i]
@@ -332,31 +531,38 @@ def _backtrack_run(
 
         def sort_key(name: str) -> tuple:
             qp = qod_score(name, d_idx)
+            # ±1.5 jitter on balance 讓累計差距 ≤1 的醫師有機會輪換 →
+            # 重新跑 solver 產出明顯不同合規班表；硬規則不受影響。
             if name == "建寬":
-                return (qp, 99, 99)
+                return (qp, 99, 99, rng.random())
             cum_key = {"週五班": "週五", "週六班": "週六", "週日班": "週日"}.get(stat, "平日")
             count_dict = {"週五班": cr_fri, "週六班": cr_sat, "週日班": cr_sun}.get(stat, cr_w)
             return (
                 qp,
-                baseline.get(name, {}).get(cum_key, 0) + count_dict[name],
+                baseline.get(name, {}).get(cum_key, 0) + count_dict[name] + rng.uniform(0, 1.49),
                 cr_w[name] + cr_h[name],
+                rng.random(),
             )
 
         candidates.sort(key=sort_key)
 
         for name in candidates:
-            if name != "展瀚":
-                if d_idx > 0 and schedule.get(days[d_idx - 1]) == name:
+            if name not in QOD_EXEMPT_NAMES:
+                # 跨月 back-to-back 檢查：第一天若 prev_tail 最後一天同名 → 拒絕
+                if neighbor_doctor(d_idx - 1) == name:
                     continue
-                if d_idx < num_days - 1 and schedule.get(days[d_idx + 1]) == name:
+                if neighbor_doctor(d_idx + 1) == name:
                     continue
-            if strict_qod and is_qod_conflict(name, d_idx):
+            qod_inc = qod_score(name, d_idx)
+            if qod_used + qod_inc > max_qod:
                 continue
             if name in avoid and d in avoid[name]:
                 continue
 
             if name in CRS:
                 if cr_w[name] + cr_h[name] >= CR_TOTAL_CAP:
+                    continue
+                if is_h and cr_h[name] >= cr_holiday_target.get(name, 99):
                     continue
                 if stat == "週五班" and cr_fri[name] >= cr_fri_target.get(name, 99):
                     continue
@@ -369,6 +575,7 @@ def _backtrack_run(
                 continue
 
             schedule[d] = name
+            qod_used += qod_inc
             if name in CRS:
                 if is_h:
                     cr_h[name] += 1
@@ -399,6 +606,7 @@ def _backtrack_run(
                     cr_sun[name] -= 1
             if name == "建寬":
                 jk_count -= 1
+            qod_used -= qod_inc
             del schedule[d]
 
         return False
@@ -421,7 +629,7 @@ def _compute_stats(schedule: dict[date, str], get_stat_type) -> tuple[list[dict]
             "週五班": sum(1 for d in personal if get_stat_type(d) == "週五班"),
             "週六班": sum(1 for d in personal if get_stat_type(d) == "週六班"),
             "週日班": sum(1 for d in personal if get_stat_type(d) == "週日班"),
-            "QOD次數": _qod_count(personal_set),
+            "QOD次數": 0 if name in QOD_EXEMPT_NAMES else _qod_count(personal_set),
         }
         stats_rows.append(row)
         by_name[name] = row
@@ -438,7 +646,7 @@ def _scan_qod(schedule: dict[date, str]) -> list[tuple[date, str]]:
         by_doctor.setdefault(n, set()).add(d)
     violations: list[tuple[date, str]] = []
     for n, ds in by_doctor.items():
-        if n == "展瀚":
+        if n in QOD_EXEMPT_NAMES:
             continue
         for d in sorted(ds):
             if (d + timedelta(days=2)) in ds:

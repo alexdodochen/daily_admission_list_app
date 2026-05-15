@@ -415,6 +415,14 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc) -> dict:
     if old_end > new_end:
         sheet_service.clear_range(ws, f"A{new_end + 1}:H{old_end}")
     sheet_service.write_range(ws, f"A{start_row}:H{new_end}", block, raw=False)
+    # Re-apply F/G dropdown validation across the (possibly grown) sub-table area
+    try:
+        from . import emr_service
+        f_opts, g_opts = emr_service.get_fg_options()
+        sheet_service.set_fg_validation(ws, start_row, new_end + 100,
+                                        f_opts, g_opts)
+    except Exception:
+        pass
 
     return {
         "updated": True,

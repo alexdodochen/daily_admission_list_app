@@ -61,6 +61,23 @@
 
 <div class="max-w-5xl mx-auto px-4 py-6 space-y-6 bg-gray-50">
 
+  <!-- ── 💾 草稿 panel ───────────────────────────────────────────── -->
+  <section class="bg-white rounded-xl shadow border border-amber-200 p-3 flex flex-wrap items-center gap-2 text-sm">
+    <span class="font-semibold text-amber-700">💾 草稿</span>
+    <input id="draft-name" placeholder="草稿名稱（例如 6月-EDR）"
+      class="border border-gray-300 rounded px-2 py-1 text-xs flex-shrink-0" style="min-width:160px">
+    <button id="draft-save"
+      class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold px-3 py-1 rounded">存草稿</button>
+    <select id="draft-list" class="border border-gray-300 rounded px-2 py-1 text-xs" style="min-width:220px">
+      <option value="">— 選擇載入 —</option>
+    </select>
+    <button id="draft-load"
+      class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1 rounded">載入</button>
+    <button id="draft-delete"
+      class="bg-red-500 hover:bg-red-600 text-white text-xs font-semibold px-3 py-1 rounded">刪除</button>
+    <span id="draft-status" class="text-xs text-gray-500 ml-2"></span>
+  </section>
+
   <!-- ── STEP 1: 月份 ─────────────────────────────────────── -->
   <section class="bg-white rounded-xl shadow p-5">
     <h2 class="font-bold text-gray-700 text-base mb-4 flex items-center">
@@ -460,10 +477,122 @@
     connectWS();
     fetch('/keyin/api/status').then(r => r.json()).then(d => updateState(d.state));
     await loadPrefill();
+    refreshKeyinDraftList();
+  });
+
+  // ── 草稿 (keyin bucket) — snapshot inp-year/month + per-day VS/CR/holiday + white-day lists ──
+  function gatherKeyinState() {
+    const year  = parseInt(document.getElementById('inp-year').value);
+    const month = parseInt(document.getElementById('inp-month').value);
+    const days = new Date(year, month, 0).getDate();
+    const vs = {}, cr = {}, hol = [], whiteDay = {};
+    for (let d = 1; d <= days; d++) {
+      const ds = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const vEl = document.getElementById('vs-'+d);
+      const cEl = document.getElementById('cr-'+d);
+      const hEl = document.getElementById('hol-'+d);
+      const wEl = document.getElementById('white-'+d);
+      if (vEl && vEl.value) vs[d] = vEl.value;
+      if (cEl && cEl.value) cr[d] = cEl.value;
+      if (hEl && hEl.checked) hol.push(ds);
+      if (wEl && wEl.value) whiteDay[d] = wEl.value;
+    }
+    return { year, month, vs, cr, holidays: hol, whiteDay,
+             saved_at_local: new Date().toLocaleString('zh-TW') };
+  }
+
+  function applyKeyinState(s) {
+    if (!s) return;
+    if (s.year)  document.getElementById('inp-year').value  = s.year;
+    if (s.month) document.getElementById('inp-month').value = String(s.month);
+    if (typeof generateCalendar === 'function') generateCalendar();
+    const year  = s.year  || parseInt(document.getElementById('inp-year').value);
+    const month = s.month || parseInt(document.getElementById('inp-month').value);
+    const days = new Date(year, month, 0).getDate();
+    const holSet = new Set(s.holidays || []);
+    for (let d = 1; d <= days; d++) {
+      const ds = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const cb = document.getElementById('hol-'+d);
+      if (cb) {
+        cb.checked = holSet.has(ds);
+        if (typeof toggleHolidayRow === 'function') toggleHolidayRow(d, cb.checked);
+      }
+      const vs = (s.vs || {})[d] || (s.vs || {})[String(d)];
+      const cr = (s.cr || {})[d] || (s.cr || {})[String(d)];
+      const wd = (s.whiteDay || {})[d] || (s.whiteDay || {})[String(d)];
+      if (vs && document.getElementById('vs-'+d)) document.getElementById('vs-'+d).value = vs;
+      if (cr && document.getElementById('cr-'+d)) document.getElementById('cr-'+d).value = cr;
+      if (wd && document.getElementById('white-'+d)) document.getElementById('white-'+d).value = wd;
+    }
+  }
+
+  function setKeyinDraftStatus(text, kind='info') {
+    const el = document.getElementById('draft-status');
+    el.textContent = text;
+    el.style.color = kind === 'ok' ? '#059669' : kind === 'err' ? '#dc2626' : '#6b7280';
+  }
+
+  async function refreshKeyinDraftList() {
+    try {
+      const r = await fetch('/api/draft/keyin/list');
+      const d = await r.json();
+      const sel = document.getElementById('draft-list');
+      sel.innerHTML = '<option value="">— 選擇載入 —</option>' +
+        (d.drafts || []).map(x =>
+          `<option value="${x.name}">${x.name} （${x.saved_at}）</option>`
+        ).join('');
+    } catch (_) {}
+  }
+
+  document.getElementById('draft-save').addEventListener('click', async () => {
+    const name = (document.getElementById('draft-name').value || '').trim()
+      || `${document.getElementById('inp-year').value}${String(document.getElementById('inp-month').value).padStart(2,'0')}_自動`;
+    setKeyinDraftStatus('儲存中…');
+    try {
+      const r = await fetch('/api/draft/keyin/save', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ name, state: gatherKeyinState() }),
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || 'save failed');
+      setKeyinDraftStatus(`✓ 已存「${d.name}」`, 'ok');
+      refreshKeyinDraftList();
+    } catch (err) {
+      setKeyinDraftStatus('✗ ' + err.message, 'err');
+    }
+  });
+
+  document.getElementById('draft-load').addEventListener('click', async () => {
+    const name = document.getElementById('draft-list').value;
+    if (!name) { setKeyinDraftStatus('先選一個草稿', 'err'); return; }
+    setKeyinDraftStatus('載入中…');
+    try {
+      const r = await fetch(`/api/draft/keyin/load?name=${encodeURIComponent(name)}`);
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error || 'load failed');
+      applyKeyinState(d.payload || {});
+      setKeyinDraftStatus(`✓ 已載入「${name}」`, 'ok');
+    } catch (err) {
+      setKeyinDraftStatus('✗ ' + err.message, 'err');
+    }
+  });
+
+  document.getElementById('draft-delete').addEventListener('click', async () => {
+    const name = document.getElementById('draft-list').value;
+    if (!name) { setKeyinDraftStatus('先選一個草稿', 'err'); return; }
+    if (!confirm(`確定刪除草稿「${name}」？`)) return;
+    try {
+      const r = await fetch('/api/draft/keyin/delete', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ name }),
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error('delete failed');
+      setKeyinDraftStatus(`✓ 已刪除「${name}」`, 'ok');
+      refreshKeyinDraftList();
+    } catch (err) {
+      setKeyinDraftStatus('✗ ' + err.message, 'err');
+    }
   });
 </script>
-<!-- Footer Credit -->
-<div class="fixed bottom-2 right-4 text-[10px] text-gray-400 pointer-events-none select-none">
-  應用程式由 114級 CV 陳常胤醫師 與 Claude code 及 Gemini CLI 合作開發
-</div>
 {% endblock %}

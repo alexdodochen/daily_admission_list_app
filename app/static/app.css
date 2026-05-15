@@ -248,14 +248,102 @@ td.editable-pin { background: #ecfeff; min-width: 50px; max-width: 60px; text-al
 td.editable-pin:hover { background: #cffafe; }
 td.editable-pin:focus { background: #fff; outline: 2px solid #06b6d4; }
 
-input.fg-input { padding: 4px 6px; font-size: 13px; width: 180px;
-  border: 1px solid var(--border); border-radius: 4px; background: #fffbe6;
-  font-family: inherit; }
+/* Use td.* descendant + class to win specificity vs the generic
+   `table.data td input { width: 100%; border: 0; ... }` rule above. */
+table.data td input.fg-input,
+input.fg-input {
+  padding: 4px 6px; font-size: 13px; width: 160px; flex: 0 0 auto;
+  border: 1px solid var(--border); border-radius: 4px 0 0 4px;
+  background: #fffbe6; font-family: inherit;
+}
+table.data td input.fg-input:hover,
 input.fg-input:hover { background: #fef3c7; }
+table.data td input.fg-input:focus,
 input.fg-input:focus { background: #fff; outline: 2px solid var(--accent); }
 input.fg-input.saving { background: #dbeafe; }
 input.fg-input.saved  { background: #d1fae5; transition: background 1s; }
 input.fg-input.error  { background: #fee2e2; }
+
+/* F/G combobox cell — input + ▼ chevron + custom popup <ul> */
+.fg-cell { display: inline-flex; align-items: stretch; position: relative; }
+button.fg-chev { padding: 0 8px; font-size: 11px; border: 1px solid var(--border);
+  border-left: none; border-radius: 0 4px 4px 0; background: #f1f5f9;
+  cursor: pointer; color: var(--muted); line-height: 1; user-select: none; }
+button.fg-chev:hover { background: #e2e8f0; color: var(--accent); }
+ul.fg-popup { position: absolute; top: 100%; left: 0; min-width: 100%;
+  max-height: 280px; overflow-y: auto; margin: 2px 0 0; padding: 4px 0;
+  list-style: none; background: #fff; border: 1px solid var(--border);
+  border-radius: 4px; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.18);
+  z-index: 50; font-size: 13px; }
+ul.fg-popup li { padding: 4px 12px; cursor: pointer; white-space: nowrap; }
+ul.fg-popup li:hover { background: #dbeafe; color: var(--accent-2); }
+ul.fg-popup li.empty { color: var(--muted); cursor: default; font-style: italic; }
+ul.fg-popup li.empty:hover { background: transparent; }
+
+/* Step help <details> + colored action buttons */
+details.step-help { margin: 8px 0; padding: 0; background: #f8fafc;
+  border: 1px solid var(--border); border-radius: 6px; }
+details.step-help summary { padding: 8px 12px; cursor: pointer; font-weight: 600;
+  color: var(--accent); user-select: none; }
+details.step-help[open] summary { border-bottom: 1px solid var(--border); }
+details.step-help p, details.step-help ul { padding: 0 16px; margin: 8px 0; font-size: 13px; }
+details.step-help ul { padding-left: 36px; }
+.badge { display: inline-block; padding: 2px 8px; font-size: 11px; font-weight: 600;
+  border-radius: 10px; vertical-align: middle; margin-left: 4px; }
+.badge-warn { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+.badge-ok   { background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
+button.btn-warn { background: #f59e0b; }
+button.btn-warn:hover:not(:disabled) { background: #d97706; }
+button.btn-ok { background: var(--ok); }
+button.btn-ok:hover:not(:disabled) { background: #15803d; }
+button small { font-size: 10px; opacity: 0.85; font-weight: normal; }
+
+/* Help modal — tabbed layout (入院 / 排班 / Key 班) */
+nav.help-tabs { display: flex; gap: 4px; padding: 0 24px; margin: 0 0 12px;
+  border-bottom: 1px solid var(--border); }
+button.help-tab { padding: 8px 16px; border: 1px solid var(--border);
+  border-bottom: none; background: #f1f5f9; color: var(--muted);
+  border-radius: 6px 6px 0 0; cursor: pointer; font-size: 14px;
+  font-weight: 500; margin-bottom: -1px; }
+button.help-tab:hover { background: #e2e8f0; color: var(--accent); }
+button.help-tab.active { background: #fff; color: var(--accent);
+  border-bottom: 1px solid #fff; font-weight: 600; }
+.help-tab-pane { display: none; padding: 0 24px 24px; }
+.help-tab-pane.active { display: block; }
+
+/* Load-existing card (📂 接續做) */
+.load-existing-card { background: #ecfdf5; border: 1px solid #6ee7b7; }
+.load-existing-card h2 { color: #065f46; }
+.load-existing-card select { padding: 6px 10px; font-size: 14px;
+  border: 1px solid var(--border); border-radius: 4px; min-width: 180px; }
+#load-existing-refresh { padding: 4px 10px; font-size: 14px;
+  background: #f1f5f9; color: var(--muted); border: 1px solid var(--border); }
+#load-existing-refresh:hover { background: #e2e8f0; color: var(--accent); }
+
+/* Viewer source tabs (📥 每日入院清單 / 📅 排班) */
+.viewer-source-tabs { display: inline-flex; gap: 4px; margin-right: 12px;
+  border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+  background: #f8fafc; }
+button.viewer-src-tab { padding: 6px 14px; font-size: 13px; font-weight: 500;
+  border: none; background: transparent; color: var(--muted); cursor: pointer; }
+button.viewer-src-tab:hover { background: #e2e8f0; color: var(--accent); }
+button.viewer-src-tab.active { background: var(--accent); color: #fff; }
+
+/* Watermark */
+.watermark { position: fixed; bottom: 6px; right: 12px; font-size: 11px;
+  color: rgba(100, 116, 139, 0.55); pointer-events: none; user-select: none;
+  font-style: italic; z-index: 1; letter-spacing: 0.02em; }
+@media print { .watermark { display: none; } }
+
+/* Step 3 EMR card F/G inline editor */
+.emr-card .emr-fg-edit { display: inline-flex; align-items: center; gap: 12px;
+  flex-wrap: wrap; font-weight: 600; color: var(--accent); }
+.emr-fix-list { background: #fef3c7; border: 1px solid #fcd34d; border-radius: 6px;
+  padding: 8px 12px; margin: 8px 0; }
+.emr-fix-list h4 { margin: 0 0 6px; font-size: 14px; color: #92400e; }
+.emr-fix-list table.data { font-size: 13px; }
+.emr-fix-list td.old { color: var(--muted); text-decoration: line-through; }
+.emr-fix-list td.new { color: var(--ok); font-weight: 600; }
 
 /* Step 4 pin panels — patient global pin + doctor RR pin */
 #pin-wrap { margin: 12px 0; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }

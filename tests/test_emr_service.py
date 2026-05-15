@@ -132,10 +132,60 @@ def test_detect_fg_paf_rfa():
     assert g == "RF ablation"
 
 
-def test_detect_fg_unstable_angina_maps_to_unstable():
+def test_detect_fg_plan_pci_overrides_unstable_to_cad():
+    """5/15 plan-section logic: 'plan PCI' → cath-lab books LHC → derives F=CAD,
+    overriding Dx 'unstable angina' (which would have given F=Unstable)."""
     text = "[Diagnosis]\n1. unstable angina\n[Assessment & Plan]\nplan PCI"
+    f, g = es.detect_fg(text)
+    assert f == "CAD"  # PLAN_G_TO_F['Left heart cath.'] = CAD
+    assert g == "Left heart cath."  # plan PCI → LHC booking, not PCI
+
+
+def test_detect_fg_pure_unstable_no_plan_keeps_unstable():
+    """Without a plan signal, Dx-only with bare 'unstable angina' → Unstable.
+    (Soft-comorbid override only fires when CAD is also present in Dx.)"""
+    text = "[Diagnosis]\n1. unstable angina\n[Assessment & Plan]\nfollow up"
     f, _ = es.detect_fg(text)
     assert f == "Unstable"
+
+
+def test_detect_fg_unstable_with_cad_dx_overrides_to_cad():
+    """Soft-comorbidity CAD override (5/15): unstable + CAD in Dx → CAD."""
+    text = "[Diagnosis]\n1. unstable angina, CAD - 2VD\n[Assessment & Plan]\nfollow up"
+    f, _ = es.detect_fg(text)
+    assert f == "CAD"
+
+
+def test_detect_fg_tavi_plan_overrides_to_AS():
+    """Plan TAVI → G=TAVI + F=AS via PLAN_G_TO_F."""
+    text = "[Diagnosis]\n1. severe AS\n[Assessment & Plan]\narrange TAVI"
+    f, g = es.detect_fg(text)
+    assert f == "AS"
+    assert g == "TAVI"
+
+
+def test_detect_fg_primary_pci_for_stemi():
+    text = "[Diagnosis]\n1. STEMI\n[Assessment & Plan]\nprimary PCI"
+    f, g = es.detect_fg(text)
+    assert f == "STEMI"
+    assert g == "PCI"
+
+
+def test_detect_fg_af_ablation_plan_overrides_to_paf():
+    """Plan AF ablation → G=RF ablation + F=pAf via PLAN_F_RULES."""
+    text = "[Diagnosis]\n1. paroxysmal Af\n[Assessment & Plan]\nplan AF ablation with PVI"
+    f, g = es.detect_fg(text)
+    assert f == "pAf"
+    assert g == "RF ablation"
+
+
+def test_detect_fg_expanded_past_pci_doesnt_fire():
+    """Expanded `s/p percutaneous coronary intervention (PCI)` must be cleaned."""
+    text = ("[Diagnosis]\n1. CAD, s/p percutaneous coronary intervention (PCI) on 2020/05\n"
+            "[Assessment & Plan]\nfollow OPD")
+    _, g = es.detect_fg(text)
+    # Past PCI cleaned; no plan signal; F=CAD via Dx; G=F_TO_G_DEFAULT[CAD]=LHC
+    assert g == "Left heart cath."
 
 
 def test_detect_fg_numbered_priority():
@@ -255,6 +305,97 @@ def test_parse_divuserspec_empty():
     assert name == ""
     assert birth is None
     assert gender == ""
+
+
+def test_get_fg_options_falls_back_when_sheet_unavailable(monkeypatch):
+    """When Sheet 下拉選單 unreachable, falls back to DIAG_RULES/CATH_RULES."""
+    from app.services import sheet_service as ss
+    monkeypatch.setattr(ss, "read_fg_options_from_sheet", lambda: None)
+    f, g = es.get_fg_options()
+    assert "STEMI" in f and "CAD" in f
+    assert "PCI" in g and "CRT" in g
+    assert "s/p PCI" in f
+    assert "Cover stent" in g
+    # Idempotency
+    f2, g2 = es.get_fg_options()
+    assert f2.count("s/p PCI") == 1
+    assert g2.count("Cover stent") == 1
+
+
+def test_get_fg_options_uses_sheet_when_available(monkeypatch):
+    """Sheet 下拉選單 wins over hardcoded fallback."""
+    from app.services import sheet_service as ss
+    sheet_f = ["STEMI", "CAD", "MyCustomDx"]
+    sheet_g = ["TAVI", "CRT", "MyCustomCath"]
+    monkeypatch.setattr(ss, "read_fg_options_from_sheet", lambda: (sheet_f, sheet_g))
+    f, g = es.get_fg_options()
+    assert f == sheet_f
+    assert g == sheet_g
+
+
+def test_apply_emr_main_fixes_writes_changed_fields(monkeypatch):
+    """EMR-corrected name/age/gender writes to main F/G/H. Same values skip."""
+    main_grid = [
+        ["", "", "", "", "", "張三", "男", "60", "111", "", "", ""],
+        ["", "", "", "", "", "舊名", "女", "70", "222", "", "", ""],
+    ]
+    patches_captured = []
+
+    class _FakeWS:
+        id = 1
+
+    monkeypatch.setattr(es, "__name__", es.__name__)  # no-op, keep import path
+    from app.services import sheet_service as ss
+    monkeypatch.setattr(ss, "get_worksheet", lambda d: _FakeWS())
+    monkeypatch.setattr(ss, "read_range", lambda ws, a1: main_grid)
+    monkeypatch.setattr(ss, "batch_write_cells",
+                        lambda ws, patches, raw=False: patches_captured.extend(patches))
+
+    results = [
+        # 111: same name/gender, age 60→61
+        {"chart_no": "111", "emr_name": "張三", "gender": "男", "age": 61, "error": ""},
+        # 222: name fixed + age fixed, gender same
+        {"chart_no": "222", "emr_name": "新名", "gender": "女", "age": 71, "error": ""},
+        # 333: not in main → ignored, not in patches
+        {"chart_no": "333", "emr_name": "甲", "gender": "男", "age": 50, "error": ""},
+    ]
+    out = es.apply_emr_main_fixes("20260515", results)
+    assert out["patches_count"] == 3  # 111 age + 222 name + 222 age
+    cells = {a1 for a1, _ in patches_captured}
+    assert cells == {"H2", "F3", "H3"}
+    fields = {(f["chart_no"], f["field"]) for f in out["fixes"]}
+    assert fields == {("111", "age"), ("222", "name"), ("222", "age")}
+
+
+def test_apply_emr_main_fixes_skips_errors_and_empty(monkeypatch):
+    """Patients with error= or empty EMR demographics don't trigger writes."""
+    main_grid = [["", "", "", "", "", "甲", "男", "60", "111", "", "", ""]]
+    patches_captured = []
+
+    class _FakeWS:
+        id = 1
+
+    from app.services import sheet_service as ss
+    monkeypatch.setattr(ss, "get_worksheet", lambda d: _FakeWS())
+    monkeypatch.setattr(ss, "read_range", lambda ws, a1: main_grid)
+    monkeypatch.setattr(ss, "batch_write_cells",
+                        lambda ws, patches, raw=False: patches_captured.extend(patches))
+
+    results = [
+        {"chart_no": "111", "emr_name": "正確", "gender": "男", "age": 99,
+         "error": "fetch failed"},  # has error → skipped entirely
+    ]
+    out = es.apply_emr_main_fixes("20260515", results)
+    assert out["patches_count"] == 0
+    assert patches_captured == []
+
+
+def test_apply_emr_main_fixes_missing_sheet_returns_skipped(monkeypatch):
+    from app.services import sheet_service as ss
+    monkeypatch.setattr(ss, "get_worksheet", lambda d: None)
+    out = es.apply_emr_main_fixes("20260515", [{"chart_no": "111"}])
+    assert out["skipped"] is True
+    assert out["patches_count"] == 0
 
 
 def test_compare_demographics_all_match():

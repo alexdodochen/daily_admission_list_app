@@ -2,11 +2,10 @@
 {% block body %}
 <section class="stepper">
   <div class="step active" data-step="1">① 匯入名單</div>
-  <div class="step" data-step="2">② 生成 subtable</div>
-  <div class="step" data-step="3">③ EMR 擷取</div>
-  <div class="step" data-step="4">④ 入院序整合</div>
-  <div class="step" data-step="5">⑤ 導管排程</div>
-  <div class="step" data-step="6">⑥ LINE 推播</div>
+  <div class="step" data-step="3">② EMR 擷取</div>
+  <div class="step" data-step="4">③ 入院序整合</div>
+  <div class="step" data-step="5">④ 導管排程</div>
+  <div class="step" data-step="6">⑤ LINE 推播</div>
 </section>
 
 <section class="card">
@@ -24,6 +23,20 @@
         <option>週四</option><option>週五</option>
       </select>
     </label>
+  </div>
+</section>
+
+<!-- 載入既有日期：跳過 OCR，直接從 Sheet 把 Step 1 表 + Step 4 子表格拉回來 -->
+<section class="card load-existing-card">
+  <h2>📂 載入已存在的日期工作表 <span class="optional-tag">接續做</span></h2>
+  <p class="hint">如果這個日期已經做過 Step 1 (主表 A-L) 或更後面的步驟，選下面的日期一鍵把現況拉回來，繼續修改 / 補做。<u>不會清掉 Sheet 任何資料</u>。</p>
+  <div class="actions">
+    <select id="load-existing-select">
+      <option value="">— 載入中 —</option>
+    </select>
+    <button id="load-existing-btn" type="button">📂 載入這個日期</button>
+    <button id="load-existing-refresh" type="button" title="重新讀取 Sheet 分頁清單">↻</button>
+    <span id="load-existing-msg" class="msg"></span>
   </div>
 </section>
 
@@ -60,13 +73,14 @@
   <div id="ocr-table-wrap"></div>
 </section>
 
-<!-- Step 2 -->
-<section class="card panel hidden" data-panel="2">
-  <h2>Step 2 — 生成 subtable（依主表順序）</h2>
-  <p class="hint">依 Step 1 主表 A-L 出現順序，把病人依主治醫師分組，產生子表格寫到主表下方。<strong>此步不抽籤、不寫 N-V</strong>。
-    若該日已有 subtable，會拒絕覆寫（請改用 Step 1 OCR 覆寫以保留已填的 F/G）。</p>
+<!-- Step 2 — 生成 subtable. Hidden: now auto-runs after Step 1 write.
+     Kept in DOM so legacy JS handlers (#build2-btn / #s2-msg / #s2-output)
+     don't crash on missing elements. -->
+<section class="card panel hidden" data-panel="2" style="display:none">
+  <h2>Step 2 — 生成 subtable（已自動化）</h2>
+  <p class="hint">已併入 Step 1：寫入主表後會自動產生子表格。此面板保留給 legacy 用途。</p>
   <div class="actions">
-    <button id="build2-btn">生成 subtable</button>
+    <button id="build2-btn">手動重新生成 subtable</button>
     <span id="s2-msg" class="msg"></span>
   </div>
   <div id="s2-output"></div>
@@ -91,17 +105,27 @@
 <!-- Step 4 -->
 <section class="card panel hidden" data-panel="4">
   <h2>Step 4 — F/G 檢查 + 抽籤 + 入院序</h2>
-  <p class="hint">流程：
-    <strong>① 讀取子表格</strong> → 三層 pin 設定 → <strong>② 首次抽籤</strong> → 需要時 <strong>③ 整合寫入</strong>。<br>
-    Pin 層 1：<strong>E 欄</strong> = 同醫師內排序（例：詹P 三位病人 E 填 1/2/3 就照寫）<br>
-    Pin 層 2：<strong>📌 病人 pin</strong> 面板 = 指定特定病人為全域第 N 位<br>
-    Pin 層 3：<strong>📌 醫師 pin</strong> 面板 = 指定某醫師為 RR 第 N 順位<br>
-    F/G 為下拉 + 可自填（自填內容會被 Step 5 keyin 走 WEBCVIS 的 OTHERS / 備註）。
-    Q（備註(住服)）/ V（改期）為手動標記，重跑時保留。</p>
+  <details class="step-help">
+    <summary>📖 流程說明（點開）</summary>
+    <p><strong>① 讀取醫師子表格</strong>：把該日所有醫師子表格抓下來顯示，並讓 <strong>術前診斷 / 預計心導管</strong> 可即時編輯（點 ▼ 選或自填）。</p>
+    <p><strong>② 首次抽籤 + 寫入入院序</strong>　<span class="badge badge-warn">第一次跑用這個</span><br>
+      重新隨機抽 RR 順位，<u>整段重寫整個入院序區塊</u>（<strong>備註(住服) / 改期 兩欄手動標記也會被清掉</strong>）。<br>
+      用在：當天剛建好子表格、還沒寫過入院序之前。</p>
+    <p><strong>③ 整合寫入入院序</strong>　<span class="badge badge-ok">改完診斷/心導管/同醫師排序 後用這個</span><br>
+      <u>保留</u> 現有的 <strong>備註(住服)</strong> 和 <strong>改期</strong>，只用最新子表格的 <strong>術前診斷 / 預計心導管</strong> 補入院序的 <strong>術前診斷 / 預計心導管</strong> 兩欄 + 重套同醫師排序，<strong>不重抽</strong>。<br>
+      用在：跑完 ② 後又改了診斷/心導管/同醫師排序、或是 Step 1 OCR diff 後想同步入院序。</p>
+    <p><strong>三層 pin</strong>（影響 ② 的抽籤結果，不影響 ③）：</p>
+    <ul>
+      <li>Pin 層 1：<strong>同醫師內排序</strong> 欄（子表格內手填數字 1/2/3，例：詹P 三位病人填 1/2/3 就照寫）</li>
+      <li>Pin 層 2：<strong>📌 病人 pin</strong> 面板 = 指定特定病人為全域第 N 位</li>
+      <li>Pin 層 3：<strong>📌 醫師 pin</strong> 面板 = 指定某醫師為 RR 第 N 順位</li>
+    </ul>
+    <p><strong>術前診斷 / 預計心導管</strong> 自填的內容會被 Step 5 keyin 走 WEBCVIS 的 OTHERS / 備註。</p>
+  </details>
   <div class="actions">
     <button id="load4-btn">① 讀取醫師子表格</button>
-    <button id="lottery4-btn" disabled>② 首次抽籤 + 寫入 N-V</button>
-    <button id="integrate4-btn" disabled>③ 整合寫入 N-V</button>
+    <button id="lottery4-btn" class="btn-warn" disabled title="重新隨機抽籤、整段重寫入院序，會清掉備註(住服)/改期 手動標記">② 首次抽籤 + 寫入入院序 <small>(會清掉備註住服/改期)</small></button>
+    <button id="integrate4-btn" class="btn-ok" disabled title="保留備註(住服)/改期，只補診斷/心導管 + 重套同醫師排序">③ 整合寫入入院序 <small>(保留備註住服/改期)</small></button>
     <span id="s4-msg" class="msg"></span>
   </div>
   <div id="subtables-wrap"></div>

@@ -25,6 +25,23 @@
 {% block body %}
 <div class="max-w-6xl mx-auto px-4 py-6 space-y-6 bg-gray-50">
 
+  <!-- ── 💾 草稿 panel ───────────────────────────────────────────── -->
+  <section class="bg-white rounded-xl shadow border border-amber-200 p-3 flex flex-wrap items-center gap-2 text-sm">
+    <span class="font-semibold text-amber-700">💾 草稿</span>
+    <input id="draft-name" placeholder="草稿名稱（例如 6月初稿）"
+      class="border border-gray-300 rounded px-2 py-1 text-xs flex-shrink-0" style="min-width:160px">
+    <button id="draft-save"
+      class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold px-3 py-1 rounded">存草稿</button>
+    <select id="draft-list" class="border border-gray-300 rounded px-2 py-1 text-xs" style="min-width:220px">
+      <option value="">— 選擇載入 —</option>
+    </select>
+    <button id="draft-load"
+      class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1 rounded">載入</button>
+    <button id="draft-delete"
+      class="bg-red-500 hover:bg-red-600 text-white text-xs font-semibold px-3 py-1 rounded">刪除</button>
+    <span id="draft-status" class="text-xs text-gray-500 ml-2"></span>
+  </section>
+
   <!-- ── Step 1 — 選月份 ────────────────────────────────────────── -->
   <section id="step1" class="bg-white rounded-xl shadow border-2 step-active p-6">
     <div class="flex items-center justify-between mb-4">
@@ -184,14 +201,20 @@
         </table>
       </div>
 
-      <div class="flex items-center gap-3 pt-3 border-t border-gray-100">
+      <div class="flex items-center gap-3 pt-3 border-t border-gray-100 flex-wrap">
         <button id="btn-write"
           class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-5 py-2 rounded-lg text-sm transition">
           ✓ 寫入 Google Sheet
         </button>
         <button id="btn-resolve"
-          class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold px-4 py-2 rounded-lg text-sm transition">
-          重新跑 solver
+          class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold px-4 py-2 rounded-lg text-sm transition"
+          title="solver 帶隨機 jitter，重跑會得到不同的合規班表（可挑備案）">
+          🎲 重新跑 solver（取得不同班表）
+        </button>
+        <button id="btn-handoff-keyin"
+          class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition"
+          title="把目前 solver 結果丟給 Key 班 卡片，自動填好 VS/CR/假日">
+          🔑 前往 Key 班（帶入此月排班）
         </button>
         <span id="write-status" class="text-sm text-gray-500"></span>
       </div>
@@ -511,5 +534,129 @@ $('btn-write').addEventListener('click', async () => {
 $('btn-resolve').addEventListener('click', () => {
   $('btn-solve').click();
 });
+
+// 🔑 Hand off solver result to Card 2 Key 班 — backend pushes the
+// {year, month, vs_schedule, cr_schedule, tw_holidays} payload into the
+// keyin prefill cache; we then redirect to /keyin which consumes it.
+// Defensive null check in case the page is served from browser cache
+// without the new button (user can hard-refresh to fix).
+const handoffBtn = $('btn-handoff-keyin');
+if (handoffBtn) {
+  handoffBtn.addEventListener('click', async () => {
+    if (!state.lastSolve) {
+      setStatus('write-status', '請先按 solver', 'err');
+      return;
+    }
+    setStatus('write-status', '丟給 Key 班…');
+    const r = await postJSON('/api/sched/handoff-to-keyin', {
+      year: state.year, month: state.month,
+    });
+    if (!r.ok) { setStatus('write-status', '❌ ' + r.error, 'err'); return; }
+    setStatus('write-status',
+      `✓ 已帶入 (VS ${r.vs_count} 天 / CR ${r.cr_count} 天)，跳轉到 Key 班…`, 'ok');
+    window.location.href = r.redirect || '/keyin';
+  });
+}
+
+
+// ── 草稿 (sched bucket) ─────────────────────────────────────────
+// Whole block is guarded by an existence check so a stale browser cache
+// (HTML without the draft panel) doesn't crash before later handlers bind.
+const _draftSave   = $('draft-save');
+const _draftLoad   = $('draft-load');
+const _draftDelete = $('draft-delete');
+
+async function refreshDraftList() {
+  try {
+    const r = await fetch('/api/draft/sched/list');
+    const d = await r.json();
+    const sel = $('draft-list');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— 選擇載入 —</option>' +
+      (d.drafts || []).map(x =>
+        `<option value="${x.name}">${x.name} （${x.saved_at}）</option>`
+      ).join('');
+  } catch (_) {}
+}
+
+function setDraftStatus(text, kind='info') {
+  const el = $('draft-status');
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = kind === 'ok' ? '#059669' : kind === 'err' ? '#dc2626' : '#6b7280';
+}
+
+if (_draftSave) _draftSave.addEventListener('click', async () => {
+  const name = ($('draft-name').value || '').trim()
+    || `${state.year || $('year').value}${pad2(state.month || $('month').value)}_自動`;
+  // Snapshot the entire workflow state so re-loading restores everything
+  // we know about: month + baseline + X + prefs + last solve result.
+  const snapshot = {
+    year: state.year || parseInt($('year').value),
+    month: state.month || parseInt($('month').value),
+    baseline: state.baseline,
+    H: state.H, W: state.W, X: state.X,
+    prefs: state.prefs,
+    lastSolve: state.lastSolve,
+    saved_at_local: new Date().toLocaleString('zh-TW'),
+  };
+  setDraftStatus('儲存中…');
+  try {
+    const r = await fetch('/api/draft/sched/save', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ name, state: snapshot }),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'save failed');
+    setDraftStatus(`✓ 已存「${d.name}」`, 'ok');
+    refreshDraftList();
+  } catch (err) {
+    setDraftStatus('✗ ' + err.message, 'err');
+  }
+});
+
+if (_draftLoad) _draftLoad.addEventListener('click', async () => {
+  const name = $('draft-list').value;
+  if (!name) { setDraftStatus('先選一個草稿', 'err'); return; }
+  setDraftStatus('載入中…');
+  try {
+    const r = await fetch(`/api/draft/sched/load?name=${encodeURIComponent(name)}`);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'load failed');
+    const s = d.payload || {};
+    if (s.year)  $('year').value  = s.year;
+    if (s.month) $('month').value = s.month;
+    if (s.X != null) $('X').value = s.X;
+    state.year  = s.year  ?? null;
+    state.month = s.month ?? null;
+    state.baseline = s.baseline || {};
+    state.H = s.H || 0; state.W = s.W || 0; state.X = s.X ?? null;
+    state.prefs = s.prefs || {};
+    state.lastSolve = s.lastSolve || null;
+    setDraftStatus(`✓ 已載入「${name}」— 請按「載入月份資料」重建畫面`, 'ok');
+  } catch (err) {
+    setDraftStatus('✗ ' + err.message, 'err');
+  }
+});
+
+if (_draftDelete) _draftDelete.addEventListener('click', async () => {
+  const name = $('draft-list').value;
+  if (!name) { setDraftStatus('先選一個草稿', 'err'); return; }
+  if (!confirm(`確定刪除草稿「${name}」？`)) return;
+  try {
+    const r = await fetch('/api/draft/sched/delete', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ name }),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error('delete failed');
+    setDraftStatus(`✓ 已刪除「${name}」`, 'ok');
+    refreshDraftList();
+  } catch (err) {
+    setDraftStatus('✗ ' + err.message, 'err');
+  }
+});
+
+refreshDraftList();
 </script>
 {% endblock %}

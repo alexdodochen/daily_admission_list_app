@@ -211,8 +211,81 @@ def load_cumulative_stats(sheet) -> dict:
     return result
 
 
-def update_cumulative_stats(sheet, baseline: dict, monthly_stats: dict):
-    """Overwrite 值班總數統計 = baseline + this month's stats."""
+def read_monthly_stats(sheet, sheet_name: str) -> dict:
+    """Read a `{YYYYMM} 班數統計` tab back into {name: {col: int}}.
+
+    Used by the writer to recover the previous monthly contribution when
+    rewriting the same month — so the cumulative tab can subtract prev +
+    add new instead of double-counting. Returns {} if tab doesn't exist.
+    """
+    import gspread
+    try:
+        ws = sheet.worksheet(sheet_name)
+    except gspread.exceptions.WorksheetNotFound:
+        return {}
+    all_values = ws.get_all_values()
+    if not all_values:
+        return {}
+    header = all_values[0]
+
+    def find_col(name):
+        for i, h in enumerate(header):
+            if h == name:
+                return i
+        return None
+
+    cols = {key: find_col(key) for key in
+            ("姓名", "平日班", "週五班", "週六班", "週日班", "假日班")}
+    if cols["姓名"] is None:
+        return {}
+
+    def as_int(row, idx):
+        if idx is None or idx >= len(row):
+            return 0
+        v = row[idx].strip() if isinstance(row[idx], str) else row[idx]
+        try:
+            return int(v) if v not in (None, "") else 0
+        except (ValueError, TypeError):
+            return 0
+
+    result: dict = {}
+    for row in all_values[1:]:
+        if not row or cols["姓名"] >= len(row) or not row[cols["姓名"]]:
+            continue
+        name = row[cols["姓名"]]
+        result[name] = {
+            "平日班": as_int(row, cols["平日班"]),
+            "週五班": as_int(row, cols["週五班"]),
+            "週六班": as_int(row, cols["週六班"]),
+            "週日班": as_int(row, cols["週日班"]),
+            "假日班": as_int(row, cols["假日班"]),
+        }
+    return result
+
+
+def update_cumulative_stats(sheet, baseline: dict, monthly_stats: dict,
+                            previous_monthly: dict | None = None):
+    """Overwrite 值班總數統計 = baseline + this month's stats.
+
+    `previous_monthly`: optional same shape as monthly_stats. When supplied,
+    baseline is treated as already including this previous month's
+    contribution → subtract prev before adding new. Lets the caller safely
+    re-write a month that was written before without double-counting.
+    """
+    if previous_monthly:
+        zero = {"平日班": 0, "週五班": 0, "週六班": 0, "週日班": 0, "假日班": 0}
+        adjusted = {}
+        for name, base in baseline.items():
+            prev = previous_monthly.get(name, zero)
+            adjusted[name] = {
+                "平日": base["平日"] - prev["平日班"],
+                "週五": base["週五"] - prev["週五班"],
+                "週六": base["週六"] - prev["週六班"],
+                "週日": base["週日"] - prev["週日班"],
+                "假日": base["假日"] - prev["假日班"],
+            }
+        baseline = adjusted
+
     ws = sheet.worksheet(CUMULATIVE_TAB)
     all_values = ws.get_all_values()
     if not all_values:

@@ -134,6 +134,35 @@
       <label>Group ID
         <input name="line_group_id" value="{{ cfg.line_group_id }}">
       </label>
+      <details class="hint">
+        <summary>沒有 LINE Bot？點這裡看怎麼建立（一次性，~10 分鐘）</summary>
+        <ol>
+          <li>到 <a href="https://developers.line.biz/console/" target="_blank" rel="noopener">LINE Developers Console</a> 用 LINE 帳號登入。</li>
+          <li>點「Create new provider」→ 名稱隨便（例：成醫心內）。</li>
+          <li>建好後點進 provider →「Create a channel」→ 選 <strong>Messaging API</strong>。</li>
+          <li>填基本資料（channel name、icon、category 隨意，region 選 Taiwan），同意條款 → Create。</li>
+          <li>進入該 channel → <strong>Messaging API</strong> 分頁：
+            <ul>
+              <li>下拉到 <code>Channel access token</code> → 按「Issue」取得 long-lived token，貼到上面 <strong>Channel access token</strong> 欄。</li>
+              <li>把該 channel 的 <code>Bot basic ID</code>（例如 @abc1234）加成 LINE 好友（用手機掃 QR code）。</li>
+            </ul>
+          </li>
+          <li>取得 <strong>Group ID</strong>（這步最麻煩）：
+            <ul>
+              <li>把 bot 加進你要推播的 LINE 群組。</li>
+              <li>需要架一個 webhook 接收訊息事件 — 最快的做法：
+                <ol>
+                  <li>在 <strong>Messaging API</strong> 分頁啟用「Use webhook」，URL 暫時填 <code>https://webhook.site</code> 給的隨機 URL。</li>
+                  <li>在群組隨便發一句話，<code>webhook.site</code> 收到的 JSON 裡 <code>source.groupId</code> 就是 Group ID（C 開頭，33 字元）。</li>
+                </ol>
+              </li>
+              <li>把該 ID 貼到上面 <strong>Group ID</strong> 欄。</li>
+            </ul>
+          </li>
+          <li>注意：channel 預設「Auto-reply messages」會擾民，建議到「Response settings」關掉。</li>
+        </ol>
+        <p>不會做也沒關係 — Step 6 是選填，跳過 Step 6 不影響 Step 1-5 的功能。</p>
+      </details>
     </fieldset>
 
     <p class="hint button-order-hint">

@@ -8,7 +8,27 @@
   const modal = document.getElementById('help-modal');
   const close = document.getElementById('help-close');
   if (!link || !modal) return;
-  link.addEventListener('click', (e) => { e.preventDefault(); modal.hidden = false; });
+  // Auto-pick tab based on current page when opening
+  const pickInitialTab = () => {
+    const path = window.location.pathname;
+    if (path.startsWith('/sched')) return 'sched';
+    if (path.startsWith('/keyin')) return 'keyin';
+    return 'admission';  // default + /admission + /
+  };
+  const showTab = (name) => {
+    modal.querySelectorAll('button.help-tab').forEach(b =>
+      b.classList.toggle('active', b.dataset.tab === name));
+    modal.querySelectorAll('.help-tab-pane').forEach(p =>
+      p.classList.toggle('active', p.dataset.tab === name));
+  };
+  link.addEventListener('click', (e) => {
+    e.preventDefault();
+    showTab(pickInitialTab());
+    modal.hidden = false;
+  });
+  modal.querySelectorAll('button.help-tab').forEach(btn => {
+    btn.addEventListener('click', () => showTab(btn.dataset.tab));
+  });
   if (close) close.addEventListener('click', () => { modal.hidden = true; });
   modal.addEventListener('click', (e) => { if (e.target === modal) modal.hidden = true; });
   document.addEventListener('keydown', (e) => {
@@ -131,8 +151,11 @@
     if (next === orig) return;  // no change
     td.classList.add('viewer-cell-saving');
     try {
+      // currentSheet may be "<source>:<name>" or bare name (legacy)
+      const { src, name } = decodeKey(currentSheet);
       const fd = new FormData();
-      fd.append('sheet', currentSheet);
+      fd.append('sheet', name);
+      fd.append('source', src);
       fd.append('row', row);
       fd.append('col', col);
       fd.append('value', next);
@@ -162,49 +185,110 @@
     }
   });
 
+  // Encode/decode "<source>:<name>" so we can route the read API call
+  function encodeKey(src, name) { return src + ':' + name; }
+  function decodeKey(key) {
+    const i = (key || '').indexOf(':');
+    if (i < 0) return { src: 'admission', name: key || '' };
+    return { src: key.slice(0, i), name: key.slice(i + 1) };
+  }
+
+  // Cache the raw list response so switching source tabs doesn't re-hit the API
+  let _sheetListCache = null;
+  let _currentSrc = 'admission';
+
+  function populateSelectForSource(src) {
+    if (!_sheetListCache) return;
+    const r = _sheetListCache;
+    const today = todayYmd();
+    const opts = ['<option value="">— 選擇分頁 —</option>'];
+    if (src === 'admission') {
+      const adm = (r.admission || r.sheets || []).slice();
+      const others = adm.filter(s => !isYmd(s));
+      const dates  = adm.filter(isYmd).sort((a, b) => b.localeCompare(a));
+      // 其他工作表 FIRST per user preference, date sheets after
+      if (others.length) {
+        opts.push('<optgroup label="📋 其他工作表">');
+        opts.push(...others.map(s => `<option value="${encodeKey('admission', s)}">${s}</option>`));
+        opts.push('</optgroup>');
+      }
+      if (dates.length) {
+        opts.push('<optgroup label="📆 每天的工作表 (YYYYMMDD)">');
+        opts.push(...dates.map(d => {
+          const k = encodeKey('admission', d);
+          return `<option value="${k}"${d === today ? ' selected' : ''}>${d}</option>`;
+        }));
+        opts.push('</optgroup>');
+      }
+      setMsg(`入院 — 其他 ${others.length}、日期分頁 ${dates.length}`, 'ok');
+    } else if (src === 'schedule') {
+      const sched = (r.schedule || []).slice();
+      const monthTabs = sched.filter(s => /^\d{6}$/.test(s)).sort((a, b) => b.localeCompare(a));
+      const otherTabs = sched.filter(s => !/^\d{6}$/.test(s));
+      if (otherTabs.length) {
+        opts.push('<optgroup label="📋 其他工作表">');
+        opts.push(...otherTabs.map(s => `<option value="${encodeKey('schedule', s)}">${s}</option>`));
+        opts.push('</optgroup>');
+      }
+      if (monthTabs.length) {
+        opts.push('<optgroup label="📆 月份分頁 (YYYYMM)">');
+        opts.push(...monthTabs.map(s => `<option value="${encodeKey('schedule', s)}">${s}</option>`));
+        opts.push('</optgroup>');
+      }
+      setMsg(`排班 — 其他 ${otherTabs.length}、月份 ${monthTabs.length}`, 'ok');
+    }
+    select.innerHTML = opts.join('');
+  }
+
   async function loadSheets() {
     setMsg('讀取分頁清單…', 'ok');
     try {
-      const r = await api('/api/sheet/list');
-      const all = r.sheets || [];
-      const dates = all.filter(isYmd).sort((a, b) => b.localeCompare(a));
-      const others = all.filter(s => !isYmd(s));
-      const today = todayYmd();
-      const opts = ['<option value="">— 選擇分頁 —</option>'];
-      if (dates.length) {
-        opts.push('<optgroup label="日期分頁 (YYYYMMDD)">');
-        opts.push(...dates.map(d => `<option value="${d}"${d === today ? ' selected' : ''}>${d}</option>`));
-        opts.push('</optgroup>');
+      _sheetListCache = await api('/api/sheet/list');
+      populateSelectForSource(_currentSrc);
+      // Auto-select today's date sheet ONLY when admission source + today exists
+      if (_currentSrc === 'admission') {
+        const today = todayYmd();
+        const adm = (_sheetListCache.admission || _sheetListCache.sheets || []);
+        if (adm.includes(today)) loadSheet(encodeKey('admission', today));
       }
-      if (others.length) {
-        opts.push('<optgroup label="其他工作表">');
-        opts.push(...others.map(s => `<option value="${s}">${s}</option>`));
-        opts.push('</optgroup>');
-      }
-      select.innerHTML = opts.join('');
-      setMsg(`日期分頁 ${dates.length}、其他工作表 ${others.length}`, 'ok');
-      if (dates.includes(today)) loadSheet(today);
     } catch (err) {
       setMsg('✗ ' + err.message, 'err');
     }
   }
 
-  async function loadSheet(name) {
-    if (!name) { body.innerHTML = '<p class="hint">選一個分頁開始查閱。</p>'; return; }
+  // Wire source tab clicks
+  document.querySelectorAll('.viewer-src-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const src = btn.dataset.src;
+      _currentSrc = src;
+      document.querySelectorAll('.viewer-src-tab').forEach(b =>
+        b.classList.toggle('active', b === btn));
+      body.innerHTML = `<p class="hint">已切換到 ${src === 'schedule' ? '📅 排班' : '📥 每日入院清單'}，請選分頁。</p>`;
+      currentSheet = '';
+      if (_sheetListCache) populateSelectForSource(src);
+      else loadSheets();
+    });
+  });
+
+  async function loadSheet(key) {
+    if (!key) { body.innerHTML = '<p class="hint">選一個分頁開始查閱。</p>'; return; }
+    const { src, name } = decodeKey(key);
     setMsg('讀取 ' + name + ' …', 'ok');
     body.innerHTML = '<p class="hint">載入中…</p>';
-    currentSheet = name;
+    currentSheet = key;  // store full key so writes know the source
     try {
-      if (isYmd(name)) {
+      // Date-shaped admission tab → structured viewer (main + ordering + sub-tables)
+      if (src === 'admission' && isYmd(name)) {
         const r = await api(`/api/sheet/read?date=${encodeURIComponent(name)}`);
         if (r.error) { setMsg('✗ ' + r.error, 'err'); body.innerHTML = `<p class="viewer-empty">${esc(r.error)}</p>`; return; }
         render(r);
       } else {
-        const r = await api(`/api/sheet/raw?name=${encodeURIComponent(name)}`);
+        const r = await api(`/api/sheet/raw?name=${encodeURIComponent(name)}&source=${src}`);
         if (r.error) { setMsg('✗ ' + r.error, 'err'); body.innerHTML = `<p class="viewer-empty">${esc(r.error)}</p>`; return; }
         renderRaw(r);
       }
-      setMsg('✓ ' + name + '（可直接編輯儲存格）', 'ok');
+      const srcLabel = src === 'schedule' ? '📅 排班' : '📥 入院';
+      setMsg(`✓ ${srcLabel} / ${name}（可直接編輯儲存格）`, 'ok');
     } catch (err) {
       setMsg('✗ ' + err.message, 'err');
       body.innerHTML = '<p class="viewer-empty">讀取失敗。</p>';
@@ -460,6 +544,151 @@ if (document.querySelector('.stepper')) {
   setupStep6();
   setupFormatCheck();
   setupFinalizeCheck();
+  setupLoadExisting();
+}
+
+// ---------- 📂 Load existing date sheet (skip OCR, hydrate from Sheet) ----------
+function setupLoadExisting() {
+  const sel  = $('#load-existing-select');
+  const btn  = $('#load-existing-btn');
+  const refr = $('#load-existing-refresh');
+  const msg  = $('#load-existing-msg');
+  if (!sel || !btn) return;
+
+  async function refresh() {
+    try {
+      const r = await api('/api/sheet/list');
+      const adm = (r.admission || r.sheets || [])
+        .filter(s => /^\d{8}$/.test(s))
+        .sort((a, b) => b.localeCompare(a));
+      const today = (() => {
+        const n = new Date();
+        const tp = new Date(n.getTime() + (n.getTimezoneOffset() + 480) * 60000);
+        return `${tp.getFullYear()}${String(tp.getMonth()+1).padStart(2,'0')}${String(tp.getDate()).padStart(2,'0')}`;
+      })();
+      sel.innerHTML = ['<option value="">— 選一個日期 —</option>']
+        .concat(adm.map(d => `<option value="${d}"${d === today ? ' selected' : ''}>${d}</option>`))
+        .join('');
+      flash(msg, `${adm.length} 個日期分頁`, 'ok');
+    } catch (err) {
+      flash(msg, '✗ ' + err.message, 'err');
+    }
+  }
+
+  // Map main A-L cells back into the OCR row shape so renderOcrTable can show
+  // them in the editable Step 1 table. Order matches OCR_COLS / SUB_HEADER.
+  function mainCellsToOcrRow(cells) {
+    const arr = Array.isArray(cells) ? cells : [];
+    const c = arr.concat(new Array(12).fill('')).slice(0, 12).map(x => (x == null ? '' : String(x)));
+    return {
+      admit_date:    c[0],  op_date:       c[1],
+      department:    c[2],  doctor:        c[3],
+      icd_diagnosis: c[4],  name:          c[5],
+      gender:        c[6],  age:           c[7],
+      chart_no:      c[8],  bed:           c[9],
+      hint:          c[10], urgent:        c[11],
+    };
+  }
+
+  // Reconstruct Step 3 EMR result cards from sub-table rows so 載入既有日期
+  // also surfaces previously-fetched EMR text + auto-detected F/G. Each
+  // sub-table row carries: [name, chart_no, c_text(EMR), summary?, manual,
+  // diagnosis(F), cathlab(G)] in cols 0..6.
+  function subsToEmrResults(subs) {
+    const out = [];
+    (subs || []).forEach(s => {
+      const doc = s.doctor || '';
+      const r0  = s.title_row || 0;
+      // sub.rows[0] = title, [1] = header, [2..] = patients
+      (s.rows || []).slice(2).forEach((row, i) => {
+        const c   = (row || []).map(x => (x == null ? '' : String(x)));
+        const name   = c[0] || '';
+        const chart  = c[1] || '';
+        if (!name && !chart) return;  // skip blank patient rows
+        const cText  = c[2] || '';
+        const fDiag  = c[5] || '';
+        const gCath  = c[6] || '';
+        // Parse "<age> y/o <gender>\n..." prefix from c_text if present
+        let age = null, gender = '';
+        const m = cText.match(/^(\d+)\s+y\/o\s+([男女])\s*\n/);
+        if (m) { age = parseInt(m[1]); gender = m[2]; }
+        out.push({
+          chart_no: chart, name: name, doctor: doc,
+          c_text: cText, f: fDiag, g: gCath,
+          age: age, gender: gender, emr_name: '',
+          has_record: !!cText && !cText.includes('查無') && !cText.includes('INPATIENT'),
+          row: r0 + 2 + i,  // sheet row (1-indexed)
+          error: '',
+        });
+      });
+    });
+    return out;
+  }
+
+  btn.addEventListener('click', async () => {
+    const date = sel.value;
+    if (!date) { flash(msg, '先選一個日期', 'err'); return; }
+    await withBusy(btn, '載入中…', async () => {
+      try {
+        const r = await api(`/api/sheet/read?date=${encodeURIComponent(date)}`);
+        if (r.error) { flash(msg, '✗ ' + r.error, 'err'); return; }
+
+        // 1) Set date input + sync date picker + weekday auto-update
+        $('#date-input').value = date;
+        $('#date-input').dispatchEvent(new Event('change'));
+
+        // 2) Step 1: render main A-L as editable OCR table
+        const mainRows = (r.main || []).filter(row =>
+          (row || []).some(c => (c || '').toString().trim()));
+        ocrRows = mainRows.map(mainCellsToOcrRow);
+        renderOcrTable(ocrRows);
+        $('#write1-btn').disabled = ocrRows.length === 0;
+
+        // 3) Step 3: rebuild EMR result cards from sub-table C/F/G so user
+        //    can review/edit prior EMR work without re-fetching the browser.
+        const emrResults = subsToEmrResults(r.subs || []);
+        let renderedEmr = 0;
+        if (emrResults.length && typeof renderEmrResults === 'function') {
+          await renderEmrResults(emrResults, {});
+          renderedEmr = emrResults.length;
+          // Pre-fill the EMR patient JSON input so a re-run uses the same list
+          if ($('#emr-patients')) {
+            $('#emr-patients').value = JSON.stringify(
+              emrResults.map(p => ({chart_no: p.chart_no, name: p.name, doctor: p.doctor})),
+              null, 0);
+          }
+        }
+
+        // 4) Step 4: trigger sub-table read so F/G editor populates.
+        //    Click works regardless of panel visibility; the rendered HTML
+        //    lands inside #subtables-wrap which is in the hidden Step 4 panel.
+        if ($('#load4-btn')) {
+          $('#load4-btn').click();
+        }
+
+        // 5) Auto-jump to Step 4 tab so user immediately sees sub-tables +
+        //    F/G editor (the rendered results are otherwise hidden behind
+        //    the Step 1 active panel).
+        const step4Tab = document.querySelector('.step[data-step="4"]');
+        if (step4Tab) step4Tab.click();
+
+        const subCount = (r.subs || []).length;
+        const ordCount = (r.ordering || []).filter(row =>
+          (row || []).some(c => (c || '').toString().trim())).length;
+        const withEmr = emrResults.filter(p => p.c_text).length;
+        flash(msg,
+          `✓ 載入 ${date}：主表 ${ocrRows.length} 位、子表格 ${subCount} 位醫師、` +
+          `EMR ${renderedEmr}/${withEmr} 位（已渲染/有資料）、入院序 ${ordCount} 列。` +
+          `已切到 Step 4 顯示子表格；點 Step 3 看 EMR。`,
+          'ok');
+      } catch (err) {
+        flash(msg, '✗ ' + err.message, 'err');
+      }
+    });
+  });
+
+  if (refr) refr.addEventListener('click', refresh);
+  refresh();
 }
 
 // ---------- Date picker + auto weekday ----------
@@ -757,7 +986,19 @@ async function step1Write(date, rows, allowOverwrite) {
         flash($('#ocr-msg'), '取消寫入（已保留舊資料）', 'ok');
       }
     } else {
-      flash($('#ocr-msg'), `✓ 已寫入 ${r.range}`, 'ok');
+      // Auto-build sub-tables in the background so the user doesn't need to
+      // click an extra "Step 2" button — the sub-tables are derived from main
+      // A-L and there's no decision to make. Idempotent: server refuses to
+      // rebuild if sub-tables already exist (we silently swallow that error).
+      let subNote = '';
+      try {
+        const fd2 = new FormData();
+        fd2.append('date', date);
+        const sr = await api('/api/step2/build_subtables', { method: 'POST', body: fd2 });
+        const docCount = (sr.doctors || []).length;
+        if (docCount) subNote = `；子表格已建 ${docCount} 位醫師`;
+      } catch (_) { /* sub-tables already exist or doctor list empty — fine */ }
+      flash($('#ocr-msg'), `✓ 已寫入 ${r.range}${subNote}`, 'ok');
     }
   } catch (err) {
     flash($('#ocr-msg'), '✗ ' + err.message, 'err');
@@ -901,7 +1142,7 @@ function setupStep3() {
       fd.append('admission_date', date);
       try {
         const r = await api('/api/step3/run', { method: 'POST', body: fd });
-        renderEmrResults(r.results);
+        await renderEmrResults(r.results, r.main_fixes || {});
         const wb = r.writeback || {};
         const missing = (wb.missing || []).length;
         let skippedNote;
@@ -916,6 +1157,11 @@ function setupStep3() {
           skippedNote = `；寫回子表格 ${wb.written} 位${autoBuilt}` +
             (missing ? `，${missing} 位查無子表格` : '');
         }
+        // Append main A-L 修正 summary
+        const mf = r.main_fixes || {};
+        if (mf.fixes && mf.fixes.length) {
+          skippedNote += `；主表更正 ${mf.fixes.length} 處 (姓名/性別/年齡)`;
+        }
         flash($('#s3-msg'),
           `✓ 完成 ${r.results.length} 位${skippedNote}`, level);
       } catch (err) {
@@ -925,29 +1171,69 @@ function setupStep3() {
   });
 }
 
-function renderEmrResults(results) {
-  const escape = s => (s || '').replace(/</g, '&lt;');
-  const html = results.map(r => {
+async function renderEmrResults(results, mainFixes) {
+  const escape = s => String(s == null ? '' : s).replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const opts = await ensureFgOptions();
+  // One shared datalist per page; render once at the top of the Step 3 area.
+  const datalists = fgDatalist('fg-f-list', opts.f) + fgDatalist('fg-g-list', opts.g);
+
+  // Main A-L 修正摘要區（EMR → 姓名/性別/年齡 autofix）
+  let fixesHtml = '';
+  if (mainFixes && Array.isArray(mainFixes.fixes) && mainFixes.fixes.length) {
+    const rows = mainFixes.fixes.map(f =>
+      `<tr><td>${escape(f.chart_no)}</td><td>${escape(f.field)}</td>` +
+      `<td class="old">${escape(f.old) || '(空)'}</td>` +
+      `<td>→</td><td class="new">${escape(f.new)}</td></tr>`).join('');
+    fixesHtml = `<div class="emr-fix-list">
+      <h4>📝 EMR 自動更正主表 (${mainFixes.fixes.length} 處)</h4>
+      <table class="data"><thead><tr><th>病歷號</th><th>欄位</th><th>原</th><th></th><th>新</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+  } else if (mainFixes && mainFixes.skipped === false) {
+    fixesHtml = `<p class="hint">📝 主表姓名/性別/年齡均符合 EMR，無需更正。</p>`;
+  }
+
+  const cards = results.map(r => {
     const demog = (r.age != null && r.gender) ? `${r.age} y/o ${r.gender}` : '';
-    const fg = `<span class="emr-fg">F=${escape(r.f) || '—'} / G=${escape(r.g) || '—'}</span>`;
     const emrName = r.emr_name && r.emr_name !== r.name
       ? `<span class="emr-name-fix">(EMR：${escape(r.emr_name)})</span>` : '';
     const visit = r.visit_label ? `<span class="hint">[訪視: ${escape(r.visit_label)}]</span>` : '';
-    // Empty SOAP / boilerplate-only response → render the warning card not a <pre>
-    // so the user immediately sees "no clinic record" rather than scanning text.
     const noRecord = r.has_record === false;
     const body = noRecord
       ? `<p class="msg err" style="margin:6px 0">⚠ ${escape(r.c_text) || '查無 EMR'}</p>`
       : `<pre>${escape(r.c_text)}</pre>`;
+    // F/G editable: row comes from /api/step3/run enrichment (sub-table lookup).
+    // If row is missing (patient not in any sub-table), still render read-only.
+    const fgEditor = (r.row)
+      ? `<span class="emr-fg-edit">
+            F: ${fgInput(6, r.f, r.row, opts.f, 'fg-f-list')}
+            G: ${fgInput(7, r.g, r.row, opts.g, 'fg-g-list')}
+         </span>`
+      : `<span class="emr-fg">F=${escape(r.f) || '—'} / G=${escape(r.g) || '—'} <span class="hint">(無 row, 不可編輯)</span></span>`;
     return `
-    <div class="emr-card${noRecord ? ' emr-no-record' : ''}">
+    <div class="emr-card${noRecord ? ' emr-no-record' : ''}" data-chart="${escape(r.chart_no)}">
       <h3>${escape(r.doctor)} / ${escape(r.name)} ${emrName} (${escape(r.chart_no)}) ${r.error ? '⚠' : ''}</h3>
       ${r.error ? `<p class="msg err">${escape(r.error)}</p>` : ''}
-      <p class="hint">${escape(demog)} &nbsp; ${fg} &nbsp; ${visit}</p>
+      <p class="hint">${escape(demog)} &nbsp; ${visit}</p>
+      <p>${fgEditor}</p>
       ${body}
     </div>`;
   }).join('');
-  $('#emr-results').innerHTML = html;
+
+  $('#emr-results').innerHTML = datalists + fixesHtml + cards;
+
+  // Bidirectional sync: when user saves F/G here, push the value into the
+  // matching Step 4 sub-table input (by row+col) without refetching.
+  wireFgInputsIn('#emr-results', '#s3-msg', (savedInp) => {
+    const row = savedInp.dataset.row;
+    const col = savedInp.dataset.col;
+    const val = savedInp.value;
+    document.querySelectorAll(
+      `#subtables-wrap input.fg-input[data-row="${row}"][data-col="${col}"]`
+    ).forEach(target => {
+      target.value = val;
+      target.dataset.original = val;
+    });
+  });
 }
 
 // ---------- Step 4: Ordering ----------
@@ -1230,15 +1516,23 @@ async function ensureFgOptions() {
 
 function fgInput(col, value, row, options, listId) {
   const esc = s => String(s || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-  return `<input class="fg-input" type="text" list="${listId}"
-            data-row="${row}" data-col="${col}" value="${esc(value)}"
-            placeholder="可選清單或自填">`;
+  // Custom combobox: input + ▼ that opens a real <ul> popup (not native
+  // datalist). Always works regardless of browser. Still typeable for free
+  // text. options stored on data-options for the popup builder.
+  const optsAttr = esc(JSON.stringify(options || []));
+  return `<span class="fg-cell" data-options='${optsAttr}'>
+    <input class="fg-input" type="text" autocomplete="off"
+           data-row="${row}" data-col="${col}" value="${esc(value)}"
+           placeholder="點 ▼ 或自填">
+    <button type="button" class="fg-chev" tabindex="-1" title="展開選單">▼</button>
+    <ul class="fg-popup" hidden></ul>
+  </span>`;
 }
 
 function fgDatalist(id, options) {
-  const esc = s => String(s || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-  return `<datalist id="${id}">` +
-    options.map(o => `<option value="${esc(o)}">`).join('') + '</datalist>';
+  // Legacy datalist kept for backward compat (no longer used by fgInput);
+  // returns empty string so existing call sites are no-ops.
+  return '';
 }
 
 async function renderSubtables(tables) {
@@ -1265,13 +1559,20 @@ async function renderSubtables(tables) {
   wireFgInputs();
 }
 
-function wireFgInputs() {
+function wireFgInputsIn(scopeSel, msgSel, onSavedExtra) {
   const date = $('#date-input').value.trim();
-  $$('#subtables-wrap input.fg-input').forEach(inp => {
+  const scope = $(scopeSel);
+  if (!scope) return;
+  scope.querySelectorAll('input.fg-input').forEach(inp => {
     inp.dataset.original = inp.value;
     const save = async () => {
       const val = inp.value.trim();
       if (val === inp.dataset.original) return;
+      if (!inp.dataset.row || inp.dataset.row === 'undefined') {
+        // No row known (e.g. patient not in any sub-table) — refuse to save
+        flash($(msgSel), '✗ 找不到子表格 row，無法寫回', 'err');
+        return;
+      }
       inp.classList.add('saving');
       try {
         const fd = new FormData();
@@ -1284,16 +1585,101 @@ function wireFgInputs() {
         inp.classList.remove('saving');
         inp.classList.add('saved');
         setTimeout(() => inp.classList.remove('saved'), 1200);
-        flash($('#s4-msg'),
+        flash($(msgSel),
           `✓ 已存 ${String.fromCharCode(64 + parseInt(inp.dataset.col))}${inp.dataset.row} = ${val || '(空)'}`, 'ok');
+        if (typeof onSavedExtra === 'function') onSavedExtra(inp);
       } catch (err) {
         inp.classList.remove('saving');
         inp.classList.add('error');
-        flash($('#s4-msg'), '✗ ' + err.message, 'err');
+        flash($(msgSel), '✗ ' + err.message, 'err');
       }
     };
     inp.addEventListener('change', save);
     inp.addEventListener('blur', save);
+  });
+  // Wire ▼ chevron — opens a custom popup <ul> with all options.
+  // Click an option = sets the input value + commits via the same save path.
+  // Click outside = closes. Typing in the input still works (combobox UX).
+  const closeAll = () => scope.querySelectorAll('ul.fg-popup').forEach(p => {
+    p.hidden = true; p.classList.remove('open');
+  });
+  scope.querySelectorAll('span.fg-cell').forEach(cell => {
+    const inp   = cell.querySelector('input.fg-input');
+    const btn   = cell.querySelector('button.fg-chev');
+    const popup = cell.querySelector('ul.fg-popup');
+    // Defensive: if the rendered cell is from a stale (cached) template
+    // that pre-dates the chevron + popup, bail out instead of crashing
+    // addEventListener on null.
+    if (!inp || !btn || !popup) return;
+    let options = [];
+    try { options = JSON.parse(cell.getAttribute('data-options') || '[]'); }
+    catch (_) { options = []; }
+    const buildList = (filter) => {
+      const f = (filter || '').toLowerCase();
+      const items = options.filter(o => !f || o.toLowerCase().includes(f));
+      popup.innerHTML = items.map(o =>
+        `<li tabindex="-1" data-val="${o.replace(/"/g,'&quot;')}">${o.replace(/</g,'&lt;')}</li>`
+      ).join('') || '<li class="empty">（沒有符合的選項）</li>';
+    };
+    // Chevron click → ALWAYS show full list (no filter), regardless of current value.
+    // Typing in input → filter narrows the list (combobox UX).
+    const open = (filterByValue) => {
+      buildList(filterByValue ? inp.value : '');
+      popup.hidden = false; popup.classList.add('open');
+    };
+    const close = () => { popup.hidden = true; popup.classList.remove('open'); };
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      // toggle
+      if (!popup.hidden) { close(); return; }
+      closeAll();  // close any other open popup
+      open(false);  // false = ignore current value, show ALL options
+      inp.focus();
+    });
+    inp.addEventListener('focus', () => { /* don't auto-open on focus */ });
+    inp.addEventListener('input', () => {
+      // Typing in the input auto-opens the popup with a value-filtered list,
+      // so users get suggestions without having to click ▼ first. (Same UX
+      // as a native <datalist> combobox.)
+      if (popup.hidden) {
+        closeAll();
+        open(true);  // true = filter by current input value
+      } else {
+        buildList(inp.value);
+      }
+    });
+    popup.addEventListener('mousedown', (e) => {
+      const li = e.target.closest('li[data-val]');
+      if (!li) return;
+      e.preventDefault();
+      inp.value = li.dataset.val;
+      close();
+      // Trigger save (change handler bound above already fires on blur/change;
+      // dispatch change so it also fires on click-set without losing focus).
+      inp.dispatchEvent(new Event('change'));
+      inp.focus();
+    });
+  });
+  // Close popups on click outside the scope
+  document.addEventListener('mousedown', (e) => {
+    if (!e.target.closest('.fg-cell')) closeAll();
+  }, { once: false });
+}
+
+function wireFgInputs() {
+  // Step 4 sub-table view — saves go to /api/step4/cell.
+  // Bidirectional sync: when user saves F/G here, push the value into the
+  // matching Step 3 EMR card input (by row+col) so both views stay coherent.
+  wireFgInputsIn('#subtables-wrap', '#s4-msg', (savedInp) => {
+    const row = savedInp.dataset.row;
+    const col = savedInp.dataset.col;
+    const val = savedInp.value;
+    document.querySelectorAll(
+      `#emr-results input.fg-input[data-row="${row}"][data-col="${col}"]`
+    ).forEach(target => {
+      target.value = val;
+      target.dataset.original = val;  // suppress duplicate save round-trip
+    });
   });
 }
 

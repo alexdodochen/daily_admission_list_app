@@ -96,6 +96,14 @@ def build_subtables_from_main(date: str, gap: int = 2) -> dict:
     except Exception:
         pass
     sheet_service.write_range(ws, f"A{start_row}:H{end_row}", block, raw=False)
+    # F/G dropdown rule (allow custom) so users can pick or self-fill in Sheets
+    try:
+        from . import emr_service
+        f_opts, g_opts = emr_service.get_fg_options()
+        sheet_service.set_fg_validation(ws, start_row, end_row + 100,
+                                        f_opts, g_opts)
+    except Exception:
+        pass  # cosmetic — don't fail the build
 
     return {
         "range":   f"A{start_row}:H{end_row}",

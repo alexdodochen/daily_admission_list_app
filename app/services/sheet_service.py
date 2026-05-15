@@ -48,10 +48,50 @@ def get_spreadsheet():
 
 def reset_cache():
     """Drop cached client/sheet — call after settings change."""
-    global _client, _sh, _sh_id
+    global _client, _sh, _sh_id, _fg_cache
     _client = None
     _sh = None
     _sh_id = None
+    _fg_cache = None
+
+
+# ---- F/G options from "下拉選單" worksheet (user-maintained source of truth) ----
+# Cached for the lifetime of the spreadsheet object — invalidate via reset_cache().
+_fg_cache: tuple[list[str], list[str]] | None = None
+FG_OPTIONS_SHEET = "下拉選單"
+
+
+def read_fg_options_from_sheet() -> tuple[list[str], list[str]] | None:
+    """Read F (col A) + G (col D) option lists from the 下拉選單 worksheet.
+
+    Returns (f_opts, g_opts) — deduplicated, first-appearance order, blanks
+    skipped. Returns None if the worksheet doesn't exist (caller should fall
+    back to hardcoded lists).
+
+    Result is cached for the session; bust via reset_cache().
+    """
+    global _fg_cache
+    if _fg_cache is not None:
+        return _fg_cache
+    ws = get_worksheet(FG_OPTIONS_SHEET)
+    if ws is None:
+        return None
+    rows = ws.get("A2:D200") or []  # skip header row 1
+    f_seen, g_seen = set(), set()
+    f_opts, g_opts = [], []
+    for r in rows:
+        f = ((r + [""] * 4)[0] or "").strip()
+        g = ((r + [""] * 4)[3] or "").strip()
+        if f and f not in f_seen:
+            f_seen.add(f)
+            f_opts.append(f)
+        if g and g not in g_seen:
+            g_seen.add(g)
+            g_opts.append(g)
+    if not (f_opts or g_opts):
+        return None
+    _fg_cache = (f_opts, g_opts)
+    return _fg_cache
 
 
 def list_sheets() -> list[str]:
@@ -141,6 +181,42 @@ def ensure_chart_text_format(ws) -> None:
         _req(18, 19),  # ordering S
         _req(1, 2),    # sub-table B
     ]})
+
+
+def set_fg_validation(ws, start_row: int, end_row: int,
+                      f_opts: list[str], g_opts: list[str]) -> None:
+    """Apply Sheets data validation on F (col 6) + G (col 7) of the sub-table
+    area, allowing custom values (strict=False / WARNING).
+
+    Sub-tables live below A-L main; F/G in main are 姓名/性別 and must NOT get
+    this validation. Caller must pass `start_row` ≥ first sub-table row.
+
+    Idempotent: re-applying replaces the previous rule.
+    """
+    if start_row < 2 or end_row < start_row or not (f_opts or g_opts):
+        return
+    sh = get_spreadsheet()
+
+    def _rule(col_idx: int, opts: list[str]) -> dict:
+        return {"setDataValidation": {
+            "range": {"sheetId": ws.id,
+                      "startRowIndex": start_row - 1, "endRowIndex": end_row,
+                      "startColumnIndex": col_idx, "endColumnIndex": col_idx + 1},
+            "rule": {
+                "condition": {"type": "ONE_OF_LIST",
+                              "values": [{"userEnteredValue": v} for v in opts]},
+                "showCustomUi": True,
+                "strict": False,  # allow user to type values not in the list
+            },
+        }}
+
+    requests = []
+    if f_opts:
+        requests.append(_rule(5, f_opts))   # F = 0-indexed col 5
+    if g_opts:
+        requests.append(_rule(6, g_opts))   # G = 0-indexed col 6
+    if requests:
+        sh.batch_update({"requests": requests})
 
 
 def ensure_date_sheet(date: str):

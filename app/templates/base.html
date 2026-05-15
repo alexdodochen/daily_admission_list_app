@@ -69,58 +69,101 @@
     </header>
     <section>
       <div class="viewer-toolbar">
+        <div class="viewer-source-tabs">
+          <button class="viewer-src-tab active" data-src="admission" type="button">📥 每日入院清單</button>
+          <button class="viewer-src-tab" data-src="schedule" type="button">📅 排班</button>
+        </div>
         <label>分頁
           <select id="viewer-date-select">
-            <option value="">載入中…</option>
+            <option value="">先選 Sheet 來源</option>
           </select>
         </label>
         <button id="viewer-refresh" type="button">重新載入</button>
         <span id="viewer-msg" class="msg"></span>
       </div>
       <div id="viewer-body" class="viewer-body">
-        <p class="hint">選一個分頁開始查閱（唯讀，不會改 Sheet）。日期分頁會分區顯示（主資料 / 入院序 / 子表格），其他工作表（抽籤表 / 統計 等）顯示為原始 A:Z 表格。</p>
+        <p class="hint">先選 Sheet 來源，再選分頁開始查閱（可直接編輯儲存格）。</p>
       </div>
     </section>
   </div>
 </div>
 
-<!-- Help modal — toggled by #help-link in the topbar -->
+<!-- Help modal — toggled by #help-link in the topbar. Tabbed: 入院 / 排班 / Key 班 -->
 <div id="help-modal" class="help-modal" hidden>
   <div class="help-content">
     <header>
-      <h2>🩺 每日入院名單 — 操作說明</h2>
+      <h2>📖 操作說明</h2>
       <button id="help-close" class="help-close" type="button">✕</button>
     </header>
-    <section>
+    <nav class="help-tabs">
+      <button class="help-tab active" data-tab="admission">🩺 入院清單</button>
+      <button class="help-tab" data-tab="sched">📅 排班</button>
+      <button class="help-tab" data-tab="keyin">🔑 Key 班</button>
+    </nav>
+    <section class="help-tab-pane active" data-tab="admission">
       <p class="hint">這個 app 把每天的住院 + 隔天的心導管排程自動化。資料全部存在你自己的 Google Sheet，所有 API key 都在本機。</p>
-
       <h3>第一次使用</h3>
       <ol>
         <li><b>設定頁</b> 填：LLM key (Anthropic / OpenAI / Gemini 任一) → Google service account JSON 路徑 → Sheet ID → WEBCVIS 帳密 → LINE token。「測試連線」要兩個 ✓ 才能繼續。</li>
         <li>把 service account 的 email 加入該 Sheet 的「編輯者」（或把 Sheet 設「知道連結都可以編輯」）。</li>
       </ol>
-
       <h3>每天 6 步</h3>
       <ol>
-        <li><b>匯入名單</b> — 拖入院名單截圖 → LLM 辨識成 A-L 表格 → 對病歷號 → 寫入 Sheet。</li>
-        <li><b>抽籤排序</b> — 讀主治醫師抽籤表 + 主資料 → 加權隨機抽 → round-robin → 寫 N-S。時段組 / 非時段組 兩段獨立 RR。</li>
-        <li><b>EMR 擷取</b> — 自己登入 EMR 後貼 session URL → Playwright 抓 SOAP → 自動偵測 F (術前診斷) / G (預計心導管) → 自動補 #divUserSpec 的姓名/生日/性別。<i>沒有 LLM 摘要功能</i>。</li>
-        <li><b>入院序整合</b> — 在子表格手動確認 F/G → 整合寫入 N-V 9 欄。Q (備註住服) / V (改期) 是手動標記，重跑會保留。</li>
-        <li><b>導管排程</b> — 計畫 (dry-run) / 驗證 / Keyin 到 WEBCVIS。自動偵測週一 EP → 洪晨惠當第二、陳則瑋門診 → 劉秉彥當第二、本週其他天已存在的病歷號自動跳過。</li>
-        <li><b>LINE 推播</b> — 讀 N-Q 四欄 → 預覽訊息 → 推到指定 group。</li>
+        <li><b>Step 1 OCR</b> — 拖入院名單截圖 → LLM 辨識成主表 → 對病歷號 → 寫入 Sheet（OCR 會自動填日期，diff 會更新子表格）。</li>
+        <li><b>Step 2 生成 subtable</b> — 依主表順序，把病人按主治醫師分組，產生子表格。<u>不抽籤、不寫入院序</u>。已有子表格會拒絕覆寫。</li>
+        <li><b>Step 3 EMR 擷取</b> — 自己登入 EMR 後貼 session URL → Playwright 抓 SOAP → 自動偵測 術前診斷 / 預計心導管（含 plan-section 規則）→ 寫回子表格的 EMR / 術前診斷 / 預計心導管 + 修正主表 姓名 / 性別 / 年齡。診斷 / 心導管 在 EMR 卡片可即時編輯（▼ 下拉或自填）。</li>
+        <li><b>Step 4 抽籤 + 入院序</b> — 三層 pin（同醫師排序欄 / 病人 / 醫師）→「② 首次抽籤」整段重寫入院序（會清掉 備註(住服) / 改期）；改完 術前診斷 / 預計心導管 / 同醫師排序 之後用「③ 整合寫入」（保留 備註(住服) / 改期）。</li>
+        <li><b>Step 5 導管 keyin</b> — Plan (dry-run) / Verify (查 WEBCVIS) / Keyin (ADD + UPT)。術前診斷 / 預計心導管 自填的內容會走 OTHERS_PDI / 備註。</li>
+        <li><b>Step 6 LINE 推播</b> — 讀 入院序 / 主治 / 姓名 / 備註(住服) 四欄 → 預覽訊息 → 推到指定 group。</li>
       </ol>
-
       <h3>遇到問題</h3>
       <ul>
         <li>頂端紅燈 = 設定還沒填好 → 回設定頁。</li>
-        <li>Step 3、5 卡住 = EMR / WEBCVIS session 過期 → 重新登入再貼一次 URL。</li>
+        <li>Step 3 / 5 卡住 = EMR / WEBCVIS session 過期 → 重新登入再貼一次 URL。</li>
         <li>OCR 病歷號錯 = Sheet 主資料 I 欄直接改後重跑 Step 3 (EMR)。EMR 會用 <code>#divUserSpec</code> 反查校正姓名/年齡/性別。</li>
-        <li>排程跑錯 / 想改某天住院 = 寫 V 欄 (改期) 為目標日期 YYYYMMDD，下次 keyin 會跳過該病人。</li>
         <li>所有設定存在 <code>%LOCALAPPDATA%\admission-app\config.json</code>，更新 app 不會被覆蓋。</li>
+      </ul>
+    </section>
+
+    <section class="help-tab-pane" data-tab="sched">
+      <p class="hint">月份值班排班自動產生器。寫入 <code>schedule_sheet_id</code> 試算表的 <code>YYYYMM</code> 工作表 + 累積統計。</p>
+      <h3>5 步流程</h3>
+      <ol>
+        <li><b>① 月份選擇</b> — 點月份 chip（預設今天的月份），系統載入該月日曆 + 你想排的醫師。</li>
+        <li><b>② 設定 baseline</b> — 在表格內手填已知排班（例：某天某醫師確定值班）。空格留給 solver 填。</li>
+        <li><b>③ Compute targets</b> — 系統依當月 平日/週五/週六/週日/假日 數 + 你的累積統計，算出每位醫師該月的目標班數。</li>
+        <li><b>④ Solve</b> — backtracking solver 嘗試分派班次，符合 QOD（不能連兩天）規則。失敗會自動 relax。</li>
+        <li><b>⑤ Write</b> — 把結果寫到 schedule_sheet 的 <code>YYYYMM</code> 工作表 + 更新 <code>值班總數統計</code>。</li>
+      </ol>
+      <h3>注意</h3>
+      <ul>
+        <li>需要在 <strong>設定頁</strong> 填入 <code>schedule_sheet_id</code>（與入院 Sheet 可不同），且 service account 是該 Sheet 編輯者。</li>
+        <li>累積統計表（<code>值班總數統計</code>）必須先存在；首次使用要手動建立含醫師欄位 + 5 個分類欄。</li>
+        <li>solver 偶爾會跑分鐘級時間（uniform-zero baseline 特別久）— 沒回應就再等。</li>
+      </ul>
+    </section>
+
+    <section class="help-tab-pane" data-tab="keyin">
+      <p class="hint">把排班 Excel 匯入後，自動 keyin 到 EDR 系統的班表。本卡片需要 EDR 帳密 + 至少一個 Excel 檔。</p>
+      <h3>3 步流程</h3>
+      <ol>
+        <li><b>① 上傳 Excel</b> — 拖入該月已填好的排班 Excel（<code>.xlsx</code> 或 <code>.xls</code>）。系統會解析並顯示預覽，可確認班次正確。</li>
+        <li><b>② 填 EDR 帳密 + 開始</b> — 填一次帳密就開始，Playwright 會開瀏覽器登入 EDR、找到對應月份、把每個班次塞進去。</li>
+        <li><b>③ 進度條 / log</b> — 即時 WebSocket 顯示進度。卡住可按「取消」。下一次重跑會跳過已 keyin 成功的班次。</li>
+      </ol>
+      <h3>注意</h3>
+      <ul>
+        <li>EDR 介面變動時 keyin 會 fail — 先單機手動 key 一次確認 DOM 結構，再回報給 Claude 修正 selector。</li>
+        <li>Excel 必須是排班程式產生的格式，自己手畫的會被解析錯。</li>
+        <li>失敗的班次會記在 log，可以下載 csv 自己補。</li>
       </ul>
     </section>
   </div>
 </div>
+
+<!-- Watermark — fixed bottom-right, semi-transparent -->
+<div class="watermark">此系統由 114 級 NCKUH CV 陳常胤醫師 與 Claude Code 合作開發</div>
+
 <script src="/static/app.js?v={{ static_version }}"></script>
 {% block scripts %}{% endblock %}
 </body>

@@ -32,10 +32,17 @@ from datetime import date as _date
 # Source of truth: process_emr.py in daily-admission-list-public.
 # Order matters — specific > broad.
 
+# DIAG_RULES — ported from daily-admission-list-public@4f7b53e (2026-05-15).
+# Order matters. Key changes vs prior local version:
+#   * NSTEMI checked BEFORE STEMI ('non ST elevation' contains 'ST elevation')
+#   * Dropped 'ST elevation myocardial' from STEMI keywords (use abbrev only)
+#   * CAD family moved UP above soft comorbidities (Unstable / Angina / Syncope)
+#     — when CAD keyword appears in a Dx item, human picks CAD regardless of
+#     co-mentioned Unstable/Angina/CHF/Syncope/VPC. See _SOFT_COMORBID_F override
+#     in detect_diag().
 DIAG_RULES: list[tuple[list[str], str]] = [
-    (["STEMI", "ST elevation myocardial"], "STEMI"),
     (["NSTEMI", "non-ST elevation", "non ST elevation"], "Others:NSTEMI"),
-    (["unstable angina"], "Unstable"),
+    (["STEMI"], "STEMI"),
     (["severe AS", "aortic stenosis"], "AS"),
     (["severe AR", "aortic regurgitation"], "AR"),
     (["severe MR", "mitral regurgitation", "MVRepair", "MVR"], "MR"),
@@ -57,20 +64,53 @@ DIAG_RULES: list[tuple[list[str], str]] = [
     (["dilated cardiomyopathy", "DCM"], "DCM"),
     (["hypertrophic cardiomyopathy", "HCM"], "HCM"),
     (["pulmonary hypertension", "pulmonary HTN"], "Pulmonary HTN"),
-    (["syncope"], "Syncope"),
-    (["angina pectoris", "angina"], "Angina pectoris"),
     (["CAD", "coronary artery disease",
       "chest pain", "chest tightness", "chest tigthness",
       "ACS", "acute coronary syndrome",
       "I259", "I250", "I251",
       "TET (+)", "TMT (+)", "THL (+)", "TET+", "TMT+", "THL+"], "CAD"),
+    # Soft comorbidities — only fire when CAD is absent. detect_diag() applies
+    # the override (CAD keyword anywhere → CAD wins).
+    (["unstable angina"], "Unstable"),
+    (["angina pectoris", "angina"], "Angina pectoris"),
+    (["syncope"], "Syncope"),
 ]
 
+def get_fg_options() -> tuple[list[str], list[str]]:
+    """F/G option lists. Reads the user-maintained 下拉選單 worksheet first;
+    falls back to DIAG_RULES/CATH_RULES outputs if Sheet is unreachable.
+
+    Used by /api/options/fg, the Sheet data-validation builder, and the
+    in-app combobox.
+    """
+    from . import sheet_service
+    try:
+        sheet_opts = sheet_service.read_fg_options_from_sheet()
+    except Exception:
+        sheet_opts = None
+    if sheet_opts:
+        return sheet_opts
+    f = [out for _, out in DIAG_RULES]
+    g = [out for _, out in CATH_RULES]
+    if "s/p PCI" not in f:
+        f.append("s/p PCI")
+    if "Cover stent" not in g:
+        g.append("Cover stent")
+    return f, g
+
+
+# CATH_RULES — Dx-fallback only (used when plan-section yields nothing).
+# Plan-section detection uses PLAN_G_RULES below, which encodes the key 5/15
+# insight: G is the cath-lab BOOKING slot, not the procedure outcome.
+# `plan PCI` / `arrange PCI` / `TRA PCI` all book as Left heart cath., not PCI.
 CATH_RULES: list[tuple[list[str], str]] = [
     (["CRT-D", "CRT-P", "CRT upgrade", "cardiac resynchronization"], "CRT"),
     (["TAVI", "transcatheter aortic valve"], "TAVI"),
-    (["plan PCI", "plan for PCI", "arrange PCI", "PCI for",
-      "primary PCI", "→PCI", "→ PCI", "PCI ", "intervention"], "PCI"),
+    # PCI — narrowed (5/15): only forward-looking unambiguous triggers. Removed
+    # bare "PCI " and "intervention" which fired on `s/p percutaneous coronary
+    # intervention (PCI)` even after past-tense cleanup.
+    (["plan PCI", "plan for PCI", "arrange PCI", "PCI for admission",
+      "primary PCI", "→PCI", "→ PCI", "POBA", "rotablation"], "PCI"),
     (["RF ablation", "RFA", "ablation"], "RF ablation"),
     (["PPM", "pacemaker implant"], "PPM"),
     (["EP study"], "EP study"),
@@ -233,13 +273,32 @@ def _match_rules(text: str, rules: list[tuple[list[str], str]]) -> str:
 
 
 def _extract_dx_section(emr_text: str) -> str:
-    """Return content under [Diagnosis] (up to next bracket section)."""
-    parts = re.split(r"\[(Diagnosis|Subjective|Objective|Assessment & Plan)\]", emr_text)
+    """Return primary diagnosis lines from the Dx block.
+
+    Supports two EMR formats:
+      A. `[Diagnosis] ... [Subjective]` section-marker form (older)
+      B. `* (Dx)1. ... \n * (ICD-10：...)` numbered form (current Web EMR)
+    Strips `* (Dx)` prefix so numbered items become parseable. Includes the
+    ICD-10 block so detect_via_icd has codes to scan.
+    """
     diag_text = ""
-    for i, part in enumerate(parts):
-        if part == "Diagnosis" and i + 1 < len(parts):
-            diag_text = parts[i + 1]
-            break
+
+    # Format B (current Web EMR): `* (Dx)` numbered items until `* (ICD` block
+    m_dx = re.search(r'\*\s*\(Dx\)(.*?)(?=\n\s*\*\s*\(ICD|\Z)', emr_text, flags=re.DOTALL)
+    m_icd_block = re.search(r'((?:\n\s*\*\s*\(ICD[^\n]*\n?)+)', emr_text)
+    if m_dx:
+        diag_text = m_dx.group(1)
+        if m_icd_block:
+            diag_text = diag_text + "\n" + m_icd_block.group(1)
+
+    # Format A fallback (legacy)
+    if not diag_text:
+        parts = re.split(r"\[(Diagnosis|Subjective|Objective|Assessment & Plan)\]", emr_text)
+        for i, part in enumerate(parts):
+            if part == "Diagnosis" and i + 1 < len(parts):
+                diag_text = parts[i + 1]
+                break
+
     if not diag_text:
         return ""
     out = []
@@ -265,66 +324,216 @@ def _detect_via_icd(dx_text: str) -> str:
 
 
 def _clean_past_tense_pci(text: str) -> str:
+    """Strip historical PCI/ablation mentions so plan-section matching doesn't
+    fire on `s/p PCI on 2020` etc.
+
+    Patterns allow up to 200 chars between `s/p` and the keyword to catch
+    expanded forms like `s/p percutaneous coronary intervention (PCI)`.
+    Past-tense ablation patterns mirror PCI ones.
+    """
     patterns = [
-        r"s/p\s+PCI[^\n]*",
-        r"post[\-\s]+PCI[^\n]*",
-        r"status\s+post[^\n]*PCI[^\n]*",
-        r"PCI\s+on\s+\d{4}[/\-]?\d{0,2}[/\-]?\d{0,2}",
+        # PCI past-tense
+        r"s/p[^\n]{0,200}?PCI[^\n]*",
+        r"post[\-\s][^\n]{0,200}?PCI[^\n]*",
+        r"status\s+post[^\n]{0,200}?PCI[^\n]*",
+        r"PCI\s+(?:on|in)\s+\d{4}[/\-]?\d{0,2}[/\-]?\d{0,2}",
         r"PCI\s+done[^\n]*",
         r"previous\s+PCI[^\n]*",
         r"history\s+of\s+PCI[^\n]*",
         r"old\s+PCI[^\n]*",
+        # PCI by year-suffix even without s/p prefix
+        r"PCI[^\n]{0,80}\[?\d{4}[/\-]\d{1,2}[/\-]?\d{0,2}\]?",
+        # Ablation past-tense
+        r"s/p[^\n]{0,200}?ablation[^\n]*",
+        r"post[\-\s][^\n]{0,200}?ablation[^\n]*",
+        r"status\s+post[^\n]{0,200}?ablation[^\n]*",
+        r"previous\s+ablation[^\n]*",
+        r"history\s+of\s+ablation[^\n]*",
+        r"ablation[^\n]{0,40}\[?\d{4}[/\-]\d{1,2}[/\-]?\d{0,2}\]?",
     ]
     for p in patterns:
         text = re.sub(p, " ", text, flags=re.IGNORECASE)
     return text
 
 
+# Soft comorbidities that get overridden to CAD when CAD keyword appears
+# anywhere in Dx text (5/15 learning — cath-lab admission bias).
+_SOFT_COMORBID_F = {"Unstable", "Angina pectoris", "Syncope", "VPC", "CHF"}
+_CAD_HINT_RE = re.compile(
+    r"\b(CAD|coronary\s+artery\s+disease)\b|\bI25[019]\b",
+    re.IGNORECASE,
+)
+
+
+def _cad_anywhere(text: str) -> bool:
+    return bool(_CAD_HINT_RE.search(text or ""))
+
+
 def detect_diag(dx_text: str) -> str:
-    """Apply DIAG_RULES with numbered-item priority (1.X > 2.Y)."""
+    """Apply DIAG_RULES with numbered-item priority + soft-comorbidity override.
+
+    Numbered Dx (`2.CAD ... 4.pAf`) means item 2 > item 4, so iterate in order
+    and take the first match.
+
+    Soft-comorbidity override (5/15 learning): when first-matching F is
+    Unstable / Angina pectoris / Syncope / VPC / CHF, but CAD keyword appears
+    ANYWHERE in dx_text, return 'CAD' instead. Cath-lab admission bias.
+    """
     if not dx_text:
         return ""
     text_no_icd = "\n".join(
         l for l in dx_text.split("\n") if not l.strip().startswith("* (ICD")
     )
+    cad_present = _cad_anywhere(dx_text)  # full text including ICD codes
+
     items = re.findall(r"(?:^|\n)\s*\d+\s*[\.\)]\s*([^\n]+)", text_no_icd)
     if items:
         for item in items:
             m = _match_rules(item, DIAG_RULES)
             if m:
+                if m in _SOFT_COMORBID_F and cad_present:
+                    return "CAD"
                 return m
     m = _match_rules(text_no_icd, DIAG_RULES)
     if m:
+        if m in _SOFT_COMORBID_F and cad_present:
+            return "CAD"
         return m
     return _detect_via_icd(dx_text)
 
 
-def detect_fg(emr_text: str) -> tuple[str, str]:
+# ---- Plan-section rules (5/15 learning) ----
+# Attending writes admission reason + planned procedure at the bottom of the
+# EMR. Plan signal beats Dx because Dx often has comorbidities while plan
+# states the actual cath-lab booking reason.
+
+PLAN_F_RULES: list[tuple[list[str], str]] = [
+    # Arrhythmia ablation → specific F
+    (["AFL ablation", "atrial flutter ablation",
+      "typical flutter ablation", "atypical flutter ablation"], "Atrial flutter"),
+    (["AF ablation", "Af ablation", "Afib ablation", "AFFERA",
+      "PVI", "pulmonary vein isolation",
+      "varipulse", "vari-pulse"], "pAf"),
+    (["VPC ablation", "PVC ablation"], "VPC"),
+    (["PSVT ablation", "SVT ablation"], "PSVT"),
+    # Valve interventions
+    (["TAVI", "transcatheter aortic valve"], "AS"),
+    (["M-TEER", "MTEER", "MitraClip", "mitral TEER"], "MR"),
+    # Generator replacement (also fires from Dx but plan override is reliable)
+    (["generator replacement", "ppm replacement", "icd replacement",
+      "crt replacement", "change generator"], "Generator replacement"),
+]
+
+PLAN_G_RULES: list[tuple[list[str], str]] = [
+    # KEY 5/15 INSIGHT: G is the cath-lab BOOKING slot, not the procedure
+    # outcome. Plan PCI / TRA PCI / arrange PCI all → "Left heart cath."
+    # Only special bookings override: TAVI, CRT, ICD, M-TEER, LAAO, RF ablation,
+    # Myocardial biopsy, PTA, PPM, RHC, BHC, Carotid stenting, EP study,
+    # primary PCI (STEMI only).
+    (["EVICD", "EVCID", "AICD", "ICD implant", "ICD implantation"], "ICD"),
+    (["CRT-D", "CRT-P", "CRT upgrade", "cardiac resynchronization", "CRT implant"], "CRT"),
+    (["TAVI", "transcatheter aortic valve"], "TAVI"),
+    (["M-TEER", "MTEER", "MitraClip", "mitral TEER"], "M-TEER"),
+    (["LAAO", "left atrial appendage occlusion", "Watchman"], "LAAO Occluder"),
+    (["AFL ablation", "AF ablation", "Af ablation", "Afib ablation",
+      "VPC ablation", "PVC ablation", "PSVT ablation", "SVT ablation",
+      "VT ablation", "PVI", "pulmonary vein isolation",
+      "varipulse", "vari-pulse", "AFFERA",
+      "RF ablation", "RFA", "ablation"], "RF ablation"),
+    (["EP study"], "EP study"),
+    # Primary PCI for STEMI — only true PCI booking. Everything else → LHC.
+    (["primary PCI"], "PCI"),
+    (["PPM implant", "permanent pacemaker", "pacemaker implant", "PPM"], "PPM"),
+    (["both-sided cath", "BHC"], "Both-sided cath."),
+    (["right cath", "right heart cath", "RHC"], "Right heart cath."),
+    (["myocardial biopsy", "EMB"], "Myocardial biopsy"),
+    (["PTA"], "PTA"),
+    (["carotid stenting", "carotid angiography"], "Carotid angiography + stenting"),
+    # Generic cath — catches "TRA PCI" / "PCI for ..." / "POBA" / "stenting"
+    (["cath study", "catheterization", "CAG", "LHC", "left heart cath",
+      "cath on", "cath via", "PCI for", "PCI on", "TRA PCI", "TFA PCI",
+      "POBA", "rotablation", "stenting", "plan PCI", "arrange PCI"], "Left heart cath."),
+]
+
+# When plan yields G but no F, derive F from G when unambiguous
+PLAN_G_TO_F: dict[str, str] = {
+    "PCI": "STEMI",
+    "Left heart cath.": "CAD",
+    "PTA": "PAOD",
+    "TAVI": "AS",
+    "M-TEER": "MR",
+    "LAAO Occluder": "pAf",
+    "CRT": "CHF",
+    "Carotid angiography + stenting": "Carotid stenting",
+}
+
+_PROCEDURE_KEYWORDS_RE = re.compile(
+    r"\b(?:PCI|POBA|stenting|rotablation|ablation|biopsy|EVICD|EVCID|AICD|ICD|PPM|"
+    r"CRT|TAVI|LAAO|Watchman|M-TEER|MTEER|MitraClip|cath|CAG|LHC|RHC|PTA|"
+    r"TEE|EMB|PVI|AFFERA|ANS|varipulse|vari-pulse|admission|adm)\b",
+    re.IGNORECASE,
+)
+_ADMISSION_CUE_RE = re.compile(
+    r"(?:\b(?:adm(?:ission)?|arrange|plan)\b"
+    r"|^\s*\d{1,2}[/-]\d{1,2}\s)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def extract_plan_signal(emr_text: str) -> str:
+    """Return admission-plan lines that carry the attending's intent.
+    Bottom 60 lines, kept if they contain a procedure keyword OR admission cue.
+    Empty result → fall back to Dx-based detection in detect_fg.
     """
-    Auto-detect (F=術前診斷, G=預計心導管) from raw EMR text.
-    F = Dx-section keywords; G = plan-section keywords with F→G fallback.
-    Plan-driven overrides (generator replacement) force F too.
+    if not emr_text:
+        return ""
+    lines = emr_text.split("\n")
+    tail = lines[-60:] if len(lines) > 60 else lines
+    kept = []
+    for line in tail:
+        s = line.strip()
+        if not s:
+            continue
+        if _PROCEDURE_KEYWORDS_RE.search(s) or _ADMISSION_CUE_RE.search(s):
+            kept.append(s)
+    return "\n".join(kept)
+
+
+def detect_fg(emr_text: str) -> tuple[str, str]:
+    """Detect (F, G) using PLAN section as primary signal (5/15 learning).
+
+    Priority:
+      1. Plan section (bottom of EMR) — attending's stated reason + procedure
+      2. Dx section — fallback when plan is missing/unclear
+      3. F→G default mapping — fallback for G when plan/Dx silent on procedure
+
+    `clean_past_tense_pci` strips historical PCI/ablation mentions so they
+    don't fire the procedure rules.
     """
     if not emr_text:
         return "", ""
-    dx = _extract_dx_section(emr_text)
-    f_diag = detect_diag(dx) if dx else _match_rules(emr_text, DIAG_RULES)
 
-    if "[Assessment & Plan]" in emr_text:
-        plan_sec = emr_text.split("[Assessment & Plan]")[1][:1500]
-    else:
-        plan_sec = emr_text
+    plan_signal = extract_plan_signal(emr_text)
+    plan_clean = _clean_past_tense_pci(plan_signal) if plan_signal else ""
 
-    pl = plan_sec.lower()
-    if any(k in pl for k in (
-        "generator replacement", "ppm replacement", "icd replacement",
-        "crt replacement", "change generator",
-    )):
-        f_diag = "Generator replacement"
+    # G from plan (booking slot — most special bookings override here)
+    g_cath = _match_rules(plan_clean, PLAN_G_RULES) if plan_clean else ""
+    # F from plan (specific arrhythmia / valve / generator overrides)
+    f_diag = _match_rules(plan_clean, PLAN_F_RULES) if plan_clean else ""
 
-    g_cath = _match_rules(_clean_past_tense_pci(plan_sec), CATH_RULES)
+    # Plan gave G but not F → derive
+    if g_cath and not f_diag:
+        f_diag = PLAN_G_TO_F.get(g_cath, "")
+
+    # Fallback: Dx-based F if plan didn't classify F
+    if not f_diag:
+        dx = _extract_dx_section(emr_text)
+        f_diag = detect_diag(dx) if dx else _match_rules(emr_text, DIAG_RULES)
+
+    # Fallback: G from F default if plan didn't classify G
     if not g_cath and f_diag:
         g_cath = F_TO_G_DEFAULT.get(f_diag, "")
+
     return f_diag, g_cath
 
 
@@ -467,8 +676,84 @@ def write_results_to_subtables(date: str, results: list[dict]) -> dict:
     except Exception:
         pass
     sheet_service.batch_write_cells(ws, patches)
+
+    # Re-apply F/G data validation across the sub-table area each time we
+    # write so newly-built blocks (auto_built) and any growth from diff path
+    # both get the dropdown rule.
+    try:
+        first_row = min((p["row"] for _, pts in tables.items() for p in pts
+                        if p.get("row")), default=0)
+        if first_row:
+            f_opts, g_opts = get_fg_options()
+            sheet_service.set_fg_validation(ws, first_row, first_row + 500,
+                                            f_opts, g_opts)
+    except Exception:
+        pass  # validation is cosmetic — never block writeback
+
     return {"written": written, "missing": missing,
             "patches_count": len(patches), "auto_built": auto_built}
+
+
+def apply_emr_main_fixes(date: str, results: list[dict]) -> dict:
+    """Auto-correct main A-L (F=姓名, G=性別, H=年齡) from EMR results.
+
+    For each result whose chart_no matches a main row, write back any
+    differing 姓名 / 性別 / 年齡. Returns:
+      {"patches_count": N, "fixes": [{chart_no, field, old, new}, ...]}
+
+    Empty/zero values from EMR are NOT overwritten back (avoids clearing a
+    correct sheet value with a failed parse).
+    """
+    from . import sheet_service
+
+    ws = sheet_service.get_worksheet(date)
+    if ws is None:
+        return {"patches_count": 0, "fixes": [], "skipped": True,
+                "error": f"找不到工作表 {date}"}
+    main = sheet_service.read_range(ws, "A2:L200")
+    chart_to_main_row: dict[str, int] = {}
+    main_by_row: dict[int, list[str]] = {}
+    for i, r in enumerate(main):
+        rr = (r + [""] * 12)[:12]
+        ch = rr[8].strip()  # I = 病歷號
+        if ch:
+            chart_to_main_row[ch] = i + 2  # +2 because read started at row 2
+            main_by_row[i + 2] = rr
+
+    patches: list[tuple[str, str]] = []
+    fixes: list[dict] = []
+    for r in results:
+        ch = (r.get("chart_no") or "").strip()
+        if not ch or ch not in chart_to_main_row:
+            continue
+        if r.get("error"):
+            continue
+        row = chart_to_main_row[ch]
+        ex = main_by_row[row]
+        ex_name   = (ex[5] or "").strip()  # F
+        ex_gender = (ex[6] or "").strip()  # G
+        ex_age    = (ex[7] or "").strip()  # H
+        new_name   = (r.get("emr_name") or "").strip()
+        new_gender = (r.get("gender") or "").strip()
+        age_val = r.get("age")
+        new_age = str(age_val) if age_val is not None else ""
+
+        if new_name and new_name != ex_name:
+            patches.append((f"F{row}", new_name))
+            fixes.append({"chart_no": ch, "field": "name",
+                          "old": ex_name, "new": new_name})
+        if new_gender and new_gender != ex_gender:
+            patches.append((f"G{row}", new_gender))
+            fixes.append({"chart_no": ch, "field": "gender",
+                          "old": ex_gender, "new": new_gender})
+        if new_age and new_age != ex_age:
+            patches.append((f"H{row}", new_age))
+            fixes.append({"chart_no": ch, "field": "age",
+                          "old": ex_age, "new": new_age})
+
+    if patches:
+        sheet_service.batch_write_cells(ws, patches)
+    return {"patches_count": len(patches), "fixes": fixes, "skipped": False}
 
 
 # ---------------------------- Playwright orchestration ----------------------------
