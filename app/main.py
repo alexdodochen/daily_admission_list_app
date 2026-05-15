@@ -21,10 +21,12 @@ from .services import emr_service, ordering_service, line_service
 from .services import updater, cathlab_service, format_check_service, finalize_service
 from .services import cv_solver, scheduling_service
 from .services import reschedule_service, upstream
+from .services import keyin_routes
 
 BASE = Path(__file__).parent
 app = FastAPI(title="心臟內科總醫師 — 本地版")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
+app.include_router(keyin_routes.router, prefix="/keyin", tags=["keyin"])
 templates = Jinja2Templates(directory=BASE / "templates")
 
 # In-memory cache: solve preview kept here so /write can use it without

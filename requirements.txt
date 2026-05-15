@@ -8,8 +8,12 @@ pydantic>=2.5
 gspread>=6.0
 google-auth>=2.28
 
-# Browser automation (Step 3 EMR + Step 5 cathlab)
+# Browser automation (Step 3 EMR + Step 5 cathlab + Card 2 key 班 EDR)
 playwright>=1.42
+
+# Card 2 key 班 — Excel parsing
+openpyxl>=3.1
+xlrd>=2.0
 
 # LLM SDKs — the user installs whichever they'll use
 anthropic>=0.40

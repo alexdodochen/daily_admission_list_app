@@ -363,7 +363,9 @@ def test_subtable_sync_moves_doctor_changed_patient(monkeypatch):
     assert moved_rows[0][4] == ""   # was "2" before, cleared on move
 
 
-def test_subtable_sync_reports_unattached_added_for_unknown_doctor(monkeypatch):
+def test_subtable_sync_autocreates_block_for_unknown_doctor(monkeypatch):
+    """A patient whose doctor has no sub-table should trigger creation of a new
+    sub-table block at the end (Item 3 / 2026-05-15)."""
     grid = _build_grid(
         main_rows=[["2026-05-01","","CV","李文煌","CAD","甲","","",]],
         subs=[("李文煌", [["甲","111","","","","CAD","PCI",""]])],
@@ -383,6 +385,97 @@ def test_subtable_sync_reports_unattached_added_for_unknown_doctor(monkeypatch):
         _FakeWS(), grid, diff,
         new_patients=[_new("999", "戊", "新醫師")], fmt_svc=_fcs,
     )
-    assert result["added"] == []
-    assert len(result["unattached_added"]) == 1
-    assert result["unattached_added"][0]["chart_no"] == "999"
+    assert result["unattached_added"] == []
+    assert [a["chart_no"] for a in result["added"]] == ["999"]
+    assert result["auto_created_doctors"] == ["新醫師"]
+    a1, body = writes[-1]
+    titles = [row[0] for row in body if "人）" in (row[0] or "")]
+    assert "李文煌（1人）" in titles
+    assert "新醫師（1人）" in titles
+    # New doctor's row appears
+    new_rows = [row for row in body if row[1] == "999"]
+    assert len(new_rows) == 1
+    assert new_rows[0][0] == "戊"
+
+
+def test_subtable_sync_autocreates_block_for_doctor_change_target(monkeypatch):
+    """doctor_changed where the new doctor doesn't yet have a sub-table should
+    also auto-create one (Item 3 / 2026-05-15)."""
+    grid = _build_grid(
+        main_rows=[["2026-05-01","","CV","李文煌","CAD","甲","","",]],
+        subs=[("李文煌", [["甲","111","","","2","CAD","PCI",""]])],
+    )
+    writes: list = []
+    monkeypatch.setattr(ocr_service.sheet_service, "write_range",
+                        lambda ws, a1, body, raw=False: writes.append((a1, body)))
+    monkeypatch.setattr(ocr_service.sheet_service, "clear_range",
+                        lambda ws, a1: None)
+
+    diff = {
+        "added": [],
+        "removed": [],
+        "doctor_changed": [
+            {"chart_no": "111", "name": "甲", "old": "李文煌", "new": "新醫師"},
+        ],
+    }
+    result = ocr_service._apply_diff_to_subtables(
+        _FakeWS(), grid, diff,
+        new_patients=[_new("111", "甲", "新醫師")], fmt_svc=_fcs,
+    )
+    assert result["unattached_changed"] == []
+    assert [m["chart_no"] for m in result["moved"]] == ["111"]
+    assert result["auto_created_doctors"] == ["新醫師"]
+    a1, body = writes[-1]
+    titles = [row[0] for row in body if "人）" in (row[0] or "")]
+    assert "李文煌（0人）" in titles
+    assert "新醫師（1人）" in titles
+
+
+# --------------------- ordering sync on write_to_sheet ---------------------
+
+def test_write_to_sheet_invokes_ordering_sync_after_diff(monkeypatch):
+    """write_to_sheet should call ordering_service.sync_ordering_after_diff
+    after a successful sub-table update so N-V stays consistent (Item 2)."""
+    from app.services import ordering_service
+
+    class FakeWS:
+        id = 999
+    fake_ws = FakeWS()
+    monkeypatch.setattr(ocr_service.sheet_service, "ensure_date_sheet",
+                        lambda d: fake_ws)
+    # Pre-OCR sheet has 1 patient at chart 111
+    pre_read = {
+        "A2:L200":  [_ex("111", "甲", "李文煌")],
+        "A1:H500":  [
+            ["實際住院日","開刀日","科別","主治醫師","主診斷(ICD)","姓名","性別","年齡"],
+            ["2026-05-01","","CV","李文煌","CAD","甲","","",],
+            [""] * 8, [""] * 8,
+            ["李文煌（1人）","","","","","","",""],
+            ["姓名","病歷號","EMR","summary","入院序","術前診斷","預計心導管","註記"],
+            ["甲","111","","","","CAD","PCI",""],
+        ],
+    }
+    monkeypatch.setattr(
+        ocr_service.sheet_service, "read_range",
+        lambda ws, a1: pre_read.get(a1, []),
+    )
+    monkeypatch.setattr(ocr_service.sheet_service, "write_range",
+                        lambda *a, **kw: None)
+    monkeypatch.setattr(ocr_service.sheet_service, "clear_range",
+                        lambda *a, **kw: None)
+
+    called_with: list = []
+    def fake_sync(date):
+        called_with.append(date)
+        return {"updated": True, "rows": 2, "range": "N2:V3",
+                "added": [{"chart_no": "222"}], "removed": [], "doctor_changed": []}
+    monkeypatch.setattr(ordering_service, "sync_ordering_after_diff", fake_sync)
+
+    r = ocr_service.write_to_sheet(
+        "20260501",
+        [_new("111", "甲", "李文煌"), _new("222", "乙", "李文煌")],
+        allow_overwrite=True,
+    )
+    assert called_with == ["20260501"]
+    assert r["ordering_update"]["updated"] is True
+    assert r["ordering_update"]["rows"] == 2

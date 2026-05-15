@@ -186,3 +186,118 @@ def integrate_ordering(date: str) -> dict:
     end_row = 1 + len(out)
     sheet_service.write_range(ws, f"N2:V{end_row}", out, raw=False)
     return {"rows": len(out), "range": f"N2:V{end_row}"}
+
+
+# ---------------------------- sync after OCR diff ----------------------------
+
+def sync_ordering_after_diff(date: str) -> dict:
+    """
+    Reconcile the N-V block with current sub-tables after a Step 1 OCR diff
+    has added/removed/moved patients.
+
+    Behaviour (least-surprise rebuild — never re-randomises existing order):
+      * For every chart already in N-V whose sub-table row is still present:
+        keep the row, but refresh O (主治醫師) + T (術前診斷) + U (預計心導管)
+        from the (possibly new) sub-table. Q / R / V manual markers preserved.
+      * Charts no longer in any sub-table → row dropped.
+      * Charts present in sub-tables but never in N-V → appended at the end,
+        in main-table doctor-first-appearance order × within-doctor sub-table
+        order, with empty Q / R / V.
+      * 序號 (N col) renumbered 1..n at the end.
+
+    Returns {updated, rows, range, added, removed, doctor_changed} so the UI
+    can report what happened.
+    """
+    ws = sheet_service.get_worksheet(date)
+    if ws is None:
+        return {"updated": False, "reason": "sheet missing"}
+
+    tables = read_doctor_subtables(date)
+    # chart_no → {doctor, name, diagnosis, cathlab}
+    chart_info: dict[str, dict] = {}
+    # ordered list of (doctor, chart_no) tuples for stable append order
+    fresh_order: list[tuple[str, str]] = []
+    for doc, pts in tables.items():
+        if not doc:
+            continue
+        for p in pts:
+            ch = (p.get("chart_no") or "").strip()
+            if not ch:
+                continue
+            chart_info[ch] = {
+                "doctor":    doc,
+                "name":      p.get("name", ""),
+                "diagnosis": p.get("diagnosis", ""),
+                "cathlab":   p.get("cathlab", ""),
+            }
+            fresh_order.append((doc, ch))
+
+    existing = sheet_service.read_range(ws, "N2:V200")
+    kept: list[list[str]] = []
+    removed: list[str] = []
+    seen_charts: set[str] = set()
+    doctor_changed: list[dict] = []
+    for r in existing:
+        r = (r + [""] * 9)[:9]
+        if not (r[2] or "").strip() and not (r[5] or "").strip():
+            break
+        chart = (r[5] or "").strip()
+        if not chart:
+            continue
+        info = chart_info.get(chart)
+        if info is None:
+            removed.append(chart)
+            continue
+        seen_charts.add(chart)
+        old_doc = (r[1] or "").strip()
+        new_doc = info["doctor"]
+        if old_doc and new_doc and old_doc != new_doc:
+            doctor_changed.append({"chart_no": chart, "old": old_doc, "new": new_doc})
+        kept.append([
+            "",                # N — renumbered below
+            new_doc,           # O
+            info["name"] or (r[2] or "").strip(),
+            r[3],              # Q preserve
+            r[4],              # R preserve
+            chart,             # S
+            info["diagnosis"], # T refresh
+            info["cathlab"],   # U refresh
+            r[8],              # V preserve
+        ])
+
+    added: list[dict] = []
+    for doc, chart in fresh_order:
+        if chart in seen_charts:
+            continue
+        info = chart_info[chart]
+        kept.append([
+            "", doc, info["name"], "", "", chart,
+            info["diagnosis"], info["cathlab"], "",
+        ])
+        added.append({"chart_no": chart, "doctor": doc, "name": info["name"]})
+
+    # Renumber 序號
+    for i, row in enumerate(kept, start=1):
+        row[0] = str(i)
+
+    sheet_service.write_range(ws, "N1:V1", [ORDERING_HEADERS], raw=False)
+    if kept:
+        end_row = 1 + len(kept)
+        sheet_service.write_range(ws, f"N2:V{end_row}", kept, raw=False)
+    else:
+        end_row = 1
+
+    # Clear any leftover rows below the new end (existing block may have been longer)
+    old_end = 1 + sum(1 for r in existing
+                      if any((c or "").strip() for c in (r + [""] * 9)[:9]))
+    if old_end > end_row:
+        sheet_service.clear_range(ws, f"N{end_row + 1}:V{old_end}")
+
+    return {
+        "updated":        True,
+        "rows":           len(kept),
+        "range":          f"N2:V{end_row}",
+        "added":          added,
+        "removed":        removed,
+        "doctor_changed": doctor_changed,
+    }

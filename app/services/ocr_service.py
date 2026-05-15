@@ -204,7 +204,10 @@ def write_to_sheet(date: str, patients: list[dict],
     On overwrite, also auto-updates existing per-doctor sub-tables to reflect
     added / removed / doctor-changed patients (preserves F/G/E/H for kept
     patients; new patients start blank — run Step 3 EMR to fill F/G).
-    N-V 入院序 is still NOT auto-rebuilt — rerun Step 2 + Step 4 for that.
+    Patients whose doctor has no existing sub-table trigger creation of a
+    new sub-table block at the end (preserves 2-row gap convention).
+    N-V 入院序 is then re-synced via ordering_service.sync_ordering_after_diff
+    so 序號 / O column / T-U stay consistent (Q/V manual markers preserved).
     """
     from . import format_check_service  # local import to avoid cycle
     ws = sheet_service.ensure_date_sheet(date)
@@ -237,15 +240,25 @@ def write_to_sheet(date: str, patients: list[dict],
         sheet_service.clear_range(ws, f"A{end_row + 1}:L{old_main_end}")
 
     sub_result: dict = {"updated": False}
+    ordering_result: dict = {"updated": False}
     if diff and (diff["added"] or diff["removed"] or diff["doctor_changed"]):
         sub_result = _apply_diff_to_subtables(
             ws, pre_grid, diff, patients, format_check_service,
         )
+        if sub_result.get("updated"):
+            # Re-sync N-V so seq numbers, doctor column, T/U stay consistent
+            # with the new sub-table contents (Q/V preserved per chart_no).
+            try:
+                from . import ordering_service  # local import to avoid cycle
+                ordering_result = ordering_service.sync_ordering_after_diff(date)
+            except Exception as e:
+                ordering_result = {"updated": False, "error": str(e)}
 
     return {
         "rows": len(body), "sheet": date,
         "range": f"A2:L{end_row}", "needs_confirm": False,
-        "subtable_update": sub_result,
+        "subtable_update":   sub_result,
+        "ordering_update":   ordering_result,
     }
 
 
@@ -308,6 +321,17 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc) -> dict:
     unattached_changed: list[dict] = []
     added_done: list[dict] = []
     unattached_added: list[dict] = []
+    auto_created_doctors: list[str] = []
+
+    def _ensure_doctor(doc: str) -> bool:
+        """Auto-create an empty sub-table slot for a doctor that doesn't yet
+        have one. Returns True if a new entry was created."""
+        if not doc or doc in subs_by_doctor:
+            return False
+        subs_by_doctor[doc] = []
+        doctor_order.append(doc)
+        auto_created_doctors.append(doc)
+        return True
 
     # 1) Removed: drop from wherever they are
     for r in diff.get("removed", []):
@@ -339,7 +363,8 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc) -> dict:
             moved_row = [ch_info.get("name", ""), ch, "", "", "", "", "", ""]
         # Reset E (manual order) for the new sub-table
         moved_row[4] = ""
-        if new_doc in subs_by_doctor:
+        if new_doc:
+            _ensure_doctor(new_doc)
             subs_by_doctor[new_doc].append(moved_row)
             chart_loc[ch] = new_doc
             moved_done.append({"chart_no": ch, "old": old_doc, "new": new_doc})
@@ -347,12 +372,13 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc) -> dict:
             unattached_changed.append({"chart_no": ch, "name": ch_info.get("name", ""),
                                        "old": old_doc, "new": new_doc})
 
-    # 3) Added: append to their A-L doctor's sub-table
+    # 3) Added: append to their A-L doctor's sub-table (auto-create if missing)
     for a in diff.get("added", []):
         ch = a["chart_no"]
         doc = a.get("doctor") or (new_by_chart.get(ch) or {}).get("doctor", "")
         name = a.get("name") or (new_by_chart.get(ch) or {}).get("name", "")
-        if doc in subs_by_doctor:
+        if doc:
+            _ensure_doctor(doc)
             subs_by_doctor[doc].append([name, ch, "", "", "", "", "", ""])
             chart_loc[ch] = doc
             added_done.append({"chart_no": ch, "name": name, "doctor": doc})
@@ -390,4 +416,5 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc) -> dict:
         "added":   added_done,
         "unattached_added":   unattached_added,
         "unattached_changed": unattached_changed,
+        "auto_created_doctors": auto_created_doctors,
     }

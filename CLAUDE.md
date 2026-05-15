@@ -50,7 +50,7 @@ FastAPI (`app/main.py`) + uvicorn launched by `app/run.py`, which opens the brow
 `/` renders `home.html` (a card grid). The three cards:
 
 - **`/sched`** — Card 1, 排班. Renders `schedule_gen.html` (self-contained Tailwind page, doesn't extend `base.html`). Drives a 5-step UI against `/api/sched/{init,compute,solve,write}`.
-- **`/` (disabled card)** — Card 2, Key 班. Placeholder; the keyin port from CV-Schedulling-APP is Phase 2.
+- **`/keyin`** — Card 2, Key 班. Ported from `Key-Schedule-APP` (2026-05-15). APIRouter at `/keyin/api/*` for Excel upload / preview / start / continue / cancel / status / ws. Drives Playwright against `web.hosp.ncku.edu.tw/edr/login` to auto-fill the EDR shift grid.
 - **`/admission`** — Card 3, 入院清單. Renders `admission.html` (formerly `index.html`) — the original 6-step admission workflow, unchanged.
 
 `base.html` provides the topbar nav (主畫面 / 排班 / 入院清單 / 設定). When `cfg.is_ready()` is false, every page route redirects to `/settings`.
@@ -168,17 +168,18 @@ Phase 10 highlights (uncommitted at time of writing):
 - **Cache-buster** — `?v={static_version}` per-startup timestamp.
 - **Gemini info on /settings** — RPM/RPD/TPM comparison table. See [[gemini-free-tier-2026]].
 
-**Still pending:**
+**Delivered (Phase 11 — 2026-05-15 pending-list cleanup):**
+- **Card 2 (Key 班)** — ported from `https://github.com/alexdodochen/Key-Schedule-APP`. New modules: `app/services/keyin_scheduler.py`, `app/services/keyin_excel_parser.py`, `app/services/keyin_routes.py` (APIRouter mounted at `/keyin`). New template `app/templates/keyin.html`. Auth + audit stripped per `feedback-strip-auth-for-local-ports`. `ConnectionManager` + `SchedulerSession` drive the Playwright EDR keyin; `build_schedule_from_config` is the deterministic schedule builder. New deps: `openpyxl`, `xlrd`. `home.html` Card 2 now links to `/keyin` (no more `即將推出` badge); topbar `base.html` gets a `Key 班` nav entry.
+- **N-V auto-rebuild on OCR diff** — new `ordering_service.sync_ordering_after_diff(date)`. After `_apply_diff_to_subtables` succeeds, `ocr_service.write_to_sheet` calls it: drops rows for charts no longer in sub-tables, appends new rows in main-table doctor order × within-doctor sub-table order, refreshes O (主治醫師) + T/U from sub-tables, preserves Q (住服) + R + V (改期) verbatim, renumbers 序號. **Never re-randomises** — least-surprise rebuild.
+- **Auto-create sub-table for new doctor** — `_apply_diff_to_subtables` now has an `_ensure_doctor(doc)` helper. Patients added/moved with a doctor lacking a sub-table cause a new block (title + SUB_HEADER + patient rows) to be appended after the existing blocks, with the standard 2-row gap. Old `unattached_added`/`unattached_changed` paths only fire now when the new doctor name is itself blank. New `auto_created_doctors: [str]` field in the result.
+- **Static data setup documented** — the 3 files `app/data/static/cathlab_id_maps.json`, `doctor_codes.json`, `cathlab_schedule.json` are still under `.gitignore` (PHI hygiene — don't commit doctor codes / chart-no maps to a public repo). For a fresh clone, regenerate them as follows: copy `cathlab_id_maps.json` from `C:\Users\dr\Downloads\Y\每日入院名單 Claude\`; transcribe `doctor_codes.json` from the `DOCTOR_CODES` + `ROOM_CODES` dicts in `cathlab_keyin.py` (top of file in the same private dir); transcribe `cathlab_schedule.json` from the `_dump_schedule.txt` grid (Mon-Fri × AM/PM × H1/H2/C1/C2; weekday keys are str("0".."4")). Once present, the cathlab tests pass — suite size went from 294 to 316 with the new Phase 11 tests included.
 
-- **Card 2 (Key 班)** — port `keyin_routes.py + keyin_scheduler.py + keyin_excel_parser.py + keyin_index.html` from `CV-Schedulling-APP` once they exist there (CV-Schedulling-APP's own home calls it "即將推出").
-- **N-V 入院序 auto-rebuild** on OCR diff — sub-tables now auto-sync, but ordering does not. User must rerun Step 2 + Step 4 after material add/remove.
-- **Auto-create sub-table for newly-appeared doctor** — patients added with a doctor that has no existing sub-table land in `unattached_added` (reported, not silently dropped). Layout/gap guessing is fragile, so left manual.
+**Still pending:**
 - **Dropped:** the 5/4 LLM-EMR-summary feature — D column stays a header placeholder, not autofilled.
-- **Auth:** intentionally stripped from the 排班 port (single-user local app). Don't reintroduce login/users/audit — those belong to the server-deployed `CV-Schedulling-APP`, not this local-only app.
-- **Missing static data:** `app/data/` is `.gitignored` and an empty clone has no `app/data/static/cathlab_id_maps.json` / `doctor_codes.json` / `cathlab_schedule.json`. Card 3 Step 5 will 500 until these are copied in from the private workflow repo. ~35 cathlab tests fail for the same reason — pre-existing, not a regression.
+- **Auth:** intentionally stripped from the 排班 port and from the Key 班 port (single-user local app). Don't reintroduce login/users/audit — those belong to the server-deployed source repos, not this local-only app.
 
 ## Test conventions
 
-14 test files under `tests/`, all pure-logic (no network) — service modules are tested by monkeypatching `sheet_service` / `get_llm()`. The `test_main_endpoints.py` suite uses FastAPI `TestClient` for endpoint shape checks. When adding a new service function, add coverage there in the same pattern (mock `sheet_service.get_worksheet` to return a fake with `.get()` / `.update()` / `.update_cell()`).
+17 test files under `tests/`, all pure-logic (no network) — service modules are tested by monkeypatching `sheet_service` / `get_llm()`. The `test_main_endpoints.py` suite uses FastAPI `TestClient` for endpoint shape checks. When adding a new service function, add coverage there in the same pattern (mock `sheet_service.get_worksheet` to return a fake with `.get()` / `.update()` / `.update_cell()`).
 
 `test_cv_solver.py` covers the pure scheduling surface (holiday classification, `month_h_w`, `compute_initial_targets` shape, `_qod_count` / `_scan_qod`). The full backtracking solver path is **not** unit-tested — its runtime varies wildly with baseline and can take minutes on a uniform-zero baseline. Verify solver changes through the `/sched` UI on a real month, not pytest.

@@ -241,10 +241,12 @@ def test_resolve_diag_others_fallback_pdi():
     assert label == "Others:opd"
 
 
-def test_resolve_diag_unknown_still_empty():
-    """Unknown diag without `Others:` prefix returns empty."""
+def test_resolve_diag_unknown_falls_back_to_others_pdi():
+    """Unknown diag (no `Others:` prefix) now falls back to OTHERS_PDI with
+    auto-prefixed Others:label (feedback_others_diag_freetext.md)."""
     label, idv = cs.resolve_diag("阿嬤感冒")
-    assert (label, idv) == ("", "")
+    assert idv == cs.OTHERS_PDI
+    assert label == "Others:阿嬤感冒"
 
 
 def test_room_25_in_doctor_codes():

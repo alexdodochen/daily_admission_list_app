@@ -188,3 +188,112 @@ def test_integrate_resorts_by_subtable_e(monkeypatch):
     assert names == ["P2", "P3", "P1"]
     # Renumbered
     assert [row[0] for row in body] == ["1", "2", "3"]
+
+
+# ---------------- sync_ordering_after_diff (Item 2 / 2026-05-15) ----------------
+
+def _setup_sync(monkeypatch, existing_nv, sub_grid, ws_cls=_FakeWS):
+    ws = ws_cls()
+    monkeypatch.setattr(os_.sheet_service, "get_worksheet", lambda d: ws)
+    monkeypatch.setattr(
+        os_.sheet_service, "read_range",
+        lambda _ws, rng: existing_nv if rng.startswith("N") else sub_grid,
+    )
+    monkeypatch.setattr(
+        os_.sheet_service, "write_range",
+        lambda _ws, rng, body, raw=False: ws.writes.append((rng, body)),
+    )
+    cleared = []
+    monkeypatch.setattr(
+        os_.sheet_service, "clear_range",
+        lambda _ws, rng: cleared.append(rng),
+    )
+    return ws, cleared
+
+
+def test_sync_drops_removed_patient(monkeypatch):
+    """Chart no longer in sub-tables → row dropped, seq renumbered."""
+    existing = [
+        ["1", "Z", "甲", "", "", "111", "CAD", "PCI", ""],
+        ["2", "Z", "乙", "", "", "222", "AS",  "TAVI", ""],
+    ]
+    sub_grid = [
+        _pad(["Z（1人）"]),
+        _pad(["姓名","病歷","EMR","","","術前診斷","預計心導管","註記"]),
+        _pad(["甲","111","","","","CAD","PCI",""]),
+        _pad([]),
+    ]
+    ws, _ = _setup_sync(monkeypatch, existing, sub_grid)
+    r = os_.sync_ordering_after_diff("20260501")
+    assert r["updated"] is True
+    assert r["rows"] == 1
+    assert r["removed"] == ["222"]
+    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    assert [row[5] for row in body] == ["111"]
+    assert body[0][0] == "1"
+
+
+def test_sync_appends_new_patient(monkeypatch):
+    """Chart in sub-tables but not in N-V → appended at end."""
+    existing = [
+        ["1", "Z", "甲", "員工", "急", "111", "CAD", "PCI", "20260420"],
+    ]
+    sub_grid = [
+        _pad(["Z（2人）"]),
+        _pad(["姓名","病歷","EMR","","","術前診斷","預計心導管","註記"]),
+        _pad(["甲","111","","","","CAD","PCI",""]),
+        _pad(["乙","222","","","","AS","TAVI",""]),
+        _pad([]),
+    ]
+    ws, _ = _setup_sync(monkeypatch, existing, sub_grid)
+    r = os_.sync_ordering_after_diff("20260501")
+    assert r["rows"] == 2
+    assert [a["chart_no"] for a in r["added"]] == ["222"]
+    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    # Old row preserves Q/V manual markers
+    assert body[0][3] == "員工"
+    assert body[0][8] == "20260420"
+    # New row appended with empty Q/V
+    assert body[1][5] == "222"
+    assert body[1][3] == ""
+    assert body[1][8] == ""
+
+
+def test_sync_reflects_doctor_change(monkeypatch):
+    """doctor_changed in sub-tables → O column refreshed in N-V row."""
+    existing = [
+        ["1", "李文煌", "甲", "", "", "111", "CAD", "PCI", ""],
+    ]
+    sub_grid = [
+        _pad(["新醫師（1人）"]),
+        _pad(["姓名","病歷","EMR","","","術前診斷","預計心導管","註記"]),
+        _pad(["甲","111","","","","CAD","PCI",""]),
+        _pad([]),
+    ]
+    ws, _ = _setup_sync(monkeypatch, existing, sub_grid)
+    r = os_.sync_ordering_after_diff("20260501")
+    assert r["doctor_changed"] == [
+        {"chart_no": "111", "old": "李文煌", "new": "新醫師"}
+    ]
+    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    assert body[0][1] == "新醫師"
+
+
+def test_sync_clears_trailing_rows_when_shorter(monkeypatch):
+    """If new block is shorter than old, leftover N-V rows should be cleared."""
+    existing = [
+        ["1", "Z", "甲", "", "", "111", "", "", ""],
+        ["2", "Z", "乙", "", "", "222", "", "", ""],
+        ["3", "Z", "丙", "", "", "333", "", "", ""],
+    ]
+    sub_grid = [
+        _pad(["Z（1人）"]),
+        _pad(["姓名","病歷","EMR","","","術前診斷","預計心導管","註記"]),
+        _pad(["甲","111","","","","CAD","PCI",""]),
+        _pad([]),
+    ]
+    ws, cleared = _setup_sync(monkeypatch, existing, sub_grid)
+    r = os_.sync_ordering_after_diff("20260501")
+    assert r["rows"] == 1
+    # End is N2:V2, so cleared should hit N3:V4
+    assert any("N3:V" in c for c in cleared)

@@ -115,8 +115,13 @@ def test_resolve_diag_after_gt():
     assert idv == "PDI20090908120040"
 
 
-def test_resolve_diag_unknown():
-    assert cs.resolve_diag("阿嬤 的 感冒") == ("", "")
+def test_resolve_diag_unknown_falls_back_to_others_pdi():
+    # Per feedback_others_diag_freetext.md: any non-empty diag falls back to
+    # OTHERS_PDI with an "Others:<text>" label so user-typed free text still
+    # reaches WEBCVIS (under the OTHERS dropdown).
+    label, idv = cs.resolve_diag("阿嬤 的 感冒")
+    assert idv == cs.OTHERS_PDI
+    assert label == "Others:阿嬤 的 感冒"
 
 
 def test_resolve_proc_exact():
