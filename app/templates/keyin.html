@@ -1,70 +1,44 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CV_APP — key 班</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    .day-holiday { background: #fef3c7; }
-    .day-weekend { background: #fde8e8; }
-    
-    /* 可編輯下拉選單樣式 */
-    .combo-container {
-      position: relative;
-      width: 100%;
-      height: 28px;
-    }
-    .combo-select {
-      position: absolute;
-      top: 0; left: 0;
-      width: 100%; height: 100%;
-      border: 1px solid #d1d5db;
-      border-radius: 6px;
-      padding: 4px 6px;
-      font-size: 0.8rem;
-      background: white;
-      cursor: pointer;
-    }
-    .combo-input {
-      position: absolute;
-      top: 1px; left: 1px;
-      /* 留出右側箭頭空間 */
-      width: calc(100% - 22px);
-      height: calc(100% - 2px);
-      border: none;
-      border-radius: 5px 0 0 5px;
-      padding: 0 8px;
-      font-size: 0.8rem;
-      z-index: 10;
-    }
-    .combo-input:focus { outline: none; }
-    .combo-container:focus-within .combo-select {
-      border-color: #6366f1;
-      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
-    }
+{% extends "base.html" %}
 
-    #log-box { font-family: monospace; font-size: 0.78rem; }
-    .step-badge {
-      display: inline-flex; align-items: center; justify-content: center;
-      width: 24px; height: 24px; border-radius: 50%;
-      background: #6366f1; color: white; font-size: 0.75rem; font-weight: 700;
-      margin-right: 8px; flex-shrink: 0;
-    }
-  </style>
-</head>
-<body class="bg-gray-50 min-h-screen">
+{% block head_extras %}
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  // Disable Tailwind preflight so the base.html topbar styles survive.
+  tailwind.config = { corePlugins: { preflight: false } };
+</script>
+<style>
+  .day-holiday { background: #fef3c7; }
+  .day-weekend { background: #fde8e8; }
 
-<!-- Header -->
-<header class="bg-indigo-700 text-white shadow-md px-6 py-3 flex items-center justify-between">
-  <div class="flex items-center gap-2">
-    <span class="text-xl">⌨️</span>
-    <span class="font-bold text-lg">CV_APP — key 班（成大 EDR 排班自動化）</span>
-  </div>
-  <div class="flex items-center gap-3 text-sm">
-    <a href="/" class="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-full transition">← 主選單</a>
-  </div>
-</header>
+  /* 可編輯下拉選單樣式 */
+  .combo-container { position: relative; width: 100%; height: 28px; }
+  .combo-select {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    border: 1px solid #d1d5db; border-radius: 6px; padding: 4px 6px;
+    font-size: 0.8rem; background: white; cursor: pointer;
+  }
+  .combo-input {
+    position: absolute; top: 1px; left: 1px;
+    width: calc(100% - 22px); height: calc(100% - 2px);
+    border: none; border-radius: 5px 0 0 5px; padding: 0 8px;
+    font-size: 0.8rem; z-index: 10;
+  }
+  .combo-input:focus { outline: none; }
+  .combo-container:focus-within .combo-select {
+    border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+  }
+
+  #log-box { font-family: monospace; font-size: 0.78rem; }
+  .step-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; border-radius: 50%;
+    background: #6366f1; color: white; font-size: 0.75rem; font-weight: 700;
+    margin-right: 8px; flex-shrink: 0;
+  }
+</style>
+{% endblock %}
+
+{% block body %}
 
 <!-- 內部使用聲明 -->
 <div class="bg-red-50 border-b border-red-200 text-red-700 text-center py-2 px-4 text-xs font-medium">
@@ -85,7 +59,7 @@
   ❌ 執行發生錯誤，詳見進度記錄
 </div>
 
-<main class="max-w-5xl mx-auto px-4 py-6 space-y-6">
+<div class="max-w-5xl mx-auto px-4 py-6 space-y-6 bg-gray-50">
 
   <!-- ── STEP 1: 月份 ─────────────────────────────────────── -->
   <section class="bg-white rounded-xl shadow p-5">
@@ -259,8 +233,10 @@
     </div>
   </section>
 
-</main>
+</div>
+{% endblock %}
 
+{% block scripts %}
 <script>
   const WEEKDAYS = ['日','一','二','三','四','五','六'];
   const DOCTORS_VS = ["廖瑀","陳昭佑","張獻元","陳柏偉","李文煌","劉嚴文","詹世鴻","陳則瑋","林佳淩","鄭朝允","柯呈諭","黃睦翔","黃鼎鈞"];
@@ -490,5 +466,4 @@
 <div class="fixed bottom-2 right-4 text-[10px] text-gray-400 pointer-events-none select-none">
   應用程式由 114級 CV 陳常胤醫師 與 Claude code 及 Gemini CLI 合作開發
 </div>
-</body>
-</html>
+{% endblock %}

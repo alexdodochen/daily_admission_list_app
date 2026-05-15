@@ -112,6 +112,37 @@ def format_header(ws, row: int, ncols: int, start_col: int = 1):
     }]})
 
 
+def ensure_chart_text_format(ws) -> None:
+    """Force TEXT numberFormat on every column that holds a 病歷號 so leading
+    zeros survive a USER_ENTERED write. Idempotent — safe to call before
+    every write to those columns.
+
+    Ranges (zero-indexed, exclusive-end):
+      * Main I (col index 8)         rows 2..500 — A-L block
+      * Ordering S (col index 18)    rows 2..500 — N-V block
+      * Sub-table B (col index 1)    rows 2..500 — everywhere a sub-table can land
+
+    Sub-tables live below main data; we format col B from row 2 onwards so any
+    future block automatically inherits TEXT formatting on its 病歷號 column.
+    """
+    sh = get_spreadsheet()
+
+    def _req(start_col: int, end_col: int) -> dict:
+        return {"repeatCell": {
+            "range": {"sheetId": ws.id,
+                      "startRowIndex": 1, "endRowIndex": 500,
+                      "startColumnIndex": start_col, "endColumnIndex": end_col},
+            "cell": {"userEnteredFormat": {"numberFormat": {"type": "TEXT"}}},
+            "fields": "userEnteredFormat.numberFormat",
+        }}
+
+    sh.batch_update({"requests": [
+        _req(8, 9),    # main I
+        _req(18, 19),  # ordering S
+        _req(1, 2),    # sub-table B
+    ]})
+
+
 def ensure_date_sheet(date: str):
     """Return worksheet for a date like '20260420'; create if missing."""
     sh = get_spreadsheet()
@@ -129,6 +160,9 @@ def ensure_date_sheet(date: str):
         write_range(ws, "N1:W1", [header_order])
         format_header(ws, 1, 12, 1)
         format_header(ws, 1, 10, 14)
+        # Force TEXT format on chart-no columns BEFORE any data lands —
+        # otherwise USER_ENTERED parses "01937569" → 1937569 (lost zero).
+        ensure_chart_text_format(ws)
     return ws
 
 

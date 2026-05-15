@@ -9,6 +9,32 @@ from __future__ import annotations
 from app.services import emr_service as es
 
 
+# --------------------- inpatient-only boilerplate (2026-05-15) ---------------------
+
+def test_is_index_page_boilerplate_detects_typical_index():
+    text = "住院資料量較大,請點選個別項目後瀏覽\n全部摺疊 | 全部展開\n執行時間 : 00:00:01.656s"
+    assert es.is_index_page_boilerplate(text) is True
+
+
+def test_is_index_page_boilerplate_passes_real_soap():
+    text = "S: chest pain x 3 days\nO: BP 130/80\nA: rule out ACS\nP: admit for cath"
+    assert es.is_index_page_boilerplate(text) is False
+
+
+def test_is_index_page_boilerplate_handles_empty():
+    assert es.is_index_page_boilerplate("") is False
+
+
+def test_process_patient_inpatient_only_marks_no_record():
+    """Boilerplate SOAP → has_record False + INPATIENT_ONLY_TEXT body."""
+    boilerplate = "住院資料量較大,請點選個別項目後瀏覽\n全部摺疊 | 全部展開"
+    info = es.process_patient(boilerplate, "", "20260515")
+    assert info["has_record"] is False
+    assert es.INPATIENT_ONLY_TEXT in info["c_text"]
+    assert info["f"] == ""
+    assert info["g"] == ""
+
+
 # ---------------- truncation ----------------
 
 def test_truncate_at_medicine():

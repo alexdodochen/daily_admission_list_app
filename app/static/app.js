@@ -30,7 +30,10 @@
 
   const MAIN_HEADER  = ['實際住院日','開刀日','科別','主治醫師','主診斷(ICD)','姓名','性別','年齡','病歷號碼','病床號','入院提示','住急'];
   const ORDER_HEADER = ['序號','主治醫師','病人姓名','備註(住服)','備註','病歷號','術前診斷','預計心導管','每日續等清單','改期'];
-  const SUB_HEADER   = ['日期','科別','主治','姓名','病歷號','術前診斷','預計心導管'];
+  const SUB_HEADER   = ['姓名','病歷號','EMR','summary','入院序','術前診斷','預計心導管','註記'];
+
+  // Track the currently-loaded sheet name so cell writes know where to land.
+  let currentSheet = '';
 
   const esc = (s) => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
@@ -47,14 +50,25 @@
     return `${tp.getFullYear()}${String(tp.getMonth()+1).padStart(2,'0')}${String(tp.getDate()).padStart(2,'0')}`;
   }
 
-  function renderTable(headers, rows, startRow) {
+  // editableCell(row, col, value): renders a <td> with contenteditable=true
+  // and data-row/data-col so the blur handler can POST a write. col is
+  // 1-indexed; row is the absolute sheet row number.
+  function editableCell(row, col, value) {
+    return `<td contenteditable="true" data-row="${row}" data-col="${col}" data-orig="${esc(value)}">${esc(value)}</td>`;
+  }
+
+  function renderTable(headers, rows, startRow, colOffset) {
     if (!rows.length) return '<p class="viewer-empty">（無資料）</p>';
     const thead = '<tr><th></th>' + headers.map(h => `<th>${esc(h)}</th>`).join('') + '</tr>';
     const tbody = rows.map((r, i) => {
-      const cells = headers.map((_, c) => `<td>${esc(r[c] || '')}</td>`).join('');
+      const cells = headers.map((_, c) =>
+        editableCell(startRow + i, colOffset + c, r[c] || '')
+      ).join('');
       return `<tr><td class="viewer-rowidx">${startRow + i}</td>${cells}</tr>`;
     }).join('');
-    return `<table><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+    return `<table>
+      <thead>${thead}</thead><tbody>${tbody}</tbody>
+    </table>`;
   }
 
   function renderSub(sub) {
@@ -62,18 +76,23 @@
       ? ` <span class="viewer-count-mismatch">（標題 ${sub.declared} ≠ 實際 ${sub.actual_count}）</span>`
       : '';
     const title = `<h4>${esc(sub.doctor || '(未命名)')}（${sub.declared ?? '?'} 人）${mismatchTag}</h4>`;
-    return `<div class="viewer-sub">${title}${renderTable(SUB_HEADER, sub.rows || [], sub.title_row || 1)}</div>`;
+    // Sub-table patient rows live at title_row + 2 (skip title + sub-header).
+    // Cols A..H = 1..8 in the sheet.
+    const startRow = (sub.title_row || 1) + 2;
+    return `<div class="viewer-sub">${title}${renderTable(SUB_HEADER, sub.rows || [], startRow, 1)}</div>`;
   }
 
   function render(data) {
     const mainRows  = (data.main  || []).slice(1);   // strip header row
     const orderRows = (data.ordering || []).slice(1);
-    const main  = `<div class="viewer-section"><h3>主資料 A-L（${mainRows.length} 列）</h3>${renderTable(MAIN_HEADER, mainRows, 2)}</div>`;
-    const order = `<div class="viewer-section"><h3>入院序 N-W（${orderRows.length} 列）</h3>${renderTable(ORDER_HEADER, orderRows, 2)}</div>`;
+    const main  = `<div class="viewer-section"><h3>主資料 A-L（${mainRows.length} 列）</h3>${renderTable(MAIN_HEADER, mainRows, 2, 1)}</div>`;
+    // Ordering block lives at columns N..W = 14..23. Pass colOffset=14.
+    const order = `<div class="viewer-section"><h3>入院序 N-W（${orderRows.length} 列）</h3>${renderTable(ORDER_HEADER, orderRows, 2, 14)}</div>`;
     const subsHtml = (data.subs && data.subs.length)
       ? `<div class="viewer-section"><h3>子表格（${data.subs.length} 位醫師）</h3>${data.subs.map(renderSub).join('')}</div>`
       : '<div class="viewer-section"><h3>子表格</h3><p class="viewer-empty">（無子表格）</p></div>';
-    body.innerHTML = main + order + subsHtml;
+    body.innerHTML = `<p class="hint" style="margin:6px 0 12px;color:#555">編輯方式：點任一儲存格直接打字，按 Enter 或點別處即儲存回 Google Sheet。</p>` +
+      main + order + subsHtml;
   }
 
   function renderRaw(data) {
@@ -91,12 +110,57 @@
     const headCols = Array.from({ length: cols }, (_, i) =>
       `<th class="viewer-rawcol">${colLetter(i)}</th>`).join('');
     const tbody = rows.map((r, i) => {
-      const cells = Array.from({ length: cols }, (_, c) => `<td>${esc(r[c] || '')}</td>`).join('');
+      const cells = Array.from({ length: cols }, (_, c) =>
+        editableCell(i + 1, c + 1, r[c] || '')
+      ).join('');
       return `<tr><td class="viewer-rowidx">${i + 1}</td>${cells}</tr>`;
     }).join('');
-    body.innerHTML = `<div class="viewer-section"><h3>${esc(data.name)}（${rows.length} 列 × ${cols} 欄）</h3>
+    body.innerHTML = `<p class="hint" style="margin:6px 0 12px;color:#555">編輯方式：點任一儲存格直接打字，按 Enter 或點別處即儲存回 Google Sheet。</p>
+      <div class="viewer-section"><h3>${esc(data.name)}（${rows.length} 列 × ${cols} 欄）</h3>
       <table><thead><tr><th></th>${headCols}</tr></thead><tbody>${tbody}</tbody></table></div>`;
   }
+
+  // Cell-edit listener — single delegated handler so all <td contenteditable>
+  // cells fire a write on blur (or on Enter, which we redirect to blur).
+  async function commitCell(td) {
+    const row  = td.getAttribute('data-row');
+    const col  = td.getAttribute('data-col');
+    const orig = td.getAttribute('data-orig') || '';
+    const next = (td.innerText || '').replace(/\r/g, '').replace(/\n+$/, '');
+    if (!currentSheet || !row || !col) return;
+    if (next === orig) return;  // no change
+    td.classList.add('viewer-cell-saving');
+    try {
+      const fd = new FormData();
+      fd.append('sheet', currentSheet);
+      fd.append('row', row);
+      fd.append('col', col);
+      fd.append('value', next);
+      const r = await fetch('/api/sheet/write_cell', { method: 'POST', body: fd });
+      if (!r.ok) throw new Error(await r.text());
+      td.setAttribute('data-orig', next);
+      td.classList.remove('viewer-cell-saving');
+      td.classList.add('viewer-cell-saved');
+      setTimeout(() => td.classList.remove('viewer-cell-saved'), 1200);
+    } catch (err) {
+      td.classList.remove('viewer-cell-saving');
+      td.classList.add('viewer-cell-error');
+      td.innerText = orig;
+      setMsg('✗ 寫入失敗：' + (err.message || err), 'err');
+      setTimeout(() => td.classList.remove('viewer-cell-error'), 2000);
+    }
+  }
+
+  body.addEventListener('focusout', (e) => {
+    const td = e.target.closest('td[contenteditable="true"]');
+    if (td) commitCell(td);
+  });
+  body.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      const td = e.target.closest('td[contenteditable="true"]');
+      if (td) { e.preventDefault(); td.blur(); }
+    }
+  });
 
   async function loadSheets() {
     setMsg('讀取分頁清單…', 'ok');
@@ -129,6 +193,7 @@
     if (!name) { body.innerHTML = '<p class="hint">選一個分頁開始查閱。</p>'; return; }
     setMsg('讀取 ' + name + ' …', 'ok');
     body.innerHTML = '<p class="hint">載入中…</p>';
+    currentSheet = name;
     try {
       if (isYmd(name)) {
         const r = await api(`/api/sheet/read?date=${encodeURIComponent(name)}`);
@@ -139,7 +204,7 @@
         if (r.error) { setMsg('✗ ' + r.error, 'err'); body.innerHTML = `<p class="viewer-empty">${esc(r.error)}</p>`; return; }
         renderRaw(r);
       }
-      setMsg('✓ ' + name, 'ok');
+      setMsg('✓ ' + name + '（可直接編輯儲存格）', 'ok');
     } catch (err) {
       setMsg('✗ ' + err.message, 'err');
       body.innerHTML = '<p class="viewer-empty">讀取失敗。</p>';
@@ -574,6 +639,40 @@ function renderFormatIssues(issues) {
 // ---------- Step 1: OCR ----------
 let ocrRows = [];
 
+// Parse "YYYY/MM/DD", "YYYY-MM-DD", "MM/DD" (current year) → "YYYYMMDD".
+// Returns '' if input doesn't look like a date.
+function normalizeAdmitDateToYmd(raw) {
+  const s = (raw || '').trim();
+  if (!s) return '';
+  let m = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  if (m) {
+    const [, y, mo, d] = m;
+    return `${y}${mo.padStart(2, '0')}${d.padStart(2, '0')}`;
+  }
+  m = s.match(/^(\d{1,2})[\/\-](\d{1,2})$/);
+  if (m) {
+    const [, mo, d] = m;
+    const y = new Date().getUTCFullYear();
+    return `${y}${mo.padStart(2, '0')}${d.padStart(2, '0')}`;
+  }
+  m = s.match(/^(\d{8})$/);  // already YYYYMMDD
+  if (m) return s;
+  return '';
+}
+
+function pickMostCommonAdmitDate(rows) {
+  const tally = {};
+  for (const r of (rows || [])) {
+    const ymd = normalizeAdmitDateToYmd(r && r.admit_date);
+    if (ymd) tally[ymd] = (tally[ymd] || 0) + 1;
+  }
+  let best = '', bestCount = 0;
+  for (const [k, v] of Object.entries(tally)) {
+    if (v > bestCount) { best = k; bestCount = v; }
+  }
+  return best;
+}
+
 function setupStep1() {
   const dz = $('#drop-zone');
   const fi = $('#file-input');
@@ -612,7 +711,19 @@ function setupStep1() {
         const r = await api('/api/step1/ocr', { method: 'POST', body: fd });
         ocrRows = r.rows;
         renderOcrTable(ocrRows);
-        flash($('#ocr-msg'), `✓ 辨識到 ${ocrRows.length} 筆`, 'ok');
+        // Auto-fill date-input from OCR admit_date (most-common value across
+        // rows). User asked not to manually re-type the calendar each time.
+        const autoDate = pickMostCommonAdmitDate(ocrRows);
+        let dateNote = '';
+        if (autoDate) {
+          const dateText = $('#date-input');
+          if (dateText) {
+            dateText.value = autoDate;
+            dateText.dispatchEvent(new Event('change'));
+          }
+          dateNote = `；日期自動填入 ${autoDate}`;
+        }
+        flash($('#ocr-msg'), `✓ 辨識到 ${ocrRows.length} 筆${dateNote}`, 'ok');
         $('#write1-btn').disabled = ocrRows.length === 0;
       } catch (err) {
         flash($('#ocr-msg'), '✗ ' + err.message, 'err');
@@ -793,10 +904,20 @@ function setupStep3() {
         renderEmrResults(r.results);
         const wb = r.writeback || {};
         const missing = (wb.missing || []).length;
-        const skippedNote = wb.skipped ? '（未寫回 — 缺日期）' :
-          `；寫回子表格 ${wb.written} 位${missing ? `，${missing} 位查無子表格` : ''}`;
+        let skippedNote;
+        let level = 'ok';
+        if (wb.error) {
+          skippedNote = `；⚠ 寫回失敗：${wb.error}`;
+          level = 'err';
+        } else if (wb.skipped) {
+          skippedNote = '（未寫回 — 缺日期）';
+        } else {
+          const autoBuilt = wb.auto_built ? '（已自動建立子表格）' : '';
+          skippedNote = `；寫回子表格 ${wb.written} 位${autoBuilt}` +
+            (missing ? `，${missing} 位查無子表格` : '');
+        }
         flash($('#s3-msg'),
-          `✓ 完成 ${r.results.length} 位${skippedNote}`, 'ok');
+          `✓ 完成 ${r.results.length} 位${skippedNote}`, level);
       } catch (err) {
         flash($('#s3-msg'), '✗ ' + err.message, 'err');
       }
@@ -811,12 +932,19 @@ function renderEmrResults(results) {
     const fg = `<span class="emr-fg">F=${escape(r.f) || '—'} / G=${escape(r.g) || '—'}</span>`;
     const emrName = r.emr_name && r.emr_name !== r.name
       ? `<span class="emr-name-fix">(EMR：${escape(r.emr_name)})</span>` : '';
+    const visit = r.visit_label ? `<span class="hint">[訪視: ${escape(r.visit_label)}]</span>` : '';
+    // Empty SOAP / boilerplate-only response → render the warning card not a <pre>
+    // so the user immediately sees "no clinic record" rather than scanning text.
+    const noRecord = r.has_record === false;
+    const body = noRecord
+      ? `<p class="msg err" style="margin:6px 0">⚠ ${escape(r.c_text) || '查無 EMR'}</p>`
+      : `<pre>${escape(r.c_text)}</pre>`;
     return `
-    <div class="emr-card">
+    <div class="emr-card${noRecord ? ' emr-no-record' : ''}">
       <h3>${escape(r.doctor)} / ${escape(r.name)} ${emrName} (${escape(r.chart_no)}) ${r.error ? '⚠' : ''}</h3>
       ${r.error ? `<p class="msg err">${escape(r.error)}</p>` : ''}
-      <p class="hint">${escape(demog)} &nbsp; ${fg}</p>
-      <pre>${escape(r.c_text)}</pre>
+      <p class="hint">${escape(demog)} &nbsp; ${fg} &nbsp; ${visit}</p>
+      ${body}
     </div>`;
   }).join('');
   $('#emr-results').innerHTML = html;

@@ -54,11 +54,15 @@ def _set_prefill(payload: dict[str, Any]) -> None:
 @router.get("/", response_class=HTMLResponse)
 async def keyin_index(request: Request):
     state = session.state if session else "idle"
-    # Inject static_version like every other page so app.js/app.css cache-bust.
     from .. import main as main_mod
+    from .. import config as appconfig
+    cfg = appconfig.load()
     return templates.TemplateResponse(request, "keyin.html", {
         "session_state": state,
-        "static_version": getattr(main_mod, "_STATIC_VERSION", "0"),
+        # Base.html topbar / settings status need these.
+        "cfg":             cfg,
+        "ready":           cfg.is_ready(),
+        "static_version":  getattr(main_mod, "_STATIC_VERSION", "0"),
     })
 
 

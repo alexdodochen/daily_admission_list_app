@@ -587,6 +587,40 @@ async def api_sheet_list():
         raise HTTPException(500, str(e))
 
 
+@app.post("/api/sheet/write_cell")
+async def api_sheet_write_cell(sheet: str = Form(...),
+                                row: int = Form(...),
+                                col: int = Form(...),
+                                value: str = Form("")):
+    """Write one cell on ANY worksheet. Powers the inline-editable cells in
+    the 📋 查閱 modal so any in-app tweak lands in Google Sheet immediately.
+
+    `row` and `col` are 1-indexed (col A = 1).
+    """
+    name = (sheet or "").strip()
+    if not name:
+        raise HTTPException(400, "missing sheet name")
+    try:
+        ws = sheet_service.get_worksheet(name)
+        if ws is None:
+            raise HTTPException(404, f"找不到分頁 {name}")
+        # If we're writing into a chart-no column on a date sheet, make sure
+        # the column is TEXT-formatted so a typed "01937569" keeps its leading
+        # zero. Best-effort — never blocks the write.
+        if name.isdigit() and len(name) == 8 and col in (2, 9, 19):
+            try:
+                sheet_service.ensure_chart_text_format(ws)
+            except Exception:
+                pass
+        ws.update_cell(row, col, value)
+        return {"ok": True, "sheet": name, "row": row, "col": col,
+                "value": value}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @app.get("/api/sheet/raw")
 async def api_sheet_raw(name: str):
     """Read ANY worksheet by exact tab name and return a raw A:Z grid.

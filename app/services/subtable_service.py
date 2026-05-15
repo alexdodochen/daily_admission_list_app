@@ -89,6 +89,12 @@ def build_subtables_from_main(date: str, gap: int = 2) -> dict:
             block.append([""] * 8)
 
     end_row = start_row + len(block) - 1
+    # TEXT-format the sub-table 病歷號 column before write so leading zeros
+    # survive (USER_ENTERED parses unquoted digit strings as numbers).
+    try:
+        sheet_service.ensure_chart_text_format(ws)
+    except Exception:
+        pass
     sheet_service.write_range(ws, f"A{start_row}:H{end_row}", block, raw=False)
 
     return {

@@ -290,6 +290,18 @@ def lottery_with_pins(date: str,
             ri += 1
 
     ws = sheet_service.get_worksheet(date)
+    # Read current N-V length BEFORE writing so we can clear any trailing rows
+    # if the new lottery is shorter than the previous one (re-running lottery
+    # after removing a patient should fully overwrite, not leave a phantom row).
+    existing = sheet_service.read_range(ws, "N2:V200")
+    old_rows = 0
+    for r in existing:
+        r = (r + [""] * 9)[:9]
+        if any((c or "").strip() for c in r):
+            old_rows += 1
+        else:
+            break
+
     body = []
     for i, p in enumerate(final_seq, start=1):
         body.append([
@@ -304,8 +316,17 @@ def lottery_with_pins(date: str,
             "",                     # V 改期
         ])
     end_row = 1 + len(body)
+    # TEXT format on chart-no col before write so leading zeros survive
+    try:
+        sheet_service.ensure_chart_text_format(ws)
+    except Exception:
+        pass
     sheet_service.write_range(ws, "N1:V1", [ordering_service.ORDERING_HEADERS], raw=False)
     sheet_service.write_range(ws, f"N2:V{end_row}", body, raw=False)
+    # Clear leftover rows from the previous (longer) N-V block.
+    old_end = 1 + old_rows
+    if old_end > end_row:
+        sheet_service.clear_range(ws, f"N{end_row + 1}:V{old_end}")
     return {
         "rows":             len(body),
         "range":            f"N2:V{end_row}",
@@ -314,6 +335,7 @@ def lottery_with_pins(date: str,
         "doctor_order":     list(doctor_order),
         "ticket_doctors":   list(tickets.keys()),
         "weekday":          weekday,
+        "cleared_trailing": max(0, old_end - end_row),
     }
 
 

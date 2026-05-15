@@ -301,3 +301,27 @@ input.fg-input.error  { background: #fee2e2; }
   background: #e5e7eb; color: #6b7280; font-size: 11px; border-radius: 10px;
 }
 .subtitle { color: var(--muted); font-size: 14px; margin: 4px 0 18px; }
+
+/* Sheet viewer inline-edit feedback states (2026-05-15) */
+.viewer-modal td[contenteditable="true"] {
+  cursor: text;
+  transition: background-color 0.3s, box-shadow 0.2s;
+}
+.viewer-modal td[contenteditable="true"]:hover {
+  background: #fef9c3;  /* yellow-100, hint that hovered cell is editable */
+}
+.viewer-modal td[contenteditable="true"]:focus {
+  outline: 2px solid #4f46e5;  /* indigo-600 */
+  background: #fff;
+  position: relative;
+  z-index: 1;
+}
+.viewer-modal td.viewer-cell-saving {
+  background: #dbeafe !important;  /* blue-100 — write in flight */
+}
+.viewer-modal td.viewer-cell-saved {
+  background: #bbf7d0 !important;  /* green-200 — write OK, fades after 1.2s */
+}
+.viewer-modal td.viewer-cell-error {
+  background: #fecaca !important;  /* red-200 — write failed, reverts to orig */
+}

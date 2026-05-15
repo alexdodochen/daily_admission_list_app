@@ -123,6 +123,17 @@ ICD10_FALLBACK: list[tuple[tuple[str, ...], str]] = [
 ]
 
 NO_RECORD_TEXT = "無本院一年內主治醫師門診紀錄"
+INPATIENT_ONLY_TEXT = "查無門診紀錄（病人僅有住院資料 / 需手動點開個別住院記錄）"
+
+# Boilerplate phrases that surface when the EMR fetch lands on the chart-summary
+# index page instead of a real 門診 SOAP. Common on inpatient-only charts where
+# there's no 一年內門診紀錄 for the assigned doctor or FALLBACK_DOCTORS.
+INDEX_PAGE_MARKERS = [
+    "住院資料量較大",
+    "請點選個別項目",
+    "全部摺疊",
+    "全部展開",
+]
 
 
 # ---------------------------- text truncation ----------------------------
@@ -147,6 +158,21 @@ def truncate_emr(text: str) -> str:
         if i != -1 and i < earliest:
             earliest = i
     return text[:earliest].rstrip()
+
+
+def is_index_page_boilerplate(text: str) -> bool:
+    """True when `text` is the chart-summary index page (boilerplate only),
+    not a real 門診 SOAP. We never want this stored as a clinical record —
+    it's noise that pollutes Card 3 Step 3 / cathlab / LINE push.
+
+    Triggers if any 2 of `INDEX_PAGE_MARKERS` appear (loose match, so a
+    single-marker SOAP that genuinely quotes one of these phrases still
+    passes through).
+    """
+    if not text:
+        return False
+    hits = sum(1 for m in INDEX_PAGE_MARKERS if m in text)
+    return hits >= 2
 
 
 # ---------------------------- divUserSpec parsing ----------------------------
@@ -335,7 +361,10 @@ def process_patient(emr_text: str,
       }
     """
     truncated = truncate_emr(emr_text)
-    has_record = bool(truncated.strip())
+    # Boilerplate from the chart-summary index page → treat as no record so
+    # downstream F/G detection + sub-table display don't get polluted.
+    index_only = is_index_page_boilerplate(truncated)
+    has_record = bool(truncated.strip()) and not index_only
 
     name = parse_name_from_raw(div_user_spec)
     gender = parse_gender_from_raw(div_user_spec)
@@ -346,7 +375,7 @@ def process_patient(emr_text: str,
         body = truncated
     else:
         f, g = "", ""
-        body = NO_RECORD_TEXT
+        body = INPATIENT_ONLY_TEXT if index_only else NO_RECORD_TEXT
 
     prefix = ""
     if age is not None and gender:
@@ -376,12 +405,28 @@ def write_results_to_subtables(date: str, results: list[dict]) -> dict:
     Returns {"written": int, "missing": [chart_no, ...]}. Errors-only
     patients (where extract failed and c_text is empty) are skipped.
     """
-    from . import sheet_service, ordering_service
+    from . import sheet_service, ordering_service, subtable_service
 
     ws = sheet_service.get_worksheet(date)
     if ws is None:
         raise ValueError(f"找不到工作表 {date}")
     tables = ordering_service.read_doctor_subtables(date)
+    auto_built = False
+
+    # No sub-tables yet? Auto-build them from main A-L so Step 3 can land C/F/G
+    # somewhere — otherwise every EMR result silently goes into `missing`.
+    # build_subtables_from_main refuses to overwrite existing blocks, so this
+    # is safe to call defensively.
+    if not tables:
+        try:
+            subtable_service.build_subtables_from_main(date)
+            auto_built = True
+            tables = ordering_service.read_doctor_subtables(date)
+        except Exception as e:
+            return {"written": 0, "missing": [(r.get("chart_no") or "")
+                                              for r in results],
+                    "patches_count": 0,
+                    "error": f"無子表格且自動建立失敗：{e}"}
 
     chart_to_row: dict[str, int] = {}
     for _, pts in tables.items():
@@ -414,8 +459,16 @@ def write_results_to_subtables(date: str, results: list[dict]) -> dict:
             patches.append((f"G{row}", g_val))
         written += 1
 
+    # TEXT-format chart-no cols before any write so leading zeros stick (this
+    # routine also writes column C which contains chart-no in c_text prefix on
+    # the rare patient with all-digit names — defensive).
+    try:
+        sheet_service.ensure_chart_text_format(ws)
+    except Exception:
+        pass
     sheet_service.batch_write_cells(ws, patches)
-    return {"written": written, "missing": missing, "patches_count": len(patches)}
+    return {"written": written, "missing": missing,
+            "patches_count": len(patches), "auto_built": auto_built}
 
 
 # ---------------------------- Playwright orchestration ----------------------------
@@ -424,119 +477,206 @@ def write_results_to_subtables(date: str, results: list[dict]) -> dict:
 # port of FALLBACK_DOCTORS from daily-admission-list-public/fetch_emr.py.
 FALLBACK_DOCTORS = ["劉秉彥", "趙庭興", "蔡惟全", "許志新", "陳柏升", "李貽恒"]
 
+# Same-name characters that surface as Unicode siblings — fetch_emr.py treats
+# them as equivalent so a query for one variant still hits anchors carrying
+# the other. Ported from daily-admission-list reference impl.
+NAME_ALIASES = {
+    "林佳凌": ["林佳凌", "林佳淩"],
+    "林佳淩": ["林佳凌", "林佳淩"],
+}
+
+
+def _name_variants(name: str) -> list[str]:
+    return NAME_ALIASES.get(name, [name])
+
 
 async def fetch_raw_html(page, session_url: str, chart_no: str,
                          doctor: str = "") -> tuple[str, str, str]:
     """
     NCKU-EMR frameset query. Returns (soap_text, divUserSpec_raw, visit_label).
 
-    Flow (ported from `daily-admission-list-public/fetch_emr.py`):
-      1. Navigate to session URL (frameset entry).
-      2. Inside topFrame: fill `#txtChartNo` + click `#BTQuery`.
-      3. Wait for leftFrame to repopulate with anchors.
-      4. Click the first anchor whose text contains '門ديل' AND `doctor`;
-         if none, iterate FALLBACK_DOCTORS until match found.
-      5. Wait for mainFrame; read `div.small` blocks → join.
-      6. Read `#divUserSpec` from any frame as patient header.
+    Ported from `每日入院名單 Claude\\fetch_emr.py` (private workflow repo —
+    source of truth). Anti-race-condition design:
 
-    `visit_label` is the chosen clinic visit's anchor text — useful for
-    surfacing which doctor's record we actually used.
+      1. Navigate to the session URL if we're not already on it (a long
+         batch reuses one tab, so don't re-goto for every chart).
+      2. Stamp `leftFrame` + `mainFrame` body with a per-chart sentinel.
+      3. Inside `topFrame`: fill `#txtChartNo` + click `#BTQuery`.
+      4. Poll leftFrame until sentinel is gone AND at least one 門診 anchor
+         is present (max 12s) → only then is the visit tree loaded.
+      5. Stamp mainFrame again, click the matching 門診 anchor (doctor first,
+         then FALLBACK_DOCTORS).
+      6. Poll mainFrame until sentinel is gone AND body has > 80 chars
+         (max 12s).
+      7. Read `div.small` blocks **from mainFrame only** (NOT iterating all
+         frames — the leftFrame's chart-summary index also has div.small but
+         it's just boilerplate). Filter out `iportlet-content` portlet wrappers.
+      8. Read `#divUserSpec` from any frame as patient header.
+
+    `visit_label` is the chosen clinic visit's anchor text.
+
+    Returns ("", "", "") if no 門診 record found for this chart (e.g. inpatient-
+    only patient with no 一年內門診紀錄 in any allowed doctor).
     """
-    await page.goto(session_url, wait_until="domcontentloaded")
-    await page.wait_for_timeout(1200)
+    import json as _json
+    import time as _time
 
-    submit = await page.evaluate(f"""
-        () => {{
-            const tryFrames = [window.top, ...Array.from(window.top.frames)];
-            for (const w of tryFrames) {{
-                try {{
-                    const d = w.document;
-                    const inp = d.getElementById('txtChartNo') || d.querySelector("input[name='txtChartNo']");
-                    const btn = d.getElementById('BTQuery') || d.querySelector("input[name='BTQuery']");
-                    if (inp && btn) {{
-                        inp.value = {chart_no!r};
-                        btn.click();
-                        return {{ok: true}};
-                    }}
-                }} catch (e) {{ /* cross-origin frame */ }}
+    # Only navigate if we're not already on the EMR session — same page
+    # gets reused across the patient batch.
+    cur = page.url or ""
+    if session_url not in cur and cur.split("?")[0] != session_url.split("?")[0]:
+        await page.goto(session_url, wait_until="domcontentloaded")
+        await page.wait_for_timeout(1500)
+
+    sentinel_q = f"FETCH-{chart_no}-{int(_time.time() * 1000)}-QUERY"
+    sentinel_c = f"FETCH-{chart_no}-{int(_time.time() * 1000)}-CLICK"
+
+    # 1. stamp leftFrame + mainFrame, then submit the query in topFrame.
+    await page.evaluate(f"""() => {{
+        try {{ window.frames['leftFrame'].document.body.innerHTML = '<!--{sentinel_q}-->'; }} catch(e) {{}}
+        try {{ window.frames['mainFrame'].document.body.innerHTML = '<!--{sentinel_q}-->'; }} catch(e) {{}}
+    }}""")
+
+    submit = await page.evaluate(f"""() => {{
+        try {{
+            let d = window.frames['topFrame'].document;
+            let inp = d.getElementById('txtChartNo');
+            let btn = d.getElementById('BTQuery');
+            if (inp && btn) {{
+                inp.value = {chart_no!r};
+                btn.click();
+                return {{ok: true}};
             }}
-            return {{ok: false, reason: 'no_query_form'}};
+        }} catch(e) {{}}
+        // Fallback: walk every frame (handles non-standard layouts)
+        const tryFrames = [window.top, ...Array.from(window.top.frames)];
+        for (const w of tryFrames) {{
+            try {{
+                const d = w.document;
+                const inp = d.getElementById('txtChartNo');
+                const btn = d.getElementById('BTQuery');
+                if (inp && btn) {{
+                    inp.value = {chart_no!r};
+                    btn.click();
+                    return {{ok: true}};
+                }}
+            }} catch(e) {{}}
         }}
-    """)
+        return {{ok: false, reason: 'no_query_form'}};
+    }}""")
     if not submit.get("ok"):
         return "", "", ""
 
-    await page.wait_for_timeout(2200)
+    # 2. poll leftFrame for visit-tree readiness.
+    left_ready = False
+    for _ in range(24):  # 24 × 0.5s = 12s
+        await page.wait_for_timeout(500)
+        state = await page.evaluate(f"""() => {{
+            try {{
+                let d = window.frames['leftFrame'].document;
+                let html = d.body.innerHTML || '';
+                if (html.indexOf('{sentinel_q}') >= 0) return 'stamped';
+                let links = d.querySelectorAll('a');
+                let count = 0;
+                for (let l of links) if ((l.innerText || '').includes('門診')) count++;
+                return count > 0 ? 'ready' : 'empty';
+            }} catch(e) {{ return 'err'; }}
+        }}""")
+        if state == "ready":
+            left_ready = True
+            break
 
-    candidates = []
-    if doctor:
-        candidates.append(doctor)
-    for fb in FALLBACK_DOCTORS:
-        if fb not in candidates:
-            candidates.append(fb)
-    import json as _json
-    candidates_js = _json.dumps(candidates, ensure_ascii=False)
+    div_spec = await page.evaluate("""() => {
+        for (let i = 0; i < window.frames.length; i++) {
+            try {
+                let el = window.frames[i].document.getElementById('divUserSpec');
+                if (el && el.innerText.trim()) return el.innerText.trim();
+            } catch(e) {}
+        }
+        return '';
+    }""") or ""
 
-    click = await page.evaluate(f"""
-        () => {{
-            const allow = {candidates_js};
-            const frames = [window.top, ...Array.from(window.top.frames)];
-            for (const fb of allow) {{
-                for (const w of frames) {{
-                    try {{
-                        const links = w.document.querySelectorAll('a');
-                        for (const link of links) {{
-                            const t = (link.innerText || link.textContent || '').trim();
-                            if (t.includes('門診') && t.includes(fb)) {{
-                                link.click();
-                                return {{ok: true, visit: t, doctor_used: fb}};
-                            }}
-                        }}
-                    }} catch (e) {{ /* cross-origin */ }}
+    if not left_ready:
+        return "", div_spec, ""
+
+    # 3. click the 門診 anchor for `doctor` (and its alias variants), or
+    # any FALLBACK_DOCTORS in priority order.
+    variants_js = _json.dumps(_name_variants(doctor) if doctor else [], ensure_ascii=False)
+    fallback_js = _json.dumps(FALLBACK_DOCTORS, ensure_ascii=False)
+
+    await page.evaluate(f"""() => {{
+        try {{ window.frames['mainFrame'].document.body.innerHTML = '<!--{sentinel_c}-->'; }} catch(e) {{}}
+    }}""")
+    click = await page.evaluate(f"""() => {{
+        try {{
+            let d = window.frames['leftFrame'].document;
+            let links = d.querySelectorAll('a');
+            let variants = {variants_js};
+            for (let link of links) {{
+                let t = (link.innerText || '').trim();
+                if (!t.includes('門診')) continue;
+                for (let v of variants) {{
+                    if (t.includes(v)) {{
+                        link.click();
+                        return {{ok: true, visit: t, matched_doctor: true}};
+                    }}
                 }}
             }}
-            return {{ok: false, reason: 'no_clinic_record'}};
-        }}
-    """)
-    visit_label = ""
-    soap = ""
-    if click.get("ok"):
-        visit_label = click.get("visit", "")
-        await page.wait_for_timeout(1500)
-        soap = await page.evaluate("""
-            () => {
-                const frames = [window.top, ...Array.from(window.top.frames)];
-                for (const w of frames) {
-                    try {
-                        const blocks = w.document.querySelectorAll('div.small');
-                        if (blocks.length) {
-                            return Array.from(blocks).map(b => b.innerText).join('\\n---\\n');
-                        }
-                    } catch (e) { /* cross-origin */ }
-                }
-                // Fallback: mainFrame's body
-                for (const w of frames) {
-                    try {
-                        const body = w.document.body;
-                        if (body && (body.innerText || '').length > 100) return body.innerText;
-                    } catch (e) {}
-                }
-                return '';
-            }
-        """) or ""
+            let allow = {fallback_js};
+            for (let fb of allow) {{
+                for (let link of links) {{
+                    let t = (link.innerText || '').trim();
+                    if (t.includes('門診') && t.includes(fb)) {{
+                        link.click();
+                        return {{ok: true, visit: t, matched_doctor: false}};
+                    }}
+                }}
+            }}
+        }} catch(e) {{}}
+        return {{ok: false}};
+    }}""")
 
-    div_spec = await page.evaluate("""
-        () => {
-            const frames = [window.top, ...Array.from(window.top.frames)];
-            for (const w of frames) {
-                try {
-                    const el = w.document.getElementById('divUserSpec');
-                    if (el) return el.innerText || '';
-                } catch (e) {}
+    if not click.get("ok"):
+        return "", div_spec, ""
+
+    visit_label = click.get("visit", "")
+
+    # 4. poll mainFrame readiness.
+    main_ready = False
+    for _ in range(24):
+        await page.wait_for_timeout(500)
+        state = await page.evaluate(f"""() => {{
+            try {{
+                let d = window.frames['mainFrame'].document;
+                let html = d.body.innerHTML || '';
+                if (html.indexOf('{sentinel_c}') >= 0) return 'stamped';
+                let txt = (d.body.innerText || '').trim();
+                return txt.length > 80 ? 'ready' : 'short';
+            }} catch(e) {{ return 'err'; }}
+        }}""")
+        if state == "ready":
+            main_ready = True
+            break
+
+    if not main_ready:
+        return "", div_spec, visit_label
+
+    # 5. extract SOAP from mainFrame only — filter out the iportlet-content
+    # wrapper div that appears at every page level.
+    soap = await page.evaluate("""() => {
+        try {
+            let d = window.frames['mainFrame'].document;
+            let divs = d.querySelectorAll('div.small');
+            let texts = [];
+            for (let div of divs) {
+                let t = (div.innerText || '').trim();
+                if (t && !t.includes('iportlet-content')) texts.push(t);
             }
-            return '';
-        }
-    """) or ""
+            if (texts.length === 0) return (d.body.innerText || '').trim();
+            return texts.join('\\n');
+        } catch(e) { return ''; }
+    }""") or ""
+
     return soap, div_spec, visit_label
 
 

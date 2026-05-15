@@ -1,40 +1,29 @@
-<!DOCTYPE html>
-<html lang="zh-Hant">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>排班 — 心臟內科總醫師</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    .day-btn { transition: all 0.15s; }
-    .day-btn:hover:not(:disabled) { transform: translateY(-1px); }
-    .day-btn.selected { background-color: #4f46e5 !important; color: white !important; border-color: #4f46e5 !important; }
-    .day-btn.holiday { background-color: #fef3c7; }
-    .day-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-    .step-collapsed .step-body { display: none; }
-    .step-active { border-color: #4f46e5; }
-    .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
-    .cal-cell { min-height: 64px; padding: 4px 6px; border-radius: 6px; border: 1px solid #e5e7eb; font-size: 12px; }
-    .cal-cell.holiday { background-color: #fef3c7; border-color: #fbbf24; }
-    .cal-cell .doc { font-weight: 600; color: #4f46e5; font-size: 13px; margin-top: 4px; }
-    .cal-cell.qod { background-color: #fecaca; }
-  </style>
-</head>
-<body class="bg-gray-50 min-h-screen">
+{% extends "base.html" %}
 
-<header class="bg-indigo-700 text-white shadow-md px-6 py-3 flex items-center justify-between">
-  <div class="flex items-center gap-2">
-    <span class="text-xl">📅</span>
-    <span class="font-bold text-lg">排班 — 五步驟</span>
-  </div>
-  <div class="flex items-center gap-3 text-sm">
-    <a href="/" class="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-full transition">回主畫面</a>
-    <a href="/admission" class="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-full transition">入院清單</a>
-    <a href="/settings" class="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-full transition">設定</a>
-  </div>
-</header>
+{% block head_extras %}
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  // Disable Tailwind preflight so it doesn't reset the base.html topbar.
+  tailwind.config = { corePlugins: { preflight: false } };
+</script>
+<style>
+  .day-btn { transition: all 0.15s; }
+  .day-btn:hover:not(:disabled) { transform: translateY(-1px); }
+  .day-btn.selected { background-color: #4f46e5 !important; color: white !important; border-color: #4f46e5 !important; }
+  .day-btn.holiday { background-color: #fef3c7; }
+  .day-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .step-collapsed .step-body { display: none; }
+  .step-active { border-color: #4f46e5; }
+  .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+  .cal-cell { min-height: 64px; padding: 4px 6px; border-radius: 6px; border: 1px solid #e5e7eb; font-size: 12px; }
+  .cal-cell.holiday { background-color: #fef3c7; border-color: #fbbf24; }
+  .cal-cell .doc { font-weight: 600; color: #4f46e5; font-size: 13px; margin-top: 4px; }
+  .cal-cell.qod { background-color: #fecaca; }
+</style>
+{% endblock %}
 
-<main class="max-w-6xl mx-auto px-4 py-6 space-y-6">
+{% block body %}
+<div class="max-w-6xl mx-auto px-4 py-6 space-y-6 bg-gray-50">
 
   <!-- ── Step 1 — 選月份 ────────────────────────────────────────── -->
   <section id="step1" class="bg-white rounded-xl shadow border-2 step-active p-6">
@@ -209,8 +198,10 @@
     </div>
   </section>
 
-</main>
+</div>
+{% endblock %}
 
+{% block scripts %}
 <script>
 const DOCTORS_CR  = {{ doctors_cr  | tojson }};
 const DOCTORS_VS  = {{ doctors_vs  | tojson }};
@@ -521,6 +512,4 @@ $('btn-resolve').addEventListener('click', () => {
   $('btn-solve').click();
 });
 </script>
-
-</body>
-</html>
+{% endblock %}

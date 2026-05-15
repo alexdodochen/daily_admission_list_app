@@ -214,6 +214,14 @@ def write_to_sheet(date: str, patients: list[dict],
     if not patients:
         return {"rows": 0, "sheet": date}
 
+    # Defensively re-apply TEXT format on chart-no columns BEFORE we write
+    # any 病歷號. ensure_date_sheet covers brand-new sheets; this covers
+    # existing sheets that pre-date the TEXT-format fix.
+    try:
+        sheet_service.ensure_chart_text_format(ws)
+    except Exception:
+        pass  # best-effort — don't block the OCR write on a format API hiccup
+
     existing = sheet_service.read_range(ws, "A2:L200")
     while existing and not any((c or "").strip() for c in existing[-1]):
         existing.pop()
