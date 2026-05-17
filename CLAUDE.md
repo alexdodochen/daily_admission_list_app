@@ -109,6 +109,10 @@ The patient and doctor pin panels persist to `localStorage[pin_YYYYMMDD]` so rel
 
 Every async click handler in `app.js` wraps its body with `await withBusy(btn, busyText, async () => {...})`. The helper disables the button, swaps its text to `busyText`, adds `class="busy"` (orange background + spinning border via CSS), then restores on `finally`. Apply to any new async button.
 
+### F/G combobox container invariant
+
+`fgInput()` emits a `<ul class="fg-popup">` inside its `<span class="fg-cell">`. **Never wrap an `fgInput()` in a `<p>`** — the HTML parser auto-closes `<p>` at the first `<ul>`, hoisting the popup out of its `.fg-cell` so `wireFgInputsIn` bails (`if (!popup) return`) and that combobox's ▼ goes dead (regressed F in Step 3 EMR cards, fixed 2026-05-17 `a7fa372`). Use `<div>`/`<td>` as the container. Step 4 sub-table uses `<td>` (valid); Step 3 EMR cards use `<div class="emr-fg-row">`.
+
 ### Config & bundling
 
 `app/config.py` resolves settings in this layer order (later wins):
