@@ -334,9 +334,16 @@ async def api_step3_run(session_url: str = Form(...),
 async def api_step4_subtables(date: str):
     try:
         tables = ordering_service.read_doctor_subtables(date)
-        return {"ok": True, "tables": tables}
     except Exception as e:
         raise HTTPException(500, str(e))
+    try:
+        # Self-heal: re-assert the native F/G dropdown in case it was lost to a
+        # prior credential/network outage (set_fg_validation failures are
+        # silently swallowed at build time). Cosmetic — never break the read.
+        format_check_service.ensure_fg_validation(date)
+    except Exception:
+        pass
+    return {"ok": True, "tables": tables}
 
 
 @app.post("/api/step4/integrate")

@@ -186,6 +186,35 @@ def _read_col_a(ws) -> list[str]:
     return out
 
 
+def ensure_fg_validation(date: str) -> dict:
+    """Idempotently (re-)assert the native F/G dropdown on a date sheet's
+    sub-table area.
+
+    Self-heal path: a sheet whose sub-tables were built while the Google
+    service-account credential was broken got its `set_fg_validation()`
+    batch_update swallowed by the `except: pass  # cosmetic` guards, so the
+    sheet ended up with no native F/G dropdown. Loading an existing sheet never
+    re-applied it, so the dropdown stayed missing even after creds were fixed.
+    The `/api/step4/subtables` read (hit by the 載入既有 sheet flow) calls this
+    so the dropdown re-appears on the next load once creds work.
+
+    Returns {"applied": bool, "rows": (start, end) | None}.
+    """
+    ws = sheet_service.get_worksheet(date)
+    if ws is None:
+        return {"applied": False, "rows": None}
+    subs = parse_structure(_read_col_a(ws)).get("subs") or []
+    starts = [s["subheader_row"] + 1 for s in subs if s.get("subheader_row")]
+    ends = [s["last_patient_row"] for s in subs if s.get("last_patient_row")]
+    if not starts or not ends:
+        return {"applied": False, "rows": None}
+    start, end = min(starts), max(ends)
+    from . import emr_service  # lazy: emr_service imports sheet_service
+    f_opts, g_opts = emr_service.get_fg_options()
+    sheet_service.set_fg_validation(ws, start, end + 100, f_opts, g_opts)
+    return {"applied": True, "rows": (start, end)}
+
+
 def check(date: str) -> dict:
     ws = sheet_service.get_worksheet(date)
     if ws is None:

@@ -336,3 +336,50 @@ def test_fix_respects_types_filter(monkeypatch):
     applied_kinds = [a["type"] for a in result["applied"]]
     assert "main_header_missing" in applied_kinds
     assert "subtable_count_mismatch" not in applied_kinds
+
+
+# --------------------------- ensure_fg_validation ---------------------------
+
+def test_ensure_fg_validation_no_sheet(monkeypatch):
+    monkeypatch.setattr(fcs.sheet_service, "get_worksheet", lambda d: None)
+    assert fcs.ensure_fg_validation("20260420") == {"applied": False, "rows": None}
+
+
+def test_ensure_fg_validation_no_subtables(monkeypatch):
+    monkeypatch.setattr(fcs.sheet_service, "get_worksheet", lambda d: FakeWS())
+    monkeypatch.setattr(fcs.sheet_service, "read_range",
+                        _fake_read_range(["實際住院日", "2026/04/20"]))
+    called = []
+    monkeypatch.setattr(fcs.sheet_service, "set_fg_validation",
+                        lambda *a, **k: called.append(a))
+    assert fcs.ensure_fg_validation("20260420") == {"applied": False, "rows": None}
+    assert called == []  # nothing to attach a dropdown to
+
+
+def test_ensure_fg_validation_applies_over_subtable(monkeypatch):
+    col_a = [
+        "實際住院日",
+        "2026/04/20", "2026/04/20",
+        "", "",
+        "柯呈諭（2人）",
+        "姓名",
+        "王小明", "林大美",
+    ]
+    monkeypatch.setattr(fcs.sheet_service, "get_worksheet", lambda d: FakeWS())
+    monkeypatch.setattr(fcs.sheet_service, "read_range", _fake_read_range(col_a))
+    from app.services import emr_service
+    monkeypatch.setattr(emr_service, "get_fg_options",
+                        lambda: (["STEMI", "Stable"], ["LHC", "RHC"]))
+    captured = {}
+
+    def fake_set(ws, start, end, f_opts, g_opts):
+        captured.update(ws=ws, start=start, end=end, f=f_opts, g=g_opts)
+
+    monkeypatch.setattr(fcs.sheet_service, "set_fg_validation", fake_set)
+    r = fcs.ensure_fg_validation("20260420")
+    # subheader_row=7 → start 8; last_patient_row=9 → end 9
+    assert r == {"applied": True, "rows": (8, 9)}
+    assert captured["start"] == 8
+    assert captured["end"] == 9 + 100  # +100 buffer for later-added rows
+    assert captured["f"] == ["STEMI", "Stable"]
+    assert captured["g"] == ["LHC", "RHC"]
