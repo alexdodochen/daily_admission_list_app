@@ -1214,7 +1214,7 @@ async function renderEmrResults(results, mainFixes) {
       <h3>${escape(r.doctor)} / ${escape(r.name)} ${emrName} (${escape(r.chart_no)}) ${r.error ? '⚠' : ''}</h3>
       ${r.error ? `<p class="msg err">${escape(r.error)}</p>` : ''}
       <p class="hint">${escape(demog)} &nbsp; ${visit}</p>
-      <p>${fgEditor}</p>
+      <div class="emr-fg-row">${fgEditor}</div>
       ${body}
     </div>`;
   }).join('');
