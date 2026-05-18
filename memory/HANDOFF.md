@@ -20,6 +20,11 @@
   6. Built exe (pyinstaller) + zipped → "每日入院名單 for 麒翔.zip"
      (380MB, C:\Users\dr\Downloads\Y\, outside repo). exe boots + bundled
      SA connects to Sheet (verified).
+  7. Sync-cutover follow-through: upstream.py SOURCES trimmed to {self}
+     only; base.html upstream panel → single 本 App row (was 3-repo
+     check). Topbar now only reports daily_admission_list_app.
+  8. LLM "getaddrinfo failed" the user hit = transient hospital-net DNS
+     blip; re-test now all green (llm/sheet/sched ok). Not a bug.
 
 [Current state]
   - Branch: main, clean, synced with origin/main

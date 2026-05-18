@@ -31,20 +31,12 @@
       <span id="upstream-count">0</span> 個來源有更新
     </button>
     <div id="upstream-panel" class="upstream-panel" hidden>
+      <!-- 2026-05-18 sync-source cutover: only the project repo is checked
+           now (daily-admission-list-public / Key-Schedule-APP rows removed). -->
       <div class="upstream-row" data-source="self">
         <span class="upstream-label">本 App</span>
         <span class="upstream-status">…</span>
         <button class="upstream-sync mini" data-source="self" hidden>同步</button>
-      </div>
-      <div class="upstream-row" data-source="admission">
-        <span class="upstream-label">入院清單上游</span>
-        <span class="upstream-status">…</span>
-        <button class="upstream-sync mini" data-source="admission" hidden>同步</button>
-      </div>
-      <div class="upstream-row" data-source="schedule">
-        <span class="upstream-label">排班 / Key 班上游</span>
-        <span class="upstream-status">…</span>
-        <button class="upstream-sync mini" data-source="schedule" hidden>同步</button>
       </div>
     </div>
   </div>

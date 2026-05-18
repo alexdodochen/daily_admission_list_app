@@ -86,6 +86,11 @@ class SourceSpec:
         return f"https://github.com/{self.owner}/{self.name}.git"
 
 
+# 2026-05-18: sync-source cutover (user directive). The project repo
+# `daily_admission_list_app` is now the SINGLE source of truth — the old
+# multi-repo upstream check (daily-admission-list-public / Key-Schedule-APP)
+# is retired. Only `self` remains so the topbar bar only ever reports the
+# app's own repo. See memory feedback_card1_sync_source_cutover.
 SOURCES: dict[str, SourceSpec] = {
     "self": SourceSpec(
         key="self",
@@ -95,24 +100,6 @@ SOURCES: dict[str, SourceSpec] = {
         label="本 App",
         feature="App 本體",
         kind="self",
-    ),
-    "admission": SourceSpec(
-        key="admission",
-        owner="alexdodochen",
-        name="daily-admission-list-public",
-        branch="main",
-        label="入院清單 上游",
-        feature="每日入院清單功能",
-        kind="upstream",
-    ),
-    "schedule": SourceSpec(
-        key="schedule",
-        owner="alexdodochen",
-        name="Key-Schedule-APP",
-        branch="main",
-        label="排班 / Key 班 上游",
-        feature="排班 + Key 班功能",
-        kind="upstream",
     ),
 }
 
