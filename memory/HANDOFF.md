@@ -1,70 +1,69 @@
 ============================================
-  交班文件 — Last Updated: 2026-05-17 (session end, machine B)
+  HANDOFF — Last Updated: 2026-05-18 12:30
 ============================================
 
-【本次 session 做了什麼】
-  1. 接續 5/14 session：把 machine B 的 test fix (resolve_diag OTHERS_PDI
-     對齊) rebase 到 origin 之上。origin 這 3 天已前進 Phase 11/12/13。
-  2. Rebase 衝突解法：origin 的 Phase 11-13 已獨立修好同一個 resolve_diag
-     測試 (test_resolve_diag_unknown_falls_back_to_others_pdi)，採用 origin
-     版本（命名/註解較佳），只保留 machine B 獨有的 test_resolve_diag_empty
-     ("" / 空白 → ("", "")) 補洞。rebased commit 縮成 +5 行。
-  3. 把散落 D:\public_daily_admission_app_stage 搬進
-     CV ALL APP\archive\ (5/14 做的，沿用)。
+[What this session did]
+  1. claude-skills bidirectional sync: pulled workflow-docs (EN) → local;
+     pushed local-newer skills + pci-cert (×2) → repo; restored global
+     ~/.claude/memory (42 files, was absent). claude-skills@d38113b.
+  2. Fixed dead /sched 「載入月份資料」button — app.js global `$` vs
+     inline `$` redeclare aborted whole script. IIFE-wrapped. (7a94419)
+  3. Verified Phase 13 e2e incl. real EMR (20260525, 7 pts, F/G detect +
+     NO_RECORD handling all correct, writeback 7/7).
+  4. Card 1: fully ported canonical UI from Key-Schedule-APP — VS 不值假日
+     exempt checkboxes, prev-tail cross-month box, CR 預估表, 寫入後預估
+     累計表. Backend: read_calendar_tail/previous_year_month, /init prev_tail,
+     /compute+/solve param forwarding, _build_projection helper.
+  5. Step 5 manual schedule edit (Key-Schedule-APP 7b6ccf4, LAST sync):
+     cv_solver.recompute_from_schedule + /api/sched/apply-edits + editable
+     <select> calendar + 套用手調/還原 buttons. (101f0f1)
+  6. Built exe (pyinstaller) + zipped → "每日入院名單 for 麒翔.zip"
+     (380MB, C:\Users\dr\Downloads\Y\, outside repo). exe boots + bundled
+     SA connects to Sheet (verified).
 
-【當前狀態】
-  - Branch / Worktree: main, ahead 1 (60338a9 待 push)
-  - 最新 origin commit: 1570ac2 feat: Phase 13 — F/G UX overhaul,
-    plan-section detect, Card 1 alignment, drafts
-  - 本機 HEAD: 60338a9 test: align resolve_diag tests (rebased on 1570ac2)
-  - 測試: pytest tests/ 全綠 (332 passed) — 比 5/14 的 289 多 43 個
-    (Phase 11-13 帶進來的)
-  - dev server: 未啟動
+[Current state]
+  - Branch: main, clean, synced with origin/main
+  - Latest commit: 101f0f1 (Card 1 port + Step 5) — pushed
+  - Dev server: NOT running (was killed for exe test; restart via
+    `python -m app.run` if needed)
+  - Tests: 335/335 pass
+  - exe deliverable ready at C:\Users\dr\Downloads\Y\每日入院名單 for 麒翔.zip
 
-【Phase 11/12/13 摘要 (這 3 天 machine A 做的，本 session 只 rebase 沒改)】
-  - Phase 11 (e677302): Card 2 (Key 班) 已 port — 之前最後一張 pending
-    card 完成；N-V auto-sync；auto sub-table
-  - Phase 12 (a2429fa): chart-no 強制 TEXT format；EMR 只走 mainFrame；
-    viewer 可編輯；topbar 統一
-  - Phase 13 (1570ac2): F/G UX 大改；plan-section 偵測；Card 1 對齊；drafts
+[Next steps]
+  - User manual-verify on /sched real 6月 + prefs: full solve→edit→
+    套用手調並重算 cycle + 寫入後預估累計表 render (solver slow on
+    synthetic baseline — UI-only verification per CLAUDE.md).
+  - Optional: add pure-logic tests for recompute_from_schedule +
+    apply-edits routing (not yet covered; upstream added none either).
+  - Hand the zip to 麒翔 via large-file transfer; rotate SA key when
+    he leaves (BUILD.md "Rotating credentials").
 
-【下一步該做什麼】
-  1. push 60338a9 到 origin/main (本 session 已授權，等 auto-mode 過 /
-     使用者用 ! 跑)
-  2. 使用者實機驗證 Phase 11-13 三張 card：
-     - Card 2 (Key 班) port 後第一次跑 — 確認 keyin 流程能動
-     - Phase 12 EMR mainFrame-only 改動後，Step 3 還能不能抓到 SOAP
-     - Phase 13 F/G UX 改版後，Step 4 datalist + plan-section 是否正常
-  3. Phase 10 既有待驗 (Step 1→2→3 writeback、Step 4 三層 pin) 仍未實機驗
+[Known issues / blockers]
+  - Pushing to main is gated by the auto-mode classifier each time —
+    needs explicit user "授權push" per push.
+  - exe console shows Chinese path as mojibake (cosmetic only).
 
-【已知問題 / 卡關】
-  - cathlab 靜態 JSON 在 _public_repo/app/data/static/ **本機已存在**，
-    332 passed 已證明。任何 HANDOFF 提到「從 C:\Users\dr\Downloads\Y\
-    每日入院名單 Claude\ copy 三個 JSON」= machine A 路徑，machine B 不適用。
-  - SA private key (0612bef3...) 之前外洩，使用者選不 rotate；用的是
-    dailyadmission-62eb7b48d0e0.json
-  - _public_repo stash@{0} (pre-rebase-2026-05-13) — 已驗證和 origin 重複，
-    可 drop (使用者 5/14 已授權 cleanup)
+[Don't repeat these mistakes]
+  - Sub-page extending base.html → IIFE-wrap inline script or app.js
+    global `$` collision kills it. [[feedback-subpage-iife-scope]]
+  - Git Bash `tar` treats `C:/...` as remote host → use Windows
+    `tar.exe` (PowerShell) or `--force-local`.
+  - Don't direct-API-call /api/sched/solve on synthetic baseline — it
+    blocks the single uvicorn worker for minutes and holds port 8766
+    (kill by port to recover).
+  - Do NOT sync from Key-Schedule-APP anymore — updates only from
+    daily_admission_list_app. [[feedback-card1-sync-source-cutover]]
 
-【不要重蹈覆轍】
-  - 不要把 Step 2 改回 lottery [[step2-no-lottery]]
-  - 不要把 F/G 改回 `<select>` [[fg-combobox-not-select]]
-  - 不要把三層 pin 揉成一欄 [[pin-layers-separated]]
-  - 不要假設 NCKUH EMR DOM 是平的，永遠 frame-walk [[nckuh-emr-frameset]]
-  - Step 3 endpoint 永遠要 sheet writeback [[step3-must-writeback]]
-  - 跨機器讀 HANDOFF 不要直接信路徑 — C:\Users\dr\ (A) vs C:\Users\user\
-    (B)；先 ls + pytest 確認
-  - 不要把 auto-memory mirror 進 _public_repo — 是 PUBLIC repo，auto-memory
-    有姊妹專案的病歷號/姓名
-  - rebase 前一定 git fetch — origin 3 天可前進好幾個 Phase；diverged 時
-    優先採 origin 版本，只保留本機獨有的補洞
+[Relevant files]
+  - app/services/cv_solver.py (recompute_from_schedule)
+  - app/main.py (_build_projection, /api/sched/apply-edits, init/compute/
+    solve param forwarding)
+  - app/services/scheduling_service.py (previous_year_month,
+    read_calendar_tail)
+  - app/templates/schedule_gen.html (full upstream port + IIFE + Step 5)
+  - app/VERSION (bumped), packaging.spec / BUILD.md (exe build)
 
-【相關檔案】
-  - tests/test_cathlab_service.py (rebased：保留 test_resolve_diag_empty)
-  - tests/test_cathlab_enrich_plan.py (rebased：採 origin 版本)
-  - app/ — Phase 11-13 大量改動 (Card 2 keyin、EMR mainFrame、F/G UX)；
-    本 session 未改 app code，僅 rebase
-
-【重要 memory 檔】
-  - machine B auto-memory: project_cv_all_app.md (本 session 更新 — Phase
-    11-13 + card 2 done + 332 passed)
+[Important memory files]
+  - project_3card_app_state.md (Phase 14 prepended)
+  - feedback_card1_sync_source_cutover.md (NEW)
+  - feedback_subpage_iife_scope.md (NEW)
