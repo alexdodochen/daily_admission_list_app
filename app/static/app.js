@@ -1280,6 +1280,35 @@ function setupStep4() {
     });
   });
 
+  // After 抽籤 / 整合, read the written 入院序 (N-W) back from the Sheet and
+  // show it on screen so the user can eyeball the order without opening the
+  // Sheet or the 查閱 modal.
+  const ORDER_COLS = ['序號','主治醫師','病人姓名','備註(住服)','備註',
+                      '病歷號','術前診斷','預計心導管','每日續等清單','改期'];
+  async function renderOrderResult(date) {
+    const box = $('#order-result');
+    if (!box) return;
+    box.innerHTML = '<p class="hint">讀取入院序…</p>';
+    try {
+      const r = await api(`/api/sheet/read?date=${encodeURIComponent(date)}`);
+      const rows = (r.ordering || []).slice(1)
+        .filter(row => (row || []).some(c => (c || '').toString().trim()));
+      if (!rows.length) { box.innerHTML = '<p class="hint">（入院序無資料）</p>'; return; }
+      const esc = s => String(s == null ? '' : s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+      const thead = '<tr>' + ORDER_COLS.map(h => `<th>${esc(h)}</th>`).join('') + '</tr>';
+      const tbody = rows.map(row =>
+        '<tr>' + ORDER_COLS.map((_, c) => `<td>${esc(row[c] || '')}</td>`).join('') + '</tr>'
+      ).join('');
+      box.innerHTML =
+        `<h3 style="margin:14px 0 6px">入院序結果（${rows.length} 位）</h3>` +
+        `<div style="overflow-x:auto"><table class="data order-result-table">` +
+        `<thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`;
+    } catch (err) {
+      box.innerHTML = `<p class="msg err">讀取入院序失敗：${err.message}</p>`;
+    }
+  }
+
   $('#lottery4-btn').addEventListener('click', async () => {
     const date    = $('#date-input').value.trim();
     const weekday = $('#weekday').value;
@@ -1301,6 +1330,7 @@ function setupStep4() {
         const tix = (r.ticket_doctors || []).join('、') || '（無）';
         flash($('#s4-msg'),
           `✓ ${r.range}（病人 pin ${r.pinned_patients} / 醫師 pin ${r.pinned_doctors}；抽籤表 ${weekday}：${tix}）`, 'ok');
+        await renderOrderResult(date);
       } catch (err) {
         flash($('#s4-msg'), '✗ ' + err.message, 'err');
       }
@@ -1316,6 +1346,7 @@ function setupStep4() {
       try {
         const r = await api('/api/step4/integrate', { method: 'POST', body: fd });
         flash($('#s4-msg'), `✓ 已整合 ${r.rows} 筆到 ${r.range}`, 'ok');
+        await renderOrderResult(date);
       } catch (err) {
         flash($('#s4-msg'), '✗ ' + err.message, 'err');
       }
