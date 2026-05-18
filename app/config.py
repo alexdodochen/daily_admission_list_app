@@ -121,6 +121,44 @@ def _load_bundled_defaults() -> dict:
         return {}
 
 
+def _detect_sa() -> Optional[Path]:
+    """Find a service-account JSON the user dropped in, in priority order.
+
+    Public CI release builds ship WITHOUT a bundled credential (the SA must
+    never land in a public GitHub Release). The shared SA is delivered to
+    the user as a single file via a private channel; they drop it next to
+    the exe (intuitive) and we migrate it into the persistent DATA_DIR so
+    it SURVIVES every auto-update (the exe folder is replaced wholesale).
+
+    Order:
+      1. DATA_DIR/service_account.json   — persistent, survives updates
+      2. <exe>/service_account.json      — intuitive drop spot (frozen)
+      3. <exe>/user_data/service_account.json  — legacy layout
+      4. BUNDLED_SA                      — only in hand-built (non-CI) zips
+    """
+    persistent = DATA_DIR / "service_account.json"
+    if persistent.exists():
+        return persistent
+
+    candidates = []
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).parent
+        candidates += [exe_dir / "service_account.json",
+                       exe_dir / "user_data" / "service_account.json"]
+    for c in candidates:
+        if c.exists():
+            # Migrate into DATA_DIR so the next auto-update keeps it.
+            try:
+                DATA_DIR.mkdir(parents=True, exist_ok=True)
+                persistent.write_bytes(c.read_bytes())
+                return persistent
+            except Exception:
+                return c
+    if BUNDLED_SA.exists():
+        return BUNDLED_SA
+    return None
+
+
 def _apply_bundled(cfg: AppConfig, user_keys: set[str]) -> AppConfig:
     """Fill fields from the bundle for any key the user didn't explicitly set.
 
@@ -132,8 +170,10 @@ def _apply_bundled(cfg: AppConfig, user_keys: set[str]) -> AppConfig:
     for k in _BUNDLE_KEYS:
         if k in defaults and k not in user_keys:
             setattr(cfg, k, str(defaults[k]))
-    if "google_creds_path" not in user_keys and BUNDLED_SA.exists():
-        cfg.google_creds_path = str(BUNDLED_SA)
+    if "google_creds_path" not in user_keys:
+        sa = _detect_sa()
+        if sa is not None:
+            cfg.google_creds_path = str(sa)
     return cfg
 
 
@@ -148,7 +188,20 @@ def bundled_flags() -> dict:
         "schedule_sheet_id":   "schedule_sheet_id" in defaults,
         "emr_base_url":        "emr_base_url" in defaults,
         "cathlab_base_url":    "cathlab_base_url" in defaults,
-        "google_creds_path":   BUNDLED_SA.exists(),
+        "google_creds_path":   _detect_sa() is not None,
+    }
+
+
+def sa_status() -> dict:
+    """For the settings page: where the SA is (if found) + the exact path
+    the user should drop service_account.json into so it survives updates.
+    """
+    sa = _detect_sa()
+    return {
+        "found": sa is not None,
+        "path": str(sa) if sa else "",
+        "drop_dir": str(DATA_DIR),
+        "drop_file": str(DATA_DIR / "service_account.json"),
     }
 
 

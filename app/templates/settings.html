@@ -56,16 +56,27 @@
     </fieldset>
 
     <fieldset>
-      <legend>2. Google Sheet{% if bundled.sheet_id or bundled.google_creds_path %} <span class="bundled-badge">系統預設</span>{% endif %}</legend>
-      {% if bundled.google_creds_path %}
-      <p class="hint">✓ Service account JSON 已由系統內建，不需填寫。</p>
+      <legend>2. Google Sheet{% if bundled.sheet_id or sa.found %} <span class="bundled-badge">系統預設</span>{% endif %}</legend>
+      {% if sa.found %}
+      <p class="hint">✓ 已偵測到 Google 憑證（service account JSON），不需填寫。</p>
+      <p class="hint" style="font-size:11px;color:#888">來源：<code>{{ sa.path }}</code></p>
       <input type="hidden" name="google_creds_path" value="{{ cfg.google_creds_path }}">
       {% else %}
-      <label>Service account JSON 絕對路徑
-        <input name="google_creds_path" value="{{ cfg.google_creds_path }}" placeholder="例：C:\Users\you\sigma-xxxxx.json">
-      </label>
-      <details class="hint">
-        <summary>沒有 service account JSON？點這裡看怎麼申請（一次性，~5 分鐘）</summary>
+      <div class="hint" style="border:1px solid #f5c2c7;background:#fff5f5;padding:10px;border-radius:6px">
+        <b>尚未偵測到 Google 憑證。</b>請把管理者私下給你的 <code>service_account.json</code>
+        放進這個資料夾（放好後重開 App 即可，<u>之後每次「更新」都不會被蓋掉</u>）：
+        <div style="margin:6px 0;padding:6px 8px;background:#fff;border:1px dashed #bbb;border-radius:4px;word-break:break-all">
+          <code id="sa-drop-dir">{{ sa.drop_dir }}</code>
+          <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('sa-drop-dir').textContent)"
+                  style="font-size:11px;margin-left:6px">複製路徑</button>
+        </div>
+        檔名必須正好是 <code>service_account.json</code>。這個資料夾不存在的話自己貼上路徑去開（會自動建立）。
+      </div>
+      <details class="hint" style="margin-top:8px">
+        <summary>進階：自己指定其他路徑 / 自己申請一份 service account</summary>
+        <label>Service account JSON 絕對路徑
+          <input name="google_creds_path" value="{{ cfg.google_creds_path }}" placeholder="例：C:\Users\you\service_account.json">
+        </label>
         <ol>
           <li>到 <a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a> 登入。</li>
           <li>左上選一個 project（沒有就「新增專案」，名稱隨便）。</li>
