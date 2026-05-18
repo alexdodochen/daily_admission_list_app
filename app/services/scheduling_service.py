@@ -24,6 +24,7 @@ __all__ = [
     "get_sheet", "reset_cache", "connection_check",
     "write_calendar_sheet", "write_monthly_stats",
     "load_cumulative_stats", "update_cumulative_stats",
+    "previous_year_month", "read_calendar_tail",
     "DEFAULT_MONTHLY_HEADERS", "CUMULATIVE_TAB",
 ]
 
@@ -85,6 +86,49 @@ def _ensure_worksheet(sheet, title: str, rows: int, cols: int):
     except gspread.exceptions.WorksheetNotFound:
         ws = sheet.add_worksheet(title=title, rows=rows, cols=cols)
     return ws
+
+
+def previous_year_month(year: int, month: int) -> tuple[int, int]:
+    """(year, month) of the calendar month immediately before (year, month)."""
+    return (year - 1, 12) if month == 1 else (year, month - 1)
+
+
+def read_calendar_tail(sheet, year: int, month: int, n: int = 2) -> dict:
+    """Read the last `n` filled days from the {YYYYMM} calendar tab.
+
+    Returns {date: doctor_name}. Empty dict if the tab doesn't exist (e.g.
+    the previous month was never written through this app). Used by the
+    solver for cross-month rules (不連兩天 / QOD across the month boundary).
+
+    Ported verbatim from CV-Schedulling-APP/gsheet_io.read_calendar_tail —
+    the calendar layout written by `write_calendar_sheet` is identical
+    (header row 0, then per week: date_row at 2*r+1, name_row at 2*r+2).
+    """
+    sheet_name = f"{year}{month:02d}"
+    try:
+        ws = sheet.worksheet(sheet_name)
+    except gspread.exceptions.WorksheetNotFound:
+        return {}
+    all_values = ws.get_all_values()
+    if not all_values or len(all_values) < 2:
+        return {}
+
+    month_cal = calendar.monthcalendar(year, month)
+    result: dict = {}
+    for r_idx, week in enumerate(month_cal):
+        name_row_idx = r_idx * 2 + 2  # header row 0; date 2r+1; name 2r+2
+        if name_row_idx >= len(all_values):
+            break
+        name_row = all_values[name_row_idx]
+        for c_idx, day in enumerate(week):
+            if day == 0 or c_idx >= len(name_row):
+                continue
+            name = (name_row[c_idx] or "").strip()
+            if name:
+                result[date(year, month, day)] = name
+
+    sorted_dates = sorted(result.keys(), reverse=True)
+    return {d: result[d] for d in sorted_dates[:n]}
 
 
 def write_calendar_sheet(

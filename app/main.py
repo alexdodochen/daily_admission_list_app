@@ -802,6 +802,48 @@ def _serialize_schedule(schedule: dict) -> list[dict]:
     return out
 
 
+def _build_projection(year: int, month: int, baseline: dict,
+                      monthly_map: dict) -> tuple[list[dict], bool]:
+    """Projected 值班總數統計 AFTER writing this month.
+
+    projected = baseline − prev_contribution + new_contribution, with all
+    three components returned per cell so the UI can render the math
+    explicitly. `prev_contribution` is read off the existing
+    `{YYYYMM} 班數統計` tab (0 if first write). Shared by /api/sched/solve
+    and /api/sched/apply-edits so the projection always reflects whatever
+    schedule (solved or hand-edited) currently sits in the cache.
+    """
+    prev_monthly: dict = {}
+    try:
+        sheet = scheduling_service.get_sheet()
+        prev_monthly = scheduling_service.read_monthly_stats(
+            sheet, f"{year}{month:02d} 班數統計") or {}
+    except Exception:
+        prev_monthly = {}
+
+    KEY_PAIRS = [("平日", "平日班"), ("週五", "週五班"),
+                 ("週六", "週六班"), ("週日", "週日班"), ("假日", "假日班")]
+    projected_cum = []
+    all_names = set(baseline) | set(monthly_map) | set(prev_monthly)
+    for name in sorted(all_names):
+        b = baseline.get(name, {})
+        new = monthly_map.get(name, {})
+        prev = prev_monthly.get(name, {})
+        row = {"姓名": name}
+        prev_contrib: dict = {}
+        new_contrib: dict = {}
+        for cum_key, mon_key in KEY_PAIRS:
+            row[cum_key] = b.get(cum_key, 0) - prev.get(mon_key, 0) + new.get(mon_key, 0)
+            prev_contrib[cum_key] = prev.get(mon_key, 0)
+            new_contrib[cum_key] = new.get(mon_key, 0)
+        row["總班數"] = row["平日"] + row["週五"] + row["假日"]
+        row["baseline"] = {k: b.get(k, 0) for k, _ in KEY_PAIRS}
+        row["prev_contribution"] = prev_contrib
+        row["new_contribution"] = new_contrib
+        projected_cum.append(row)
+    return projected_cum, bool(prev_monthly)
+
+
 @app.post("/api/sched/init")
 async def api_sched_init(payload: dict):
     year = int(payload["year"])
@@ -817,9 +859,14 @@ async def api_sched_init(payload: dict):
         "stat_type": get_stat_type(d),
     } for d in days]
 
+    prev_year, prev_month = scheduling_service.previous_year_month(year, month)
+    prev_tail: dict = {}
     try:
         sheet = scheduling_service.get_sheet()
         baseline = scheduling_service.load_cumulative_stats(sheet)
+        # Last 2 filled days of the previous month → cross-month QOD / 不連兩天.
+        prev_tail = scheduling_service.read_calendar_tail(
+            sheet, prev_year, prev_month, n=2)
         sheet_ok = True
         sheet_err = ""
     except Exception as e:
@@ -838,6 +885,10 @@ async def api_sched_init(payload: dict):
             "vs": cv_solver.VS_LIST,
             "mid": cv_solver.INTER_MID,
         },
+        "prev_tail": {d.strftime("%Y-%m-%d"): n
+                      for d, n in prev_tail.items()},
+        "prev_year": prev_year,
+        "prev_month": prev_month,
         "sheet_ok": sheet_ok,
         "sheet_err": sheet_err,
     }
@@ -849,7 +900,11 @@ async def api_sched_compute(payload: dict):
     month = int(payload["month"])
     X = int(payload["X"])
     baseline = payload.get("baseline") or {}
-    targets = cv_solver.compute_initial_targets(year, month, X, baseline)
+    vs_holiday_exempt = payload.get("vs_holiday_exempt") or []
+    targets = cv_solver.compute_initial_targets(
+        year, month, X, baseline,
+        vs_holiday_exempt=vs_holiday_exempt,
+    )
     return {"ok": True, "targets": targets}
 
 
@@ -862,14 +917,19 @@ async def api_sched_solve(payload: dict):
     avoid_in = payload.get("avoid", {})
     baseline = payload.get("baseline") or {}
     jk_target = payload.get("jk_target")
+    prev_tail_in = payload.get("prev_tail") or {}
+    vs_holiday_exempt = payload.get("vs_holiday_exempt") or []
 
     fixed = {_parse_iso_date(k): v for k, v in fixed_in.items() if v}
     avoid = {n: [_parse_iso_date(d) for d in dates]
              for n, dates in avoid_in.items() if dates}
+    prev_tail = {_parse_iso_date(k): v for k, v in prev_tail_in.items() if v}
 
     result = cv_solver.solve_month(
         year, month, X, fixed, avoid, baseline,
         jk_target=int(jk_target) if jk_target is not None else None,
+        prev_tail=prev_tail,
+        vs_holiday_exempt=vs_holiday_exempt,
     )
     if result is None:
         return {"ok": False, "error": "找不到可行排班，請放寬偏好或檢查 X / 預先指定的日期"}
@@ -881,7 +941,12 @@ async def api_sched_solve(payload: dict):
         "stats_rows": result["stats_rows"],
         "monthly_stats_map": result["monthly_stats_map"],
         "baseline": baseline,
+        "targets": result["targets"],
     }
+
+    projected_cum, had_prev_monthly = _build_projection(
+        year, month, baseline, result["monthly_stats_map"])
+
     return {
         "ok": True,
         "schedule": _serialize_schedule(result["schedule"]),
@@ -895,7 +960,70 @@ async def api_sched_solve(payload: dict):
             "cr_fri_target": result["targets"]["cr_fri_target"],
             "cr_sat_target": result["targets"]["cr_sat_target"],
             "cr_sun_target": result["targets"]["cr_sun_target"],
+            "cr_holiday_target": result["targets"].get("cr_holiday_target", {}),
         },
+        "projected_cumulative": projected_cum,
+        "had_prev_monthly": had_prev_monthly,
+    }
+
+
+@app.post("/api/sched/apply-edits")
+async def api_sched_apply_edits(payload: dict):
+    """Apply the user's manual tweaks to the solved schedule.
+
+    Step 5 lets the user hand-edit the calendar (swap who's on which day)
+    after the solver runs. This endpoint takes the FINAL edited
+    `{iso_date: name}` map, recomputes stats / QOD / projection from it
+    (cv_solver.recompute_from_schedule — same classification the solver
+    uses), and overwrites the cached schedule so /api/sched/write and
+    /api/sched/handoff-to-keyin emit the edited result, not the original
+    solve. Requires a prior /api/sched/solve (the cache holds baseline +
+    targets, which a bare edit doesn't carry).
+    """
+    year = int(payload["year"])
+    month = int(payload["month"])
+    sched_in = payload.get("schedule") or {}
+    cache_key = f"{year}{month:02d}"
+    cached = _solve_cache.get(cache_key)
+    if cached is None:
+        return {"ok": False, "error": "請先按 solve 產生班表，再做手動微調"}
+
+    # Empty cells (user cleared a day) are simply dropped — that day stays
+    # unassigned and is excluded from every stat, mirroring a blank cell.
+    schedule = {_parse_iso_date(k): v.strip()
+                for k, v in sched_in.items() if v and v.strip()}
+
+    result = cv_solver.recompute_from_schedule(year, month, schedule)
+
+    cached.update({
+        "schedule": result["schedule"],
+        "stats_rows": result["stats_rows"],
+        "monthly_stats_map": result["monthly_stats_map"],
+    })
+
+    baseline = cached.get("baseline") or {}
+    projected_cum, had_prev_monthly = _build_projection(
+        year, month, baseline, result["monthly_stats_map"])
+    targets = cached.get("targets") or {}
+
+    return {
+        "ok": True,
+        "edited": True,
+        "schedule": _serialize_schedule(result["schedule"]),
+        "stats_rows": result["stats_rows"],
+        "qod_violations": [
+            {"date": d.strftime("%Y-%m-%d"), "name": n}
+            for d, n in result["qod_violations"]
+        ],
+        "qod_relaxed": result["qod_relaxed"],
+        "targets": {
+            "cr_fri_target": targets.get("cr_fri_target", {}),
+            "cr_sat_target": targets.get("cr_sat_target", {}),
+            "cr_sun_target": targets.get("cr_sun_target", {}),
+            "cr_holiday_target": targets.get("cr_holiday_target", {}),
+        },
+        "projected_cumulative": projected_cum,
+        "had_prev_monthly": had_prev_monthly,
     }
 
 

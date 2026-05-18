@@ -3,43 +3,67 @@
 {% block head_extras %}
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
-  // Disable Tailwind preflight so it doesn't reset the base.html topbar.
+  // Disable Tailwind preflight so it does not reset the base.html topbar.
   tailwind.config = { corePlugins: { preflight: false } };
 </script>
-<style>
-  .day-btn { transition: all 0.15s; }
-  .day-btn:hover:not(:disabled) { transform: translateY(-1px); }
-  .day-btn.selected { background-color: #4f46e5 !important; color: white !important; border-color: #4f46e5 !important; }
-  .day-btn.holiday { background-color: #fef3c7; }
-  .day-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .step-collapsed .step-body { display: none; }
-  .step-active { border-color: #4f46e5; }
-  .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
-  .cal-cell { min-height: 64px; padding: 4px 6px; border-radius: 6px; border: 1px solid #e5e7eb; font-size: 12px; }
-  .cal-cell.holiday { background-color: #fef3c7; border-color: #fbbf24; }
-  .cal-cell .doc { font-weight: 600; color: #4f46e5; font-size: 13px; margin-top: 4px; }
-  .cal-cell.qod { background-color: #fecaca; }
-</style>
+  <style>
+    .day-btn { transition: all 0.15s; }
+    .day-btn:hover:not(:disabled) { transform: translateY(-1px); }
+    /* 「刷紫」效果：實心深紫 + 白字，務求一眼看得出選了哪幾天（假日黃底也蓋掉） */
+    .day-btn.selected {
+      background-color: #4f46e5 !important;
+      background-image: none !important;
+      border-color: #3730a3 !important;
+      box-shadow: inset 0 0 0 2px #3730a3;
+      color: #ffffff !important;
+      font-weight: 700;
+    }
+    .day-btn.selected span { color: #ffffff !important; }
+    .day-btn.holiday { background-color: #fef3c7; }
+    .day-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .step-collapsed .step-body { display: none; }
+    .step-active { border-color: #4f46e5; }
+    .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+    .cal-cell { min-height: 64px; padding: 4px 6px; border-radius: 6px; border: 1px solid #e5e7eb; font-size: 12px; }
+    .cal-cell.holiday { background-color: #fef3c7; border-color: #fbbf24; }
+    .cal-cell .doc { font-weight: 600; color: #4f46e5; font-size: 13px; margin-top: 4px; }
+    /* QOD 違規格 — 用粗紅框搭配淺紅背景 (假日格仍保留黃底，僅換紅框) */
+    .cal-cell.qod {
+      border: 3px solid #dc2626 !important;
+      background-color: #fecaca;
+      box-shadow: 0 0 0 1px #dc2626 inset;
+    }
+    .cal-cell.qod.holiday { background-color: #fef3c7; }
+    .cal-cell.qod .doc { color: #b91c1c; }
+    .cal-cell .doc-edit {
+      width: 100%; margin-top: 4px; padding: 1px 2px;
+      font-weight: 600; color: #4f46e5; font-size: 13px;
+      border: 1px solid #d1d5db; border-radius: 4px; background: #fff;
+    }
+    .cal-cell .doc-edit.changed { color: #b45309; border-color: #f59e0b; background: #fffbeb; }
+    .cal-cell.qod .doc-edit { color: #b91c1c; border-color: #dc2626; }
+  </style>
 {% endblock %}
 
 {% block body %}
-<div class="max-w-6xl mx-auto px-4 py-6 space-y-6 bg-gray-50">
+<main class="max-w-6xl mx-auto px-4 py-6 space-y-6">
 
-  <!-- ── 💾 草稿 panel ───────────────────────────────────────────── -->
-  <section class="bg-white rounded-xl shadow border border-amber-200 p-3 flex flex-wrap items-center gap-2 text-sm">
-    <span class="font-semibold text-amber-700">💾 草稿</span>
-    <input id="draft-name" placeholder="草稿名稱（例如 6月初稿）"
-      class="border border-gray-300 rounded px-2 py-1 text-xs flex-shrink-0" style="min-width:160px">
-    <button id="draft-save"
-      class="bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold px-3 py-1 rounded">存草稿</button>
-    <select id="draft-list" class="border border-gray-300 rounded px-2 py-1 text-xs" style="min-width:220px">
-      <option value="">— 選擇載入 —</option>
-    </select>
-    <button id="draft-load"
-      class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1 rounded">載入</button>
-    <button id="draft-delete"
-      class="bg-red-500 hover:bg-red-600 text-white text-xs font-semibold px-3 py-1 rounded">刪除</button>
-    <span id="draft-status" class="text-xs text-gray-500 ml-2"></span>
+  <!-- ── 草稿列：任一步都能存 / 讀 / 刪 ────────────────────────── -->
+  <section id="draft-bar" class="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center flex-wrap gap-2 text-sm">
+    <span class="font-semibold text-amber-800">💾 草稿（本機）</span>
+    <button id="btn-save-draft" type="button"
+      class="bg-amber-600 hover:bg-amber-700 text-white px-3 py-1 rounded text-xs font-semibold">
+      存目前進度
+    </button>
+    <button id="btn-load-draft" type="button"
+      class="bg-white border border-amber-400 text-amber-700 hover:bg-amber-100 px-3 py-1 rounded text-xs font-semibold">
+      讀草稿
+    </button>
+    <button id="btn-delete-draft" type="button"
+      class="bg-white border border-red-400 text-red-700 hover:bg-red-50 px-3 py-1 rounded text-xs font-semibold">
+      刪草稿
+    </button>
+    <span id="draft-status" class="text-xs text-gray-500 ml-auto"></span>
   </section>
 
   <!-- ── Step 1 — 選月份 ────────────────────────────────────────── -->
@@ -89,6 +113,11 @@
         </div>
       </div>
 
+      <div id="prev-tail-box" class="hidden bg-rose-50 border border-rose-200 rounded-lg p-3 text-sm">
+        <div class="font-semibold text-rose-800 mb-1">上月末值班（跨月限制）</div>
+        <div id="prev-tail-content" class="text-rose-700"></div>
+      </div>
+
       <details class="bg-gray-50 rounded-lg p-3">
         <summary class="cursor-pointer text-sm font-semibold text-gray-600">月曆預覽（假日黃底）</summary>
         <div id="month-cal-preview" class="calendar-grid mt-3"></div>
@@ -128,24 +157,44 @@
     </div>
     <div class="step-body grid md:grid-cols-2 gap-5 text-sm">
       <div>
-        <h3 class="font-semibold text-gray-700 mb-2">VS 班數（每位）</h3>
+        <div class="flex items-baseline justify-between mb-2">
+          <h3 class="font-semibold text-gray-700">VS 班數（每位）</h3>
+          <span class="text-[11px] text-gray-500">勾選＝本月不值假日班（缺額由 CR 吸收）</span>
+        </div>
+        <table class="w-full border border-gray-200 rounded-lg overflow-hidden">
+          <thead class="bg-gray-100"><tr>
+            <th class="px-3 py-2 text-left">姓名</th>
+            <th class="px-3 py-2">不值假日</th>
+            <th class="px-3 py-2">假日</th><th class="px-3 py-2">平日</th><th class="px-3 py-2">合計</th>
+          </tr></thead>
+          <tbody id="vs-table"></tbody>
+        </table>
+
+        <h3 class="font-semibold text-gray-700 mt-4 mb-2">建寬 班數</h3>
         <table class="w-full border border-gray-200 rounded-lg overflow-hidden">
           <thead class="bg-gray-100"><tr>
             <th class="px-3 py-2 text-left">姓名</th><th class="px-3 py-2">假日</th><th class="px-3 py-2">平日</th><th class="px-3 py-2">合計</th>
           </tr></thead>
-          <tbody id="vs-table"></tbody>
+          <tbody id="jk-table"></tbody>
         </table>
-        <p class="text-xs text-gray-500 mt-2">
-          建寬 平日：<span id="jk-count" class="font-bold text-indigo-600">—</span> 班
-        </p>
       </div>
       <div>
-        <h3 class="font-semibold text-gray-700 mb-2">CR 平衡 target（依累計分配）</h3>
+        <h3 class="font-semibold text-gray-700 mb-2">CR 預估值班總數（扣除 VS / 展瀚 / 建寬 後）</h3>
+        <div id="cr-summary" class="bg-indigo-50 border border-indigo-200 rounded-lg p-3 mb-3 text-xs text-gray-600">—</div>
+        <table class="w-full border border-gray-200 rounded-lg overflow-hidden mb-3">
+          <thead class="bg-gray-100"><tr>
+            <th class="px-3 py-2 text-left">姓名</th>
+            <th class="px-3 py-2">假日</th><th class="px-3 py-2">平日</th><th class="px-3 py-2">合計</th>
+          </tr></thead>
+          <tbody id="cr-projected-table"></tbody>
+        </table>
+
+        <h3 class="font-semibold text-gray-700 mb-2">CR 平衡 target（依累計分配，solve 後填入）</h3>
         <table class="w-full border border-gray-200 rounded-lg overflow-hidden">
           <thead class="bg-gray-100"><tr>
-            <th class="px-3 py-2 text-left">姓名</th><th class="px-3 py-2">週五</th><th class="px-3 py-2">週六</th><th class="px-3 py-2">週日</th>
+            <th class="px-3 py-2 text-left">姓名</th><th class="px-3 py-2">週五</th><th class="px-3 py-2">週六</th><th class="px-3 py-2">週日</th><th class="px-3 py-2">假日總</th>
           </tr></thead>
-          <tbody id="cr-target-table"><tr><td colspan="4" class="text-center text-gray-400 py-2 text-xs">由 solver 決定</td></tr></tbody>
+          <tbody id="cr-target-table"><tr><td colspan="5" class="text-center text-gray-400 py-2 text-xs">由 solver 決定</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -181,7 +230,8 @@
       <div id="qod-warn" class="hidden bg-red-50 border border-red-300 text-red-800 rounded-lg px-4 py-3 text-sm"></div>
 
       <div>
-        <h3 class="font-semibold text-gray-700 mb-2">排班月曆</h3>
+        <h3 class="font-semibold text-gray-700 mb-1">排班月曆</h3>
+        <p class="text-[11px] text-gray-500 mb-2">每格醫師可直接下拉手動微調；改過的格子會變琥珀色。調完按下方 <b>✎ 套用手調並重算</b>，統計與預估累計會依「生成 + 你手調」後的最終結果重算，再按寫入。</p>
         <div class="grid grid-cols-7 gap-1 text-xs font-medium text-gray-500 mb-1 text-center">
           <div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div><div>日</div>
         </div>
@@ -190,7 +240,7 @@
 
       <div>
         <h3 class="font-semibold text-gray-700 mb-2">班數統計</h3>
-        <table class="w-full border border-gray-200 rounded-lg overflow-hidden text-xs">
+        <table class="w-full border border-gray-200 rounded-lg overflow-hidden text-sm">
           <thead class="bg-gray-100"><tr>
             <th class="px-3 py-2 text-left">姓名</th>
             <th class="px-3 py-2">平日班</th><th class="px-3 py-2">週五班</th>
@@ -201,54 +251,108 @@
         </table>
       </div>
 
-      <div class="flex items-center gap-3 pt-3 border-t border-gray-100 flex-wrap">
+      <div>
+        <div class="flex items-baseline justify-between mb-2">
+          <h3 class="font-semibold text-gray-700">預估值班總數統計（寫入後）</h3>
+          <span id="projected-note" class="text-[11px] text-gray-500"></span>
+        </div>
+        <table class="w-full border border-gray-200 rounded-lg overflow-hidden text-sm">
+          <thead class="bg-gray-100"><tr>
+            <th class="px-3 py-2 text-left">姓名</th>
+            <th class="px-3 py-2">平日</th>
+            <th class="px-3 py-2">週五</th>
+            <th class="px-3 py-2">週六</th>
+            <th class="px-3 py-2">週日</th>
+            <th class="px-3 py-2">假日</th>
+            <th class="px-3 py-2">總班數</th>
+          </tr></thead>
+          <tbody id="projected-cum-table"></tbody>
+        </table>
+        <p class="text-[11px] text-gray-400 mt-1">
+          顯示「寫入後」每位醫師在 <code>值班總數統計</code> 表的預估值。每格上面是預估值，下面把「<code>原累計 <span class="text-red-700">−舊版本月</span> <span class="text-emerald-700">+新版本月</span></code>」拆給你看。如果同一個月重新跑 solver，會自動把舊版的本月貢獻減掉、再加上新版的，這樣你 visually 確認過再按寫入。
+        </p>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-3 pt-3 border-t border-gray-100">
+        <button id="btn-apply-edits"
+          class="bg-amber-500 hover:bg-amber-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">
+          ✎ 套用手調並重算
+        </button>
+        <button id="btn-revert-edits"
+          class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold px-4 py-2 rounded-lg text-sm transition">
+          ↺ 還原 solver 原班
+        </button>
+        <span id="edit-status" class="text-sm text-gray-500"></span>
+        <span class="flex-1"></span>
         <button id="btn-write"
           class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-5 py-2 rounded-lg text-sm transition">
           ✓ 寫入 Google Sheet
         </button>
         <button id="btn-resolve"
-          class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold px-4 py-2 rounded-lg text-sm transition"
-          title="solver 帶隨機 jitter，重跑會得到不同的合規班表（可挑備案）">
-          🎲 重新跑 solver（取得不同班表）
+          class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold px-4 py-2 rounded-lg text-sm transition">
+          重新跑 solver
         </button>
         <button id="btn-handoff-keyin"
-          class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition"
-          title="把目前 solver 結果丟給 Key 班 卡片，自動填好 VS/CR/假日">
-          🔑 前往 Key 班（帶入此月排班）
+          class="bg-cyan-600 hover:bg-cyan-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition">
+          下一步：到 key 班 →
         </button>
         <span id="write-status" class="text-sm text-gray-500"></span>
       </div>
     </div>
   </section>
 
-</div>
+</main>
 {% endblock %}
 
 {% block scripts %}
 <script>
-// IIFE-scoped: base.html loads app.js (which declares a global `$` =
-// querySelector) before this block. This page's `$` is getElementById and
-// is called with bare ids — keep them isolated so the two don't collide
-// ("Identifier '$' has already been declared" would abort this whole script,
-//  silently breaking every button incl. 載入月份資料).
+// IIFE-scoped: base.html loads app.js (global `$` = querySelector) before
+// this block. This page's `$` is getElementById, called with bare ids —
+// keep isolated or a redeclare SyntaxError aborts the whole script.
 (function () {
 const DOCTORS_CR  = {{ doctors_cr  | tojson }};
 const DOCTORS_VS  = {{ doctors_vs  | tojson }};
 const DOCTORS_MID = {{ doctors_mid | tojson }};
 
+// ── Application state ─────────────────────────────────────────────
 const state = {
   year: null, month: null,
-  calendar: [], baseline: {},
-  H: 0, W: 0, X: null,
-  prefs: {},
+  prevYear: null, prevMonth: null,
+  calendar: [],   // [{date, day, weekday, is_holiday, stat_type}, ...]
+  baseline: {},
+  prevTail: {},   // {dateStr: name} — last 2 days of previous month for cross-month rules
+  H: 0, W: 0,
+  X: null,
+  targets: null,  // result of /api/sched/compute — vs_per_doctor, jk_count, ...
+  vsHolidayExempt: [],  // VS names not taking any holiday shift this month
+  prefs: {},      // {doctorName: Set<dateStr>} for VS/展瀚/建寬: prefer; for CR: avoid
   lastSolve: null,
+  solverOriginal: null,  // untouched solver output, for 還原 solver 原班
 };
-const WEEK_LABELS = ['一','二','三','四','五','六','日'];
+let _currentStep = 1;
 
+const WEEK_LABELS = ['一','二','三','四','五','六','日'];
+// Every doctor that can appear in a hand-edited cell (CR + 中級 + VS).
+const ALL_DOCTORS_FLAT = [...DOCTORS_CR, ...DOCTORS_MID, ...DOCTORS_VS];
+function docOptions(selected) {
+  return ['<option value=""></option>']
+    .concat(ALL_DOCTORS_FLAT.map(n =>
+      `<option value="${n}"${n === selected ? ' selected' : ''}>${n}</option>`))
+    .join('');
+}
+
+// ── helpers ─────────────────────────────────────────────────────────
 function $(id) { return document.getElementById(id); }
 function pad2(n) { return String(n).padStart(2, '0'); }
+function addDays(dateStr, n) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + n);
+  return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
+}
 
 function showStep(n) {
+  _currentStep = n;
   for (let i = 1; i <= 5; i++) {
     const sec = $(`step${i}`);
     if (i <= n) sec.classList.remove('hidden');
@@ -261,9 +365,9 @@ function setStatus(id, text, kind='info') {
   const el = $(id);
   el.textContent = text;
   el.className = 'text-sm';
-  if (kind === 'ok')        el.classList.add('text-emerald-600');
+  if (kind === 'ok')   el.classList.add('text-emerald-600');
   else if (kind === 'err')  el.classList.add('text-red-600');
-  else                       el.classList.add('text-gray-500');
+  else el.classList.add('text-gray-500');
 }
 
 async function postJSON(url, body) {
@@ -275,6 +379,7 @@ async function postJSON(url, body) {
   return await res.json();
 }
 
+// ── Step 1: load month data ─────────────────────────────────────────
 $('btn-init').addEventListener('click', async () => {
   const year = parseInt($('year').value);
   const month = parseInt($('month').value);
@@ -287,13 +392,16 @@ $('btn-init').addEventListener('click', async () => {
     setStatus('init-status', data.error || '載入失敗', 'err'); return;
   }
   state.year = data.year; state.month = data.month;
+  state.prevYear = data.prev_year; state.prevMonth = data.prev_month;
   state.calendar = data.calendar; state.baseline = data.baseline;
+  state.prevTail = data.prev_tail || {};
   state.H = data.H; state.W = data.W;
   $('metric-h').textContent = data.H;
   $('metric-w').textContent = data.W;
   $('metric-sheet').textContent = `${data.year}${pad2(data.month)}`;
   renderMonthPreview();
   renderBaseline();
+  renderPrevTail(data.prev_year, data.prev_month);
   if (!data.sheet_ok) {
     setStatus('init-status', `⚠️ 無法連 Google Sheet（baseline 全 0 帶入）— ${data.sheet_err}`, 'err');
   } else {
@@ -304,18 +412,57 @@ $('btn-init').addEventListener('click', async () => {
 
 function renderMonthPreview() {
   const grid = $('month-cal-preview');
+  // Insert blanks for days before the 1st
   const first = new Date(state.year, state.month - 1, 1);
-  const startWeekday = (first.getDay() + 6) % 7;
+  const startWeekday = (first.getDay() + 6) % 7; // Mon=0
   let html = '';
-  WEEK_LABELS.forEach(w => {
+  ['一','二','三','四','五','六','日'].forEach(w => {
     html += `<div class="text-center text-xs font-medium text-gray-500">${w}</div>`;
   });
   for (let i = 0; i < startWeekday; i++) html += '<div class="cal-cell" style="visibility:hidden"></div>';
   state.calendar.forEach(d => {
     const cls = d.is_holiday ? 'cal-cell holiday' : 'cal-cell';
-    html += `<div class="${cls}"><div class="font-bold">${d.day}</div><div class="text-[10px] text-gray-500">${d.stat_type}</div></div>`;
+    const holidayLine = d.holiday_name
+      ? `<div class="text-[10px] text-red-600 font-semibold leading-tight">${d.holiday_name}</div>`
+      : '';
+    html += `<div class="${cls}"><div class="font-bold">${d.day}</div>${holidayLine}<div class="text-[10px] text-gray-500">${d.stat_type}</div></div>`;
   });
   grid.innerHTML = html;
+}
+
+function renderPrevTail(prevYear, prevMonth) {
+  const box = $('prev-tail-box');
+  const content = $('prev-tail-content');
+  const entries = Object.entries(state.prevTail || {});
+  if (entries.length === 0) {
+    box.classList.add('hidden');
+    return;
+  }
+  // entries[i] = [dateStr, name]; sort ascending by date
+  entries.sort((a, b) => a[0].localeCompare(b[0]));
+  const lines = entries.map(([d, n]) => {
+    const day = parseInt(d.split('-')[2], 10);
+    return `${prevMonth}/${day} <b>${n}</b>`;
+  });
+  // Compute the implied exclusions in this month: last day → day 1 (back-to-back),
+  // last 2 days → day 1 / day 2 (QOD)
+  const last = entries[entries.length - 1];
+  const lastName = last[1];
+  const exclusions = [`<b>${state.month}/1</b> 不可排 <b>${lastName}</b>（連兩天）`];
+  // last day → +2 = day 2 QOD
+  exclusions.push(`<b>${state.month}/2</b> 不可排 <b>${lastName}</b>（QOD）`);
+  if (entries.length >= 2) {
+    const prevName = entries[0][1];
+    if (prevName !== lastName) {
+      exclusions.push(`<b>${state.month}/1</b> 不可排 <b>${prevName}</b>（QOD）`);
+    } else {
+      exclusions[0] += `；<b>${state.month}/1</b> 同名 QOD 也排除`;
+    }
+  }
+  content.innerHTML =
+    `${prevYear}/${prevMonth} 末值班：${lines.join('、')}<br>` +
+    `→ 已自動排除：${exclusions.join('、')}`;
+  box.classList.remove('hidden');
 }
 
 function renderBaseline() {
@@ -335,38 +482,245 @@ function renderBaseline() {
   });
   $('baseline-body').innerHTML = body;
   $('baseline-warn').textContent = warn
-    ? '⚠️ 部分醫師在「值班總數統計」找不到 — 平衡可能不準'
+    ? '⚠️ 部分醫師在「值班總數統計」找不到 — 平衡可能不準（可能是新進醫師或姓名拼法）'
     : '';
 }
 
+// ── Step 2: compute VS / 建寬 / targets ─────────────────────────────
 $('btn-compute').addEventListener('click', async () => {
   const X = parseInt($('X').value);
   if (Number.isNaN(X) || X < 0) { alert('X 請輸入 ≥ 0 的整數'); return; }
   state.X = X;
-  const data = await postJSON('/api/sched/compute', {
-    year: state.year, month: state.month, X, baseline: state.baseline,
-  });
-  if (!data.ok) { alert('計算失敗'); return; }
-  renderTargets(data.targets);
+  await recomputeTargets();
   showStep(3);
   buildPrefsForm();
   showStep(4);
 });
 
+// Re-run /api/sched/compute with current X + vsHolidayExempt. Called whenever
+// the user toggles a 「不值假日」 checkbox so CR projection stays in sync.
+async function recomputeTargets() {
+  const data = await postJSON('/api/sched/compute', {
+    year: state.year, month: state.month, X: state.X,
+    baseline: state.baseline,
+    vs_holiday_exempt: state.vsHolidayExempt,
+  });
+  if (!data.ok) { alert('計算失敗'); return; }
+  state.targets = data.targets;
+  // Server normalised the exempt list (filtered to known VS names)
+  state.vsHolidayExempt = data.targets.vs_holiday_exempt || [];
+  renderTargets(data.targets);
+  // Step 4 chips read from state.targets.vs_per_doctor — refresh them
+  if (state.calendar.length && $('prefs-container').children.length) {
+    [...DOCTORS_VS, '展瀚', '建寬'].forEach(updatePrefCount);
+  }
+}
+
+// 取得指定 VS / 展瀚 / 建寬 應該選的（假日, 平日）數；CR 回傳 null（CR 用 avoid）
+function getTargetForName(name) {
+  if (!state.targets) return null;
+  if (DOCTORS_VS.includes(name)) {
+    const v = state.targets.vs_per_doctor[name] || {holiday: 0, weekday: 0};
+    return {holiday: v.holiday || 0, weekday: v.weekday || 0};
+  }
+  if (name === '展瀚') return {holiday: 0, weekday: state.X || 0};
+  if (name === '建寬') return {holiday: 0, weekday: state.targets.jk_count || 0};
+  return null;
+}
+
+function countSelected(name) {
+  const selected = state.prefs[name] || new Set();
+  let h = 0, w = 0;
+  selected.forEach(dateStr => {
+    const d = state.calendar.find(c => c.date === dateStr);
+    if (!d) return;
+    if (d.is_holiday) h++; else w++;
+  });
+  return {holiday: h, weekday: w};
+}
+
+function updatePrefCount(name) {
+  const target = getTargetForName(name);
+  const el = document.querySelector(`[data-target-for="${name}"]`);
+  if (!el || !target) return;
+  const got = countSelected(name);
+  const ok = got.holiday === target.holiday && got.weekday === target.weekday;
+  el.innerHTML = `已選 ${got.holiday} 假 / ${got.weekday} 平 ｜ 應選 ${target.holiday} 假 / ${target.weekday} 平`;
+  el.className = `text-[11px] ml-2 px-2 py-0.5 rounded-full ${ok ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700 font-bold'}`;
+}
+
+function validatePrefs() {
+  const errors = [];
+  [...DOCTORS_VS, '展瀚', '建寬'].forEach(name => {
+    const t = getTargetForName(name);
+    if (!t) return;
+    const got = countSelected(name);
+    if (got.holiday !== t.holiday || got.weekday !== t.weekday) {
+      errors.push(`${name}：應選 ${t.holiday} 假 / ${t.weekday} 平，目前 ${got.holiday} 假 / ${got.weekday} 平`);
+    }
+  });
+  return errors;
+}
+
+// Doctor row grouping for Step 5 stats tables.
+const DOCTOR_GROUPS = [
+  { label: 'CR',  members: ['常胤', '見賢', '麒翔'] },
+  { label: '中級', members: ['展瀚', '建寬'] },
+  { label: 'VS',  members: DOCTORS_VS },
+];
+function groupHeaderRow(label, colspan) {
+  return `<tr class="bg-gray-50 border-t border-gray-200">` +
+         `<td colspan="${colspan}" class="px-3 py-1 text-xs font-semibold text-gray-500 tracking-wider">${label}</td></tr>`;
+}
+function renderGroupedRows(rows, getName, rowFn, colspan) {
+  const byName = new Map();
+  rows.forEach(r => byName.set(getName(r), r));
+  const seen = new Set();
+  let html = '';
+  DOCTOR_GROUPS.forEach(g => {
+    const present = g.members.map(n => byName.get(n)).filter(Boolean);
+    if (!present.length) return;
+    html += groupHeaderRow(g.label, colspan);
+    present.forEach(r => {
+      html += rowFn(r);
+      seen.add(getName(r));
+    });
+  });
+  // Trailing un-grouped rows (defensive — shouldn't normally trigger)
+  const orphans = rows.filter(r => !seen.has(getName(r)));
+  if (orphans.length) {
+    html += groupHeaderRow('其他', colspan);
+    orphans.forEach(r => { html += rowFn(r); });
+  }
+  return html;
+}
+
+function renderProjectedCumulative(rows, hadPrev) {
+  const note = $('projected-note');
+  note.textContent = hadPrev
+    ? '⚠ 偵測到本月舊版班數：預估 = 累計 − 舊版本月 + 新版本月'
+    : '本月為首次寫入：預估 = 累計 + 新版本月';
+  note.className = 'text-[11px] ' + (hadPrev ? 'text-amber-600' : 'text-gray-500');
+
+  const KEYS = ['平日', '週五', '週六', '週日', '假日'];
+  // Cell layout: top line = projected value (final).
+  //              second line = explicit math: baseline (−prev) (+new)
+  // The math line lets the user verify both -prev AND +new are applied,
+  // not just a net delta. Cells where prev=0 AND new=0 stay clean.
+  function fmtCell(baseVal, prevVal, newVal, projVal) {
+    const parts = [];
+    if (prevVal) parts.push(`<span class="text-red-700">−${prevVal}</span>`);
+    if (newVal)  parts.push(`<span class="text-emerald-700">+${newVal}</span>`);
+    const math = parts.length
+      ? `<div class="text-[10px] text-gray-500 leading-tight">${baseVal} ${parts.join(' ')}</div>`
+      : '';
+    return `<td class="px-3 py-2 text-center align-top">
+              <div class="font-medium">${projVal}</div>
+              ${math}
+            </td>`;
+  }
+  const visible = rows.filter(r => {
+    const pc = r.prev_contribution || {};
+    const nc = r.new_contribution || {};
+    const touched = KEYS.some(k => (pc[k] || 0) !== 0 || (nc[k] || 0) !== 0);
+    return touched || r.總班數 !== 0;
+  });
+  const html = renderGroupedRows(
+    visible,
+    r => r.姓名,
+    r => {
+      const b = r.baseline || {};
+      const pc = r.prev_contribution || {};
+      const nc = r.new_contribution || {};
+      const touched = KEYS.some(k => (pc[k] || 0) !== 0 || (nc[k] || 0) !== 0);
+      const rowCls = touched
+        ? 'border-t border-gray-200 bg-amber-50'
+        : 'border-t border-gray-200 text-gray-400';
+      return `<tr class="${rowCls}"><td class="px-3 py-2 font-medium align-top">${r.姓名}</td>` +
+             KEYS.map(k => fmtCell(b[k] || 0, pc[k] || 0, nc[k] || 0, r[k])).join('') +
+             `<td class="px-3 py-2 text-center font-bold align-top">${r.總班數}</td></tr>`;
+    },
+    7,
+  );
+  $('projected-cum-table').innerHTML = html || '<tr><td colspan="7" class="text-center text-gray-400 py-2 text-xs">無資料</td></tr>';
+}
+
+// Toggle 「不值假日」 → rebuild exempt list and re-run compute.
+let _exemptBusy = false;
+async function onVsExemptChange() {
+  if (_exemptBusy) return;
+  _exemptBusy = true;
+  const checks = $('vs-table').querySelectorAll('input.vs-holiday-exempt');
+  checks.forEach(c => c.disabled = true);
+  state.vsHolidayExempt = [...checks]
+    .filter(c => c.checked).map(c => c.dataset.vs);
+  try {
+    await recomputeTargets();
+  } finally {
+    _exemptBusy = false;
+    // checkboxes are re-rendered inside recomputeTargets → no need to re-enable
+  }
+}
+
 function renderTargets(t) {
   let html = '';
+  const exemptSet = new Set(t.vs_holiday_exempt || []);
   DOCTORS_VS.forEach(n => {
     const v = t.vs_per_doctor[n] || {holiday: 0, weekday: 0};
     const total = v.holiday + v.weekday;
+    const exempt = exemptSet.has(n);
     html += `<tr class="border-t border-gray-200"><td class="px-3 py-2 font-medium">${n}</td>` +
-            `<td class="px-3 py-2 text-center">${v.holiday}</td>` +
+            `<td class="px-3 py-2 text-center">` +
+              `<input type="checkbox" class="vs-holiday-exempt" data-vs="${n}" ${exempt ? 'checked' : ''}>` +
+            `</td>` +
+            `<td class="px-3 py-2 text-center ${exempt ? 'text-gray-400' : ''}">${v.holiday}</td>` +
             `<td class="px-3 py-2 text-center">${v.weekday}</td>` +
             `<td class="px-3 py-2 text-center font-bold">${total}</td></tr>`;
   });
   $('vs-table').innerHTML = html;
-  $('jk-count').textContent = t.jk_count;
+  // Wire change handlers on the freshly-rendered checkboxes
+  $('vs-table').querySelectorAll('input.vs-holiday-exempt').forEach(cb => {
+    cb.addEventListener('change', onVsExemptChange);
+  });
+
+  // 建寬 — only weekday slots; render in same 4-column shape as VS table.
+  const jk = t.jk_count || 0;
+  $('jk-table').innerHTML =
+    `<tr class="border-t border-gray-200"><td class="px-3 py-2 font-medium">建寬</td>` +
+    `<td class="px-3 py-2 text-center">0</td>` +
+    `<td class="px-3 py-2 text-center">${jk}</td>` +
+    `<td class="px-3 py-2 text-center font-bold">${jk}</td></tr>`;
+
+  // CR 預估值班總數
+  const crH = t.cr_holiday_total ?? 0;
+  const crW = t.cr_weekday_total ?? 0;
+  const crTotal = t.cr_total ?? 0;
+  const avg = (t.cr_per_avg ?? 0).toFixed(2);
+  const overload = crTotal > 21;  // CR_TOTAL_CAP × 3
+  let summary =
+    `本月共 <b>${state.H}</b> 假 + <b>${state.W}</b> 平 = <b>${state.H + state.W}</b> 天<br>` +
+    `VS 支援 <b>${t.vs_holiday_total}</b> 假 + <b>${t.vs_weekday_total}</b> 平；` +
+    `展瀚 <b>${state.X}</b> 平；建寬 <b>${jk}</b> 平<br>` +
+    `→ CR 三人合計需值 <b class="${overload ? 'text-red-600' : 'text-indigo-700'}">${crTotal}</b> 班（假 ${crH} + 平 ${crW}），平均每人約 <b>${avg}</b> 班`;
+  if (t.warnings && t.warnings.length > 0) {
+    summary += '<br>' + t.warnings.map(w =>
+      `<span class="text-red-700 font-semibold">${w}</span>`).join('<br>');
+  }
+  $('cr-summary').innerHTML = summary;
+
+  let crRows = '';
+  const cpd = t.cr_per_doctor || {};
+  DOCTORS_CR.forEach(n => {
+    const v = cpd[n] || {holiday: 0, weekday: 0, total: 0};
+    crRows += `<tr class="border-t border-gray-200"><td class="px-3 py-2 font-medium">${n}</td>` +
+              `<td class="px-3 py-2 text-center text-amber-700 font-semibold">${v.holiday}</td>` +
+              `<td class="px-3 py-2 text-center">${v.weekday}</td>` +
+              `<td class="px-3 py-2 text-center font-bold text-indigo-700">${v.total}</td></tr>`;
+  });
+  $('cr-projected-table').innerHTML = crRows;
 }
 
+// ── Step 4: build preference picker ─────────────────────────────────
 function buildPrefsForm() {
   const container = $('prefs-container');
   state.prefs = {};
@@ -375,10 +729,11 @@ function buildPrefsForm() {
   function dayBtns(name, kind) {
     return state.calendar.map(d => {
       const isWeekday = !d.is_holiday;
-      const eligible = (kind === 'vs') ? true
-                     : (kind === 'mid_展瀚') ? isWeekday
-                     : (kind === 'mid_建寬') ? isWeekday
-                     : (kind === 'cr') ? true : true;
+      const eligible = (kind === 'vs')          ? true               // VS picks any
+                     : (kind === 'mid_展瀚')     ? isWeekday          // 展瀚 weekday only
+                     : (kind === 'mid_建寬')     ? isWeekday          // 建寬 weekday only
+                     : (kind === 'cr')           ? true               // CR avoid any
+                     : true;
       const dis = eligible ? '' : 'disabled';
       const cls = ['day-btn', 'border', 'rounded', 'px-2', 'py-1', 'text-xs'];
       if (d.is_holiday) cls.push('holiday');
@@ -393,10 +748,16 @@ function buildPrefsForm() {
 
   function row(title, names, kind, hint) {
     let inner = `<h3 class="font-semibold text-gray-700 mb-1">${title} <span class="text-xs text-gray-400 font-normal">${hint}</span></h3>`;
-    inner += names.map(n => `<div class="mb-2">
-      <div class="text-xs font-medium text-gray-600 mb-1">${n}</div>
-      <div class="flex flex-wrap gap-1" data-row="${n}" data-kind="${kind}">${dayBtns(n, kind)}</div>
-    </div>`).join('');
+    inner += names.map(n => {
+      const hasTarget = getTargetForName(n) !== null;
+      const counter = hasTarget ? `<span data-target-for="${n}" class="text-[11px] ml-2"></span>` : '';
+      return `<div class="mb-2">
+        <div class="text-xs font-medium text-gray-600 mb-1 flex items-center">
+          <span>${n}</span>${counter}
+        </div>
+        <div class="flex flex-wrap gap-1" data-row="${n}" data-kind="${kind}">${dayBtns(n, kind)}</div>
+      </div>`;
+    }).join('');
     return `<div class="bg-gray-50 rounded-lg p-3">${inner}</div>`;
   }
 
@@ -407,6 +768,7 @@ function buildPrefsForm() {
 
   container.innerHTML = html;
 
+  // Toggle handlers
   container.querySelectorAll('.day-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const doctor = btn.dataset.doctor;
@@ -419,14 +781,31 @@ function buildPrefsForm() {
         state.prefs[doctor].add(dateStr);
         btn.classList.add('selected');
       }
+      updatePrefCount(doctor);
     });
   });
+
+  // Render initial counts (all 0 selected vs target)
+  [...DOCTORS_VS, '展瀚', '建寬'].forEach(updatePrefCount);
 }
 
+// ── Step 5: solve ───────────────────────────────────────────────────
 $('btn-solve').addEventListener('click', async () => {
+  // 偏好總數 vs 計算結果驗證 — 不一致則跳警告，使用者可選擇強制執行
+  const prefErrors = validatePrefs();
+  if (prefErrors.length > 0) {
+    const msg = '⚠️ 偏好選擇與計算的班數不一致：\n\n• ' +
+      prefErrors.join('\n• ') +
+      '\n\n按「確定」仍要強制執行 solver（solver 會嘗試自動補齊或可能找不到解）；按「取消」回去調整。';
+    if (!confirm(msg)) {
+      setStatus('solve-status', '已取消，請調整偏好讓選擇日數與班數一致', 'err');
+      return;
+    }
+  }
   setStatus('solve-status', '計算中…');
   const fixed = {};
   const avoid = {};
+  // VS, 展瀚, 建寬 → fixed (if doctor name appears in DOCTORS_VS or DOCTORS_MID)
   const inFixed = new Set([...DOCTORS_VS, ...DOCTORS_MID]);
   const inAvoid = new Set(DOCTORS_CR);
   for (const [doctor, dates] of Object.entries(state.prefs)) {
@@ -436,6 +815,7 @@ $('btn-solve').addEventListener('click', async () => {
       avoid[doctor] = Array.from(dates);
     }
   }
+  // Conflict check: same date assigned to multiple doctors → bail
   const seen = {};
   for (const [doctor, dates] of Object.entries(state.prefs)) {
     if (!inFixed.has(doctor)) continue;
@@ -451,38 +831,52 @@ $('btn-solve').addEventListener('click', async () => {
   const data = await postJSON('/api/sched/solve', {
     year: state.year, month: state.month, X: state.X,
     fixed, avoid, baseline: state.baseline,
+    prev_tail: state.prevTail,
+    vs_holiday_exempt: state.vsHolidayExempt,
   });
   if (!data.ok) {
     setStatus('solve-status', `❌ ${data.error}`, 'err'); return;
   }
   state.lastSolve = data;
+  state.solverOriginal = data;   // snapshot for 還原 solver 原班
+  setStatus('edit-status', '');
   renderResult(data);
   setStatus('solve-status',
     data.qod_relaxed
-      ? `⚠️ QOD 已放寬，違規 ${data.qod_violations.length} 處（見紅底警告）`
-      : '✓ solver 完成',
+      ? `⚠️ 嚴格無 QOD 不可行，已最小化至 ${data.qod_violations.length} 處違規（紅底）`
+      : '✓ solver 完成（無 QOD 違規）',
     data.qod_relaxed ? 'err' : 'ok');
   showStep(5);
   $('step5').scrollIntoView({behavior: 'smooth'});
 });
 
 function renderResult(data) {
+  // CR target table
   const targets = data.targets;
   let html = '';
   DOCTORS_CR.forEach(n => {
+    const ht = targets.cr_holiday_target ? (targets.cr_holiday_target[n] ?? 0) : 0;
     html += `<tr class="border-t border-gray-200"><td class="px-3 py-2 font-medium">${n}</td>` +
             `<td class="px-3 py-2 text-center">${targets.cr_fri_target[n] ?? 0}</td>` +
             `<td class="px-3 py-2 text-center">${targets.cr_sat_target[n] ?? 0}</td>` +
-            `<td class="px-3 py-2 text-center">${targets.cr_sun_target[n] ?? 0}</td></tr>`;
+            `<td class="px-3 py-2 text-center">${targets.cr_sun_target[n] ?? 0}</td>` +
+            `<td class="px-3 py-2 text-center font-bold text-amber-700">${ht}</td></tr>`;
   });
   $('cr-target-table').innerHTML = html;
 
+  // Calendar
   const grid = $('result-cal');
   const first = new Date(state.year, state.month - 1, 1);
   const startWeekday = (first.getDay() + 6) % 7;
   const byDate = {};
   data.schedule.forEach(s => { byDate[s.date] = s; });
-  const qodSet = new Set(data.qod_violations.map(v => v.date));
+  // Highlight BOTH ends of each QOD pair. Backend only returns the earlier
+  // date per pair, so we expand by adding +2 days to mark the partner cell.
+  const qodSet = new Set();
+  data.qod_violations.forEach(v => {
+    qodSet.add(v.date);
+    qodSet.add(addDays(v.date, 2));
+  });
 
   let cells = '';
   for (let i = 0; i < startWeekday; i++) cells += '<div class="cal-cell" style="visibility:hidden"></div>';
@@ -492,178 +886,274 @@ function renderResult(data) {
     const cls = ['cal-cell'];
     if (d.is_holiday) cls.push('holiday');
     if (qodSet.has(d.date)) cls.push('qod');
+    const holidayLine = d.holiday_name
+      ? `<div class="text-[10px] text-red-600 font-semibold leading-tight">${d.holiday_name}</div>`
+      : '';
     cells += `<div class="${cls.join(' ')}">
       <div class="font-bold flex items-center justify-between">
         <span>${d.day}</span>
         <span class="text-[10px] text-gray-500">${WEEK_LABELS[d.weekday]}</span>
       </div>
-      <div class="doc">${docName}</div>
+      ${holidayLine}
+      <select class="doc-edit" data-date="${d.date}" data-orig="${docName}">
+        ${docOptions(docName)}
+      </select>
     </div>`;
   });
   grid.innerHTML = cells;
-
-  let stats = '';
-  data.stats_rows.forEach(r => {
-    const total = r.平日班 + r.週五班 + r.假日班;
-    if (total === 0) return;
-    stats += `<tr class="border-t border-gray-200"><td class="px-3 py-2 font-medium">${r.姓名}</td>` +
-             `<td class="px-3 py-2 text-center">${r.平日班}</td>` +
-             `<td class="px-3 py-2 text-center">${r.週五班}</td>` +
-             `<td class="px-3 py-2 text-center">${r.假日班}</td>` +
-             `<td class="px-3 py-2 text-center">${r.週六班}</td>` +
-             `<td class="px-3 py-2 text-center">${r.週日班}</td>` +
-             `<td class="px-3 py-2 text-center ${r.QOD次數 > 0 ? 'text-red-600 font-bold' : ''}">${r.QOD次數}</td></tr>`;
+  // Mark hand-changed cells (value differs from solver's pick) in amber so
+  // the user can see at a glance what they tweaked before recomputing.
+  grid.querySelectorAll('.doc-edit').forEach(sel => {
+    const mark = () => sel.classList.toggle('changed', sel.value !== sel.dataset.orig);
+    sel.addEventListener('change', mark);
+    mark();
   });
-  $('result-stats').innerHTML = stats;
 
+  // Stats — grouped by CR / 中級 / VS for easy scanning.
+  const nonZero = data.stats_rows.filter(r => (r.平日班 + r.週五班 + r.假日班) > 0);
+  $('result-stats').innerHTML = renderGroupedRows(
+    nonZero,
+    r => r.姓名,
+    r => `<tr class="border-t border-gray-200"><td class="px-3 py-2 font-medium">${r.姓名}</td>` +
+         `<td class="px-3 py-2 text-center">${r.平日班}</td>` +
+         `<td class="px-3 py-2 text-center">${r.週五班}</td>` +
+         `<td class="px-3 py-2 text-center">${r.假日班}</td>` +
+         `<td class="px-3 py-2 text-center">${r.週六班}</td>` +
+         `<td class="px-3 py-2 text-center">${r.週日班}</td>` +
+         `<td class="px-3 py-2 text-center ${r.QOD次數 > 0 ? 'text-red-600 font-bold' : ''}">${r.QOD次數}</td></tr>`,
+    7,
+  );
+
+  // Projected cumulative — baseline + this month (subtract prev run if any).
+  renderProjectedCumulative(data.projected_cumulative || [], !!data.had_prev_monthly);
+
+  // QOD warning
   const w = $('qod-warn');
   if (data.qod_violations.length > 0) {
     w.classList.remove('hidden');
-    w.innerHTML = `<b>QOD 警告</b> — 有 ${data.qod_violations.length} 處隔日值班違規（紅底格子）：` +
+    const lead = data.edited
+      ? `<b>QOD 警告</b> — 手調後共 ${data.qod_violations.length} 處隔日值班（QOD，紅底格子）：`
+      : `<b>QOD 警告</b> — 此月在嚴格不允許 QOD 條件下無解，已最小化為 ${data.qod_violations.length} 處隔日值班違規（紅底格子）：`;
+    w.innerHTML = lead +
       data.qod_violations.map(v => `${v.date} ${v.name}`).join('；');
   } else {
     w.classList.add('hidden');
   }
 }
 
+// ── write to Google Sheet ───────────────────────────────────────────
 $('btn-write').addEventListener('click', async () => {
   if (!state.lastSolve) return;
-  if (!confirm('確定寫入 Google Sheet？同月不可重跑（baseline 會重複累計）')) return;
+  if (!confirm('確定寫入 Google Sheet？')) return;
   setStatus('write-status', '寫入中…');
   const data = await postJSON('/api/sched/write', {
     year: state.year, month: state.month,
   });
   if (!data.ok) { setStatus('write-status', '❌ ' + data.error, 'err'); return; }
-  setStatus('write-status', `✓ 已寫入 ${data.sheet_name} / 班數統計 / 值班總數統計`, 'ok');
+  const msg = data.rewrite
+    ? `✓ 已重寫 ${data.sheet_name}（自動扣掉上次累計，再加新版）`
+    : `✓ 已寫入 ${data.sheet_name} / 班數統計 / 值班總數統計`;
+  setStatus('write-status', msg, 'ok');
+});
+
+// ── 手動微調 → 重算 ─────────────────────────────────────────────────
+// 收集月曆裡每格 <select> 的當前值，POST 給 /api/sched/apply-edits。
+// 後端用 cv_solver.recompute_from_schedule 依「生成 + 手調」最終結果重算
+// 統計 / QOD / 預估累計，並覆蓋伺服器端 cache，之後寫入/交 key 班都用
+// 手調後的版本。
+function collectEditedSchedule() {
+  const out = {};
+  document.querySelectorAll('#result-cal .doc-edit').forEach(sel => {
+    const v = sel.value.trim();
+    if (v) out[sel.dataset.date] = v;
+  });
+  return out;
+}
+
+async function applyEdits(schedule, statusMsg) {
+  setStatus('edit-status', '重算中…');
+  const data = await postJSON('/api/sched/apply-edits', {
+    year: state.year, month: state.month, schedule,
+  });
+  if (!data.ok) { setStatus('edit-status', '❌ ' + data.error, 'err'); return; }
+  state.lastSolve = data;          // write/handoff now emit the edited version
+  renderResult(data);
+  const changed = Object.keys(schedule).length;
+  setStatus('edit-status',
+    statusMsg || `✓ 已套用手調並重算（${changed} 天）`, 'ok');
+  setStatus('write-status', '');
+}
+
+$('btn-apply-edits').addEventListener('click', () => {
+  if (!state.lastSolve) return;
+  applyEdits(collectEditedSchedule());
+});
+
+$('btn-revert-edits').addEventListener('click', () => {
+  if (!state.solverOriginal) return;
+  if (!confirm('還原成 solver 原始班表？你的手動微調會被丟棄。')) return;
+  // Push the original schedule back through apply-edits so the server cache
+  // and the on-screen state are both reset to the solver's output.
+  const orig = {};
+  state.solverOriginal.schedule.forEach(s => { orig[s.date] = s.doctor; });
+  applyEdits(orig, '↺ 已還原為 solver 原班');
 });
 
 $('btn-resolve').addEventListener('click', () => {
-  $('btn-solve').click();
+  // 清掉舊班表 → 視覺上強調這是全新一輪 solve，避免使用者誤以為按了沒反應
+  state.lastSolve = null;
+  state.solverOriginal = null;
+  $('result-cal').innerHTML = '';
+  $('result-stats').innerHTML = '';
+  $('cr-target-table').innerHTML =
+    '<tr><td colspan="5" class="text-center text-gray-400 py-2 text-xs">由 solver 決定</td></tr>';
+  $('qod-warn').classList.add('hidden');
+  setStatus('write-status', '');
+  setStatus('edit-status', '');
+  setStatus('solve-status', '清除舊班表，重新生成中…');
+  document.getElementById('btn-solve').click();
 });
 
-// 🔑 Hand off solver result to Card 2 Key 班 — backend pushes the
-// {year, month, vs_schedule, cr_schedule, tw_holidays} payload into the
-// keyin prefill cache; we then redirect to /keyin which consumes it.
-// Defensive null check in case the page is served from browser cache
-// without the new button (user can hard-refresh to fix).
-const handoffBtn = $('btn-handoff-keyin');
-if (handoffBtn) {
-  handoffBtn.addEventListener('click', async () => {
-    if (!state.lastSolve) {
-      setStatus('write-status', '請先按 solver', 'err');
-      return;
-    }
-    setStatus('write-status', '丟給 Key 班…');
-    const r = await postJSON('/api/sched/handoff-to-keyin', {
-      year: state.year, month: state.month,
-    });
-    if (!r.ok) { setStatus('write-status', '❌ ' + r.error, 'err'); return; }
-    setStatus('write-status',
-      `✓ 已帶入 (VS ${r.vs_count} 天 / CR ${r.cr_count} 天)，跳轉到 Key 班…`, 'ok');
-    window.location.href = r.redirect || '/keyin';
-  });
-}
-
-
-// ── 草稿 (sched bucket) ─────────────────────────────────────────
-// Whole block is guarded by an existence check so a stale browser cache
-// (HTML without the draft panel) doesn't crash before later handlers bind.
-const _draftSave   = $('draft-save');
-const _draftLoad   = $('draft-load');
-const _draftDelete = $('draft-delete');
-
-async function refreshDraftList() {
-  try {
-    const r = await fetch('/api/draft/sched/list');
-    const d = await r.json();
-    const sel = $('draft-list');
-    if (!sel) return;
-    sel.innerHTML = '<option value="">— 選擇載入 —</option>' +
-      (d.drafts || []).map(x =>
-        `<option value="${x.name}">${x.name} （${x.saved_at}）</option>`
-      ).join('');
-  } catch (_) {}
-}
-
-function setDraftStatus(text, kind='info') {
+// ── 草稿存 / 讀 / 刪（接本地 draft_service：/api/draft/sched/*） ──────
+function setDraftStatus(text, kind) {
   const el = $('draft-status');
-  if (!el) return;
   el.textContent = text;
-  el.style.color = kind === 'ok' ? '#059669' : kind === 'err' ? '#dc2626' : '#6b7280';
+  el.className = 'text-xs ml-auto';
+  if (kind === 'ok') el.classList.add('text-emerald-700');
+  else if (kind === 'err') el.classList.add('text-red-700');
+  else el.classList.add('text-gray-500');
 }
 
-if (_draftSave) _draftSave.addEventListener('click', async () => {
-  const name = ($('draft-name').value || '').trim()
-    || `${state.year || $('year').value}${pad2(state.month || $('month').value)}_自動`;
-  // Snapshot the entire workflow state so re-loading restores everything
-  // we know about: month + baseline + X + prefs + last solve result.
-  const snapshot = {
-    year: state.year || parseInt($('year').value),
-    month: state.month || parseInt($('month').value),
+function serializeState() {
+  const prefs = {};
+  for (const k in state.prefs) prefs[k] = Array.from(state.prefs[k]);
+  return {
+    year: state.year, month: state.month,
+    prevYear: state.prevYear, prevMonth: state.prevMonth,
+    calendar: state.calendar,
     baseline: state.baseline,
-    H: state.H, W: state.W, X: state.X,
-    prefs: state.prefs,
+    prevTail: state.prevTail,
+    H: state.H, W: state.W,
+    X: state.X,
+    targets: state.targets,
+    vsHolidayExempt: state.vsHolidayExempt,
+    prefs,
     lastSolve: state.lastSolve,
-    saved_at_local: new Date().toLocaleString('zh-TW'),
+    _step: _currentStep,
   };
-  setDraftStatus('儲存中…');
-  try {
-    const r = await fetch('/api/draft/sched/save', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ name, state: snapshot }),
+}
+
+async function saveDraft() {
+  if (!state.year || !state.month) {
+    setDraftStatus('還沒載入月份，沒東西可存', 'err'); return;
+  }
+  const defaultName = `${state.year}${pad2(state.month)}`;
+  const name = prompt('草稿名稱（預設 = 月份）：', defaultName);
+  if (name == null) return;
+  const data = await postJSON('/api/draft/sched/save', {
+    name: name || defaultName,
+    state: serializeState(),
+  });
+  if (!data.ok) { setDraftStatus(`❌ 存失敗：${data.error || ''}`, 'err'); return; }
+  setDraftStatus(`✓ 已存：${data.name}（step ${_currentStep} @ ${data.saved_at}）`, 'ok');
+}
+
+async function pickDraft(verb) {
+  const res = await fetch('/api/draft/sched/list');
+  const list = await res.json();
+  if (!list.ok || !list.drafts || list.drafts.length === 0) {
+    setDraftStatus('沒有草稿', 'err'); return null;
+  }
+  const lines = list.drafts.map((d, i) =>
+    `${i + 1}. ${d.name}  ｜ ${d.saved_at}`);
+  const pick = prompt(`${verb}哪個草稿？輸入編號：\n\n${lines.join('\n')}`);
+  if (!pick) return null;
+  const idx = parseInt(pick, 10) - 1;
+  if (Number.isNaN(idx) || !list.drafts[idx]) {
+    setDraftStatus('編號無效', 'err'); return null;
+  }
+  return list.drafts[idx];
+}
+
+async function loadDraft() {
+  const pick = await pickDraft('讀');
+  if (!pick) return;
+  const res = await fetch(`/api/draft/sched/load?name=${encodeURIComponent(pick.name)}`);
+  const data = await res.json();
+  if (!data.ok) { setDraftStatus(`❌ ${data.error || '讀取失敗'}`, 'err'); return; }
+  const s = data.payload || {};
+  applyDraft({ state: s, step: s._step || 1, saved_at: data.saved_at });
+}
+
+async function deleteDraft() {
+  const pick = await pickDraft('刪');
+  if (!pick) return;
+  if (!confirm(`確定刪除草稿「${pick.name}」？`)) return;
+  const data = await postJSON('/api/draft/sched/delete', { name: pick.name });
+  if (!data.ok) { setDraftStatus(`❌ ${data.error || '刪除失敗'}`, 'err'); return; }
+  setDraftStatus(`已刪 ${pick.name}`, 'ok');
+}
+
+function applyDraft(draft) {
+  const s = draft.state || {};
+  state.year = s.year; state.month = s.month;
+  state.prevYear = s.prevYear; state.prevMonth = s.prevMonth;
+  state.calendar = s.calendar || [];
+  state.baseline = s.baseline || {};
+  state.prevTail = s.prevTail || {};
+  state.H = s.H || 0; state.W = s.W || 0;
+  state.X = s.X;
+  state.targets = s.targets || null;
+  state.vsHolidayExempt = s.vsHolidayExempt || [];
+  state.prefs = {};
+  for (const k in (s.prefs || {})) state.prefs[k] = new Set(s.prefs[k]);
+  state.lastSolve = s.lastSolve || null;
+  state.solverOriginal = s.lastSolve || null;  // revert baseline after reload
+
+  if (s.year) $('year').value = s.year;
+  if (s.month) $('month').value = s.month;
+  if (s.X != null) $('X').value = s.X;
+  $('metric-h').textContent = s.H ?? '—';
+  $('metric-w').textContent = s.W ?? '—';
+  $('metric-sheet').textContent = (s.year && s.month) ? `${s.year}${pad2(s.month)}` : '—';
+
+  renderMonthPreview();
+  renderBaseline();
+  if (s.prevYear && s.prevMonth) renderPrevTail(s.prevYear, s.prevMonth);
+
+  if (state.targets) {
+    renderTargets(state.targets);
+    buildPrefsForm();
+    $('prefs-container').querySelectorAll('.day-btn').forEach(btn => {
+      const doc = btn.dataset.doctor;
+      const dt = btn.dataset.date;
+      if (state.prefs[doc] && state.prefs[doc].has(dt)) btn.classList.add('selected');
     });
-    const d = await r.json();
-    if (!d.ok) throw new Error(d.error || 'save failed');
-    setDraftStatus(`✓ 已存「${d.name}」`, 'ok');
-    refreshDraftList();
-  } catch (err) {
-    setDraftStatus('✗ ' + err.message, 'err');
+    [...DOCTORS_VS, '展瀚', '建寬'].forEach(updatePrefCount);
   }
-});
 
-if (_draftLoad) _draftLoad.addEventListener('click', async () => {
-  const name = $('draft-list').value;
-  if (!name) { setDraftStatus('先選一個草稿', 'err'); return; }
-  setDraftStatus('載入中…');
-  try {
-    const r = await fetch(`/api/draft/sched/load?name=${encodeURIComponent(name)}`);
-    const d = await r.json();
-    if (!d.ok) throw new Error(d.error || 'load failed');
-    const s = d.payload || {};
-    if (s.year)  $('year').value  = s.year;
-    if (s.month) $('month').value = s.month;
-    if (s.X != null) $('X').value = s.X;
-    state.year  = s.year  ?? null;
-    state.month = s.month ?? null;
-    state.baseline = s.baseline || {};
-    state.H = s.H || 0; state.W = s.W || 0; state.X = s.X ?? null;
-    state.prefs = s.prefs || {};
-    state.lastSolve = s.lastSolve || null;
-    setDraftStatus(`✓ 已載入「${name}」— 請按「載入月份資料」重建畫面`, 'ok');
-  } catch (err) {
-    setDraftStatus('✗ ' + err.message, 'err');
+  if (state.lastSolve) renderResult(state.lastSolve);
+
+  showStep(draft.step || 1);
+  setDraftStatus(`✓ 已讀入「${s.year}/${s.month}」（saved ${draft.saved_at}）`, 'ok');
+}
+
+$('btn-save-draft').addEventListener('click', saveDraft);
+$('btn-load-draft').addEventListener('click', loadDraft);
+$('btn-delete-draft').addEventListener('click', deleteDraft);
+
+$('btn-handoff-keyin').addEventListener('click', async () => {
+  if (!state.lastSolve) return;
+  setStatus('write-status', '正在帶入 key 班…');
+  const data = await postJSON('/api/sched/handoff-to-keyin', {
+    year: state.year, month: state.month,
+  });
+  if (!data.ok) {
+    setStatus('write-status', `❌ ${data.error}`, 'err');
+    return;
   }
+  window.location.href = data.redirect || '/keyin';
 });
-
-if (_draftDelete) _draftDelete.addEventListener('click', async () => {
-  const name = $('draft-list').value;
-  if (!name) { setDraftStatus('先選一個草稿', 'err'); return; }
-  if (!confirm(`確定刪除草稿「${name}」？`)) return;
-  try {
-    const r = await fetch('/api/draft/sched/delete', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ name }),
-    });
-    const d = await r.json();
-    if (!d.ok) throw new Error('delete failed');
-    setDraftStatus(`✓ 已刪除「${name}」`, 'ok');
-    refreshDraftList();
-  } catch (err) {
-    setDraftStatus('✗ ' + err.message, 'err');
-  }
-});
-
-refreshDraftList();
 })();
 </script>
 {% endblock %}
