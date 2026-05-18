@@ -1222,9 +1222,14 @@ async function renderEmrResults(results, mainFixes) {
       ? `<span class="emr-name-fix">(原名單：${escape(ocrName)})</span>` : '';
     const visit = r.visit_label ? `<span class="hint">[訪視: ${escape(r.visit_label)}]</span>` : '';
     const noRecord = r.has_record === false;
+    // Long SOAP/病程 body is collapsible so the page isn't endless after
+    // the user has read it. No-record message is short → left as-is.
     const body = noRecord
       ? `<p class="msg err" style="margin:6px 0">⚠ ${escape(r.c_text) || '查無 EMR'}</p>`
-      : `<pre>${escape(r.c_text)}</pre>`;
+      : `<details class="emr-body" open>
+           <summary>EMR 內容（點此收合 / 展開）</summary>
+           <pre>${escape(r.c_text)}</pre>
+         </details>`;
     // F/G editable: row comes from /api/step3/run enrichment (sub-table lookup).
     // If row is missing (patient not in any sub-table), still render read-only.
     const fgEditor = (r.row)
@@ -1244,7 +1249,21 @@ async function renderEmrResults(results, mainFixes) {
     </div>`;
   }).join('');
 
-  $('#emr-results').innerHTML = datalists + fixesHtml + cards;
+  // 全部收合 / 展開 — lets the user fold every EMR body at once after
+  // reviewing so the page stays short.
+  const collapseBar = cards
+    ? `<div class="emr-collapse-bar">
+         <button type="button" id="emr-collapse-all">▸ 全部收合</button>
+         <button type="button" id="emr-expand-all">▾ 全部展開</button>
+       </div>`
+    : '';
+  $('#emr-results').innerHTML = datalists + fixesHtml + collapseBar + cards;
+  const _setAllEmrBodies = (open) =>
+    $('#emr-results').querySelectorAll('details.emr-body')
+      .forEach(d => { d.open = open; });
+  const _cAll = $('#emr-collapse-all'), _eAll = $('#emr-expand-all');
+  if (_cAll) _cAll.addEventListener('click', () => _setAllEmrBodies(false));
+  if (_eAll) _eAll.addEventListener('click', () => _setAllEmrBodies(true));
 
   // Bidirectional sync: when user saves F/G here, push the value into the
   // matching Step 4 sub-table input (by row+col) without refetching.
