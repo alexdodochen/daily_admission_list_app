@@ -226,6 +226,12 @@
 
 {% block scripts %}
 <script>
+// IIFE-scoped: base.html loads app.js (which declares a global `$` =
+// querySelector) before this block. This page's `$` is getElementById and
+// is called with bare ids — keep them isolated so the two don't collide
+// ("Identifier '$' has already been declared" would abort this whole script,
+//  silently breaking every button incl. 載入月份資料).
+(function () {
 const DOCTORS_CR  = {{ doctors_cr  | tojson }};
 const DOCTORS_VS  = {{ doctors_vs  | tojson }};
 const DOCTORS_MID = {{ doctors_mid | tojson }};
@@ -658,5 +664,6 @@ if (_draftDelete) _draftDelete.addEventListener('click', async () => {
 });
 
 refreshDraftList();
+})();
 </script>
 {% endblock %}
