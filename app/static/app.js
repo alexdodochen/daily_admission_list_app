@@ -996,6 +996,9 @@ async function step1Write(date, rows, allowOverwrite) {
         fd2.append('date', date);
         const sr = await api('/api/step2/build_subtables', { method: 'POST', body: fd2 });
         const docCount = (sr.doctors || []).length;
+        // Feed the EMR step (UI ②) its patient list straight away so the user
+        // doesn't have to paste JSON — Step 1 just built the sub-tables.
+        if (sr.patients && sr.patients.length) step2Ordered = sr.patients;
         if (docCount) subNote = `；子表格已建 ${docCount} 位醫師`;
       } catch (_) { /* sub-tables already exist or doctor list empty — fine */ }
       flash($('#ocr-msg'), `✓ 已寫入 ${r.range}${subNote}`, 'ok');
@@ -1123,16 +1126,33 @@ function setupStep3() {
     const url = $('#session-url').value.trim();
     let patients;
     const raw = $('#emr-patients').value.trim();
+    const date = $('#date-input').value.trim();
     if (raw) {
       try { patients = JSON.parse(raw); }
       catch { return flash($('#s3-msg'), '病人 JSON 格式錯誤', 'err'); }
-    } else {
+    } else if (step2Ordered.length) {
       patients = step2Ordered;
+    } else if (date) {
+      // No explicit list and nothing cached from this session's Step 1 →
+      // pull the patient list straight from the date's sub-tables on the
+      // Sheet (Step 1 already built them). Covers page-reload / fresh entry.
+      try {
+        const st = await api('/api/step4/subtables?date=' + encodeURIComponent(date));
+        const flat = [];
+        for (const [doc, pts] of Object.entries(st.tables || {}))
+          for (const p of (pts || []))
+            if ((p.chart_no || '').trim())
+              flat.push({ chart_no: p.chart_no.trim(),
+                          name: (p.name || '').trim(), doctor: doc });
+        patients = flat;
+        step2Ordered = flat;   // cache for re-runs this session
+      } catch (_) { /* fall through to the clearer errors below */ }
     }
-    if (!url || !patients || !patients.length)
-      return flash($('#s3-msg'), '請填 session URL 並確定有病人清單', 'err');
+    if (!url)
+      return flash($('#s3-msg'), '請貼上 EMR session URL（先在瀏覽器登入 EMR 再把查詢頁網址貼過來）', 'err');
+    if (!patients || !patients.length)
+      return flash($('#s3-msg'), '找不到病人清單 — 請先完成 ① 匯入名單（會自動建子表格）', 'err');
 
-    const date = $('#date-input').value.trim();
     await withBusy($('#run3-btn'), `EMR 擷取中… (${patients.length} 位)`, async () => {
       flash($('#s3-msg'), `擷取中… (${patients.length} 位)`, 'ok');
       const fd = new FormData();

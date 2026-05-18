@@ -25,6 +25,11 @@
      check). Topbar now only reports daily_admission_list_app.
   8. LLM "getaddrinfo failed" the user hit = transient hospital-net DNS
      blip; re-test now all green (llm/sheet/sched ok). Not a bug.
+  9. Fixed: ② EMR step required pasting patient JSON. Now auto-loads
+     the list — step1Write caches build_subtables patients into
+     step2Ordered (Fix A) + run3-btn falls back to fetching
+     /api/step4/subtables by date (Fix B). User still pastes the EMR
+     session URL (per-login, can't automate).
 
 [Current state]
   - Branch: main, clean, synced with origin/main
