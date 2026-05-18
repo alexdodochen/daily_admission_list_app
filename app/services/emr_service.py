@@ -601,6 +601,31 @@ def process_patient(emr_text: str,
     }
 
 
+# ---------------------------- name normalisation ----------------------------
+
+# The OCR prompt tells the LLM to append "?" / "？" to any field it is
+# unsure of (see ocr_service). For 姓名 that marker must never reach the
+# user-facing sheet/cards — EMR is the authoritative source for the name.
+_OCR_UNSURE_TAIL = re.compile(r"[?？？]+\s*$")
+
+
+def clean_patient_name(name: str) -> str:
+    """Strip the trailing OCR-uncertainty marker from a name."""
+    return _OCR_UNSURE_TAIL.sub("", (name or "").strip()).strip()
+
+
+def best_patient_name(r: dict) -> str:
+    """Authoritative display name for an EMR result row.
+
+    EMR `#divUserSpec` name wins; otherwise fall back to the OCR name with
+    the "?" uncertainty marker stripped so it never shows a question mark.
+    """
+    emr = (r.get("emr_name") or "").strip()
+    if emr:
+        return emr
+    return clean_patient_name(r.get("name") or "")
+
+
 # ---------------------------- Sheet writeback ----------------------------
 
 def write_results_to_subtables(date: str, results: list[dict]) -> dict:
@@ -638,11 +663,13 @@ def write_results_to_subtables(date: str, results: list[dict]) -> dict:
                     "error": f"無子表格且自動建立失敗：{e}"}
 
     chart_to_row: dict[str, int] = {}
+    chart_to_name: dict[str, str] = {}
     for _, pts in tables.items():
         for p in pts:
             ch = (p.get("chart_no") or "").strip()
             if ch:
                 chart_to_row[ch] = p["row"]
+                chart_to_name[ch] = (p.get("name") or "").strip()
 
     patches: list[tuple[str, str]] = []
     missing: list[str] = []
@@ -660,6 +687,11 @@ def write_results_to_subtables(date: str, results: list[dict]) -> dict:
         c_text = r.get("c_text") or ""
         f_val  = r.get("f") or ""
         g_val  = r.get("g") or ""
+        # 姓名 (col A) — EMR is authoritative; also strips any OCR "?" so the
+        # sub-table never displays an uncertain name. Only patch on change.
+        best_name = best_patient_name(r)
+        if best_name and best_name != chart_to_name.get(chart, ""):
+            patches.append((f"A{row}", best_name))
         if c_text:
             patches.append((f"C{row}", c_text))
         if f_val:
@@ -733,7 +765,9 @@ def apply_emr_main_fixes(date: str, results: list[dict]) -> dict:
         ex_name   = (ex[5] or "").strip()  # F
         ex_gender = (ex[6] or "").strip()  # G
         ex_age    = (ex[7] or "").strip()  # H
-        new_name   = (r.get("emr_name") or "").strip()
+        # EMR name wins; else OCR name with the "?" uncertainty mark stripped
+        # → main 姓名 never shows a question mark even for no-record patients.
+        new_name   = best_patient_name(r)
         new_gender = (r.get("gender") or "").strip()
         age_val = r.get("age")
         new_age = str(age_val) if age_val is not None else ""

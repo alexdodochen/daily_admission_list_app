@@ -608,13 +608,14 @@ function setupLoadExisting() {
         const cText  = c[2] || '';
         const fDiag  = c[5] || '';
         const gCath  = c[6] || '';
+        const hNote  = c[7] || '';   // H 註記
         // Parse "<age> y/o <gender>\n..." prefix from c_text if present
         let age = null, gender = '';
         const m = cText.match(/^(\d+)\s+y\/o\s+([男女])\s*\n/);
         if (m) { age = parseInt(m[1]); gender = m[2]; }
         out.push({
           chart_no: chart, name: name, doctor: doc,
-          c_text: cText, f: fDiag, g: gCath,
+          c_text: cText, f: fDiag, g: gCath, note: hNote,
           age: age, gender: gender, emr_name: '',
           has_record: !!cText && !cText.includes('查無') && !cText.includes('INPATIENT'),
           row: r0 + 2 + i,  // sheet row (1-indexed)
@@ -1214,8 +1215,11 @@ async function renderEmrResults(results, mainFixes) {
 
   const cards = results.map(r => {
     const demog = (r.age != null && r.gender) ? `${r.age} y/o ${r.gender}` : '';
-    const emrName = r.emr_name && r.emr_name !== r.name
-      ? `<span class="emr-name-fix">(EMR：${escape(r.emr_name)})</span>` : '';
+    // 姓名 follows EMR; strip the OCR "?" uncertainty mark so it never shows.
+    const ocrName = String(r.name || '').replace(/[?？]+\s*$/, '').trim();
+    const dispName = (r.emr_name || '').trim() || ocrName;
+    const emrName = r.emr_name && r.emr_name !== ocrName
+      ? `<span class="emr-name-fix">(原名單：${escape(ocrName)})</span>` : '';
     const visit = r.visit_label ? `<span class="hint">[訪視: ${escape(r.visit_label)}]</span>` : '';
     const noRecord = r.has_record === false;
     const body = noRecord
@@ -1225,13 +1229,14 @@ async function renderEmrResults(results, mainFixes) {
     // If row is missing (patient not in any sub-table), still render read-only.
     const fgEditor = (r.row)
       ? `<span class="emr-fg-edit">
-            F: ${fgInput(6, r.f, r.row, opts.f, 'fg-f-list')}
-            G: ${fgInput(7, r.g, r.row, opts.g, 'fg-g-list')}
+            術前診斷: ${fgInput(6, r.f, r.row, opts.f, 'fg-f-list')}
+            預計心導管: ${fgInput(7, r.g, r.row, opts.g, 'fg-g-list')}
+            註記: ${noteInput(r.note, r.row)}
          </span>`
-      : `<span class="emr-fg">F=${escape(r.f) || '—'} / G=${escape(r.g) || '—'} <span class="hint">(無 row, 不可編輯)</span></span>`;
+      : `<span class="emr-fg">術前診斷=${escape(r.f) || '—'} / 預計心導管=${escape(r.g) || '—'} <span class="hint">(無 row, 不可編輯)</span></span>`;
     return `
     <div class="emr-card${noRecord ? ' emr-no-record' : ''}" data-chart="${escape(r.chart_no)}">
-      <h3>${escape(r.doctor)} / ${escape(r.name)} ${emrName} (${escape(r.chart_no)}) ${r.error ? '⚠' : ''}</h3>
+      <h3>${escape(r.doctor)} / ${escape(dispName)} ${emrName} (${escape(r.chart_no)}) ${r.error ? '⚠' : ''}</h3>
       ${r.error ? `<p class="msg err">${escape(r.error)}</p>` : ''}
       <p class="hint">${escape(demog)} &nbsp; ${visit}</p>
       <div class="emr-fg-row">${fgEditor}</div>
@@ -1547,6 +1552,18 @@ function fgInput(col, value, row, options, listId) {
     <button type="button" class="fg-chev" tabindex="-1" title="展開選單">▼</button>
     <ul class="fg-popup" hidden></ul>
   </span>`;
+}
+
+// 註記 (sub-table col H = 8): free-text, NO dropdown. A bare input.fg-input
+// so the existing wireFgInputsIn save-on-blur path picks it up and writes
+// via /api/step4/cell; the chevron/popup loop only touches span.fg-cell so
+// this stays a plain text box. Use for 「不排導管」 etc.
+function noteInput(value, row) {
+  const esc = s => String(s || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  if (!row) return `<span class="hint">（無 row，不可填註記）</span>`;
+  return `<input class="fg-input note-input" type="text" autocomplete="off"
+           data-row="${row}" data-col="8" value="${esc(value)}"
+           placeholder="註記，如 不排導管 / 待會診…">`;
 }
 
 function fgDatalist(id, options) {

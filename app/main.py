@@ -313,13 +313,17 @@ async def api_step3_run(session_url: str = Form(...),
             # F/G and POST /api/step4/cell with the correct row.
             try:
                 tables = ordering_service.read_doctor_subtables(target_date)
-                chart_to_row = {(p.get("chart_no") or "").strip(): p["row"]
-                                for _, pts in tables.items() for p in pts
-                                if (p.get("chart_no") or "").strip()}
+                chart_to_meta = {
+                    (p.get("chart_no") or "").strip(): p
+                    for _, pts in tables.items() for p in pts
+                    if (p.get("chart_no") or "").strip()
+                }
                 for r in results:
                     ch = (r.get("chart_no") or "").strip()
-                    if ch in chart_to_row:
-                        r["row"] = chart_to_row[ch]
+                    meta = chart_to_meta.get(ch)
+                    if meta:
+                        r["row"] = meta["row"]
+                        r["note"] = meta.get("note", "")  # H 註記
             except Exception:
                 pass  # row enrichment is optional UI sugar
         return {"ok": True, "results": results,
