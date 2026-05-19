@@ -350,13 +350,24 @@ async def apply() -> dict:
 
 
 def schedule_restart(delay: float = 0.8) -> None:
-    """Optional helper: relaunch the current Python process. Called from an API
-    after a successful apply() if the user wants to auto-restart.
-    Note: on Windows, os.execv replaces the current process."""
+    """Restart/quit the running process after a successful apply().
+
+    Frozen (.exe): _apply_frozen() has already spawned a detached swap
+    .bat that waits for THIS exe to disappear from the task list, then
+    renames the folder and relaunches the new exe. So here we must just
+    cleanly EXIT — never os.execv the frozen exe (that re-runs the OLD
+    bundle with junk args and keeps the same image name alive, so the
+    bat's wait-loop never completes and the update dead-locks).
+
+    Dev (git checkout): re-exec the Python module so the new code loads.
+    """
     import threading, time
 
     def _go():
         time.sleep(delay)
-        os.execv(sys.executable, [sys.executable, "-m", "app.run"])
+        if is_frozen():
+            os._exit(0)   # let the swap .bat take over (rename + relaunch)
+        else:
+            os.execv(sys.executable, [sys.executable, "-m", "app.run"])
 
     threading.Thread(target=_go, daemon=True).start()

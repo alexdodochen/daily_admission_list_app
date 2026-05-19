@@ -39,16 +39,41 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      # Cache key MUST track the installed Playwright version. A hardcoded
+      # key (the old "chromium-1208") meant: once a cache existed, every
+      # later build got a cache hit, SKIPPED `playwright install`, and
+      # bundled a stale browser — while a bumped Playwright lib demanded a
+      # newer chromium-XXXX at runtime → "Executable doesn't exist". Keying
+      # on the resolved version forces a cache miss + reinstall on bump.
+      - name: Resolve Playwright version
+        id: pw-ver
+        shell: pwsh
+        run: |
+          $v = (python -c "import importlib.metadata as m; print(m.version('playwright'))").Trim()
+          echo "version=$v" >> $env:GITHUB_OUTPUT
+
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         id: pw-cache
         with:
           path: ~\AppData\Local\ms-playwright
-          key: playwright-${{ runner.os }}-chromium-1208
+          key: playwright-${{ runner.os }}-${{ steps.pw-ver.outputs.version }}
 
       - name: Install Playwright Chromium
         if: steps.pw-cache.outputs.cache-hit != 'true'
         run: python -m playwright install chromium
+
+      - name: Verify a chromium browser is actually present
+        shell: pwsh
+        run: |
+          $root = "$env:LOCALAPPDATA\ms-playwright"
+          $hit = Get-ChildItem $root -Directory -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Name -like 'chromium-*' }
+          if (-not $hit) {
+            Write-Error "No chromium-* under $root after install — aborting build"
+            exit 1
+          }
+          $hit | ForEach-Object { Write-Host "bundled browser: $($_.Name)" }
 
       - name: Compute version
         id: ver

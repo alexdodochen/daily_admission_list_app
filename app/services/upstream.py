@@ -314,8 +314,20 @@ async def sync_source(name: str) -> dict:
 
 
 async def _sync_self(spec: SourceSpec) -> dict:
-    """git pull --ff-only on the project root. Identical semantics to legacy
-    updater.apply()."""
+    """Update the running App.
+
+    Packaged (.exe) install → delegate to updater._apply_frozen(), which
+    downloads the latest GitHub Release zip and hot-swaps the bundle. The
+    distributed artifact is NOT a git checkout, so the git-pull path below
+    can never apply to it (this was the field bug: the 更新 button hit the
+    git-only path and dead-ended with "只支援 git checkout").
+
+    Dev (git checkout) → git pull --ff-only (legacy updater.apply semantics).
+    """
+    from . import updater  # local import avoids any import cycle
+    if updater.is_frozen():
+        return await updater.apply()
+
     cur = current_version(spec)
     if cur["source"] != "git":
         return {

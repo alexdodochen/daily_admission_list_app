@@ -18,6 +18,22 @@
      error msg + status drop_dir now point at DATA_DIR.
   4. Tests: 338 passed (+6 regression across config/cathlab).
 
+[Field-bug triage 2026-05-19 (3 issues, all fixed, 347 passed)]
+  A. Auto-update dead-ended on .exe: 更新 button → upstream._sync_self
+     was git-only. Fixed: frozen → updater.apply() (zip swap). Also
+     updater.schedule_restart frozen → os._exit (was os.execv →
+     swap.bat dead-lock). IMPLICATION: pre-fix installs (incl. 麒翔)
+     must manually download the new zip ONCE; then 更新 works.
+  B. Playwright chromium missing: release.yml cached browsers under a
+     hardcoded key (chromium-1208) with install gated on cache-miss →
+     stale browser bundled vs newer Playwright wanting chromium-1223.
+     Fixed: cache key = resolved Playwright version + presence guard.
+  C. 20260601 not loadable: sheet_service memoised Spreadsheet; a tab
+     created by another instance was invisible. Fixed: get_worksheet
+     refresh-metadata+retry; list_sheets refreshes first.
+  Pending follow-up: in-app "回報 bug" button (user request) — NOT
+  yet built; design TBD (must scrub PHI/credentials).
+
 [What this session ALSO did]
   5. Step 1 OCR re-upload behavior changed per user rule: new
      screenshot consulted for MEMBERSHIP ONLY. No add/remove →

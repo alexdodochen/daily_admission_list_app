@@ -112,6 +112,41 @@ def test_sync_state_roundtrip(tmp_path, monkeypatch):
     assert "synced_at" in on_disk["self"]
 
 
+# ---------------- frozen self-sync delegates to updater ----------------
+
+def test_sync_self_frozen_delegates_to_updater(monkeypatch):
+    """Regression (field bug): on a packaged .exe the 更新 button hit the
+    git-only path and dead-ended with '只支援 git checkout'. Frozen must
+    delegate to updater.apply() (the GitHub-Release zip swap)."""
+    from app.services import updater
+
+    monkeypatch.setattr(updater, "is_frozen", lambda: True)
+    called = {}
+
+    async def fake_apply():
+        called["yes"] = True
+        return {"ok": True, "message": "swapped", "frozen": True}
+
+    monkeypatch.setattr(updater, "apply", fake_apply)
+    # Would raise / return the git error if the frozen branch were missing.
+    r = asyncio.run(upstream.sync_source("self"))
+    assert called.get("yes") is True
+    assert r["ok"] is True and r.get("frozen") is True
+
+
+def test_sync_self_dev_still_git(monkeypatch):
+    """Non-frozen (dev git checkout) keeps the git-pull path."""
+    from app.services import updater
+
+    monkeypatch.setattr(updater, "is_frozen", lambda: False)
+    monkeypatch.setattr(upstream, "current_version", lambda spec: {
+        "sha": "", "short": "", "source": "unknown", "dirty": False,
+    })
+    r = asyncio.run(upstream.sync_source("self"))
+    assert r["ok"] is False
+    assert "git checkout" in r["message"]
+
+
 # ---------------- back-compat shims ----------------
 
 def test_legacy_check_still_works(monkeypatch):

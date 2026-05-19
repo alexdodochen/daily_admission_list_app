@@ -94,7 +94,29 @@ def read_fg_options_from_sheet() -> tuple[list[str], list[str]] | None:
     return _fg_cache
 
 
+def _refresh_spreadsheet_metadata() -> None:
+    """Force the cached gspread Spreadsheet to re-pull its tab list.
+
+    The Spreadsheet object is memoised for the whole process; if a date
+    tab (e.g. 20260601) was created by ANOTHER running instance / machine
+    after this process opened the sheet, the cached metadata won't include
+    it → worksheet()/worksheets() silently miss the new tab. gspread
+    exposes fetch_sheet_metadata(); fall back to rebuilding _sh."""
+    global _sh
+    try:
+        sp = get_spreadsheet()
+        if hasattr(sp, "fetch_sheet_metadata"):
+            sp.fetch_sheet_metadata()
+            return
+    except Exception:
+        pass
+    # Last resort: drop the memoised Spreadsheet so the next call re-opens.
+    _sh = None
+
+
 def list_sheets() -> list[str]:
+    # Always reflect tabs created by other instances since we opened.
+    _refresh_spreadsheet_metadata()
     return [ws.title for ws in get_spreadsheet().worksheets()]
 
 
@@ -102,7 +124,14 @@ def get_worksheet(name: str):
     try:
         return get_spreadsheet().worksheet(name)
     except gspread.exceptions.WorksheetNotFound:
-        return None
+        # Could be a genuinely missing tab — or a stale cached tab list
+        # (tab created by another instance after we opened). Refresh once
+        # and retry before giving up.
+        _refresh_spreadsheet_metadata()
+        try:
+            return get_spreadsheet().worksheet(name)
+        except gspread.exceptions.WorksheetNotFound:
+            return None
 
 
 def read_range(ws, a1: str) -> list[list[str]]:

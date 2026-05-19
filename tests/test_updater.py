@@ -219,3 +219,40 @@ def test_apply_frozen_no_asset(monkeypatch):
     r = asyncio.run(updater.apply())
     assert r["ok"] is False
     assert "asset" in r["message"]
+
+
+def test_schedule_restart_frozen_exits_not_execv(monkeypatch):
+    """Regression: after a frozen zip-swap the swap .bat waits for THIS
+    exe to vanish. os.execv would re-run the OLD exe (same image name)
+    and dead-lock the bat. Frozen must os._exit, not os.execv."""
+    import os as _os
+
+    monkeypatch.setattr(updater, "is_frozen", lambda: True)
+    execv_called = {}
+    exit_called = {}
+    monkeypatch.setattr(_os, "execv",
+                        lambda *a: execv_called.setdefault("x", a))
+    monkeypatch.setattr(_os, "_exit",
+                        lambda code: exit_called.setdefault("code", code))
+
+    updater.schedule_restart(delay=0.0)
+    import time
+    time.sleep(0.1)
+    assert exit_called.get("code") == 0
+    assert "x" not in execv_called
+
+
+def test_schedule_restart_dev_uses_execv(monkeypatch):
+    import os as _os
+
+    monkeypatch.setattr(updater, "is_frozen", lambda: False)
+    execv_called = {}
+    monkeypatch.setattr(_os, "execv",
+                        lambda *a: execv_called.setdefault("x", a))
+    monkeypatch.setattr(_os, "_exit",
+                        lambda code: (_ for _ in ()).throw(
+                            AssertionError("should not _exit in dev")))
+    updater.schedule_restart(delay=0.0)
+    import time
+    time.sleep(0.1)
+    assert "x" in execv_called
