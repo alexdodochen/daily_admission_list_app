@@ -23,6 +23,7 @@ datas = [
     ("app/templates",   "app/templates"),
     ("app/bundled",     "app/bundled"),        # SA JSON + defaults.json
     ("app/VERSION",     "app"),
+    ("使用方法.txt",     "."),                  # end-user guide at bundle root
 ]
 # Cathlab lookup tables (id_maps / doctor_codes / schedule). .gitignore'd
 # (PHI), so this only fires on a LOCAL build where the dev disk has them —

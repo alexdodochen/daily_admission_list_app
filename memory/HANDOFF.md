@@ -13,6 +13,10 @@
      drop-in. New skill .claude/skills/package-distribute. @ 0b4e5d3
      (CI release v20260519-0244-0b4e5d3 — Step V verified: sha match,
      plain-language markers present, PHI/SA absent by design, zip ok).
+  3b. Added 使用方法.txt (Chinese end-user guide) at repo root,
+     bundled at zip root via packaging.spec datas ("使用方法.txt",".").
+     3 cathlab JSONs live at app/data/static/ (gitignored, PHI);
+     source mirror C:\...\每日入院名單 Claude\.
   3. Renamed exe/bundle → 行政總醫師.排班.Key班.入院 (user request).
      Release asset kept ASCII admission-app.zip (non-ASCII →
      action-gh-release "default.zip"). Updated packaging.spec,
