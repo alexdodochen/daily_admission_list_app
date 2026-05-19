@@ -10,9 +10,19 @@ description: >
 
 # package-distribute — turn this project into a usable .zip for someone else
 
-This app ships as a PyInstaller **onedir** bundle: a folder containing
-`每日入院名單.exe` + `_internal/`. The recipient unzips anywhere and
-double-clicks the exe; it serves `http://127.0.0.1:8766` and opens a browser.
+This app ships as a PyInstaller **onedir** bundle. The release asset is
+`admission-app.zip` (ASCII — see naming note below); inside it is a folder
+`行政總醫師.排班.Key班.入院/` containing `行政總醫師.排班.Key班.入院.exe`
++ `_internal/`. The recipient unzips anywhere and double-clicks the exe; it
+serves `http://127.0.0.1:8766` and opens a browser.
+
+**Naming invariant (do not break):** the bundle folder + exe are Chinese
+(`行政總醫師.排班.Key班.入院`, set by `packaging.spec` EXE/COLLECT `name=`).
+The **release-asset zip filename must stay ASCII** (`admission-app.zip`) —
+`action-gh-release` mangles a non-ASCII asset name to `default.zip`, and
+`updater.RELEASE_ASSET_NAME` matches the asset by exact name. Three places
+must agree: `packaging.spec` (`name=`), `release.yml` "Zip distribution"
+`-DestinationPath` + `files:`, and `updater.RELEASE_ASSET_NAME`.
 
 There are **two distribution paths**. Pick with the decision table, then
 ALWAYS run Step V (verification) before handing anything over.
@@ -43,8 +53,8 @@ release (the repo is public).
 
 CI (`.github/workflows/release.yml`) runs on every push to `main`:
 computes a `vYYYYMMDD-HHMM-<short>` tag, stamps `app/VERSION` from the git
-sha, builds with PyInstaller, zips `dist/每日入院名單` → `每日入院名單.zip`,
-and publishes a GitHub Release with that zip attached.
+sha, builds with PyInstaller, zips `dist/行政總醫師.排班.Key班.入院` →
+`admission-app.zip`, and publishes a GitHub Release with that zip attached.
 
 1. Make sure every change you want shipped is **committed and pushed to
    `main`**. (Push needs explicit user authorization — ask.)
@@ -60,7 +70,7 @@ and publishes a GitHub Release with that zip attached.
    CI run for that sha must be `status: completed`, `conclusion: success`.
    If still running, wait — do NOT hand-build instead (you would ship an
    unverified, possibly credential-bundled artifact).
-3. The release's `每日入院名單.zip` is the distributable. Give the
+3. The release's `admission-app.zip` is the distributable. Give the
    recipient: (a) the release download link, (b) **separately** their
    `service_account.json` (never in the same channel as anything public),
    (c) the drop-in instruction below.
@@ -68,7 +78,7 @@ and publishes a GitHub Release with that zip attached.
 
 ### Recipient drop-in instructions (Path A)
 
-> 1. 解壓 `每日入院名單.zip` 到任意資料夾，雙擊 `每日入院名單.exe`。
+> 1. 解壓 `admission-app.zip` 到任意資料夾，雙擊 `行政總醫師.排班.Key班.入院.exe`。
 > 2. 第一次會開到設定頁。把我另外給你的 `service_account.json` 放到設定頁
 >    顯示的「憑證資料夾 (DATA_DIR)」路徑裡。
 > 3. 重新整理設定頁，看到 Sheet / 服務帳號 顯示「系統預設 ✓」即可。
@@ -85,9 +95,12 @@ Follow `BUILD.md`. Summary:
 2. Verify `app/bundled/defaults.json` `sheet_id` is the intended Sheet.
 3. (Optional) the local build's `app/VERSION` is whatever is on disk — for
    a traceable build, stamp it like CI does (tag/sha/short/built_at).
-4. `pyinstaller packaging.spec --noconfirm` → `dist/每日入院名單/`.
-5. Zip the **whole** `dist/每日入院名單/` folder (PowerShell:
-   `Compress-Archive -Path dist/每日入院名單 -DestinationPath <name>.zip -Force`).
+4. `pyinstaller packaging.spec --noconfirm` →
+   `dist/行政總醫師.排班.Key班.入院/`.
+5. Zip the **whole** `dist/行政總醫師.排班.Key班.入院/` folder to an ASCII
+   filename (PowerShell: `Compress-Archive -Path
+   "dist/行政總醫師.排班.Key班.入院" -DestinationPath admission-app.zip
+   -Force`).
 6. Run **Step V**. This zip contains a live credential → deliver only
    through a private channel, never a public location, never a GitHub
    release. Note its larger size (Chromium bundled, ~380 MB).
@@ -135,7 +148,8 @@ If any check fails → report which, do not deliver, fix root cause.
 
 - **"exe 無法啟動" + `WinError 10048` on bind 8766** = an instance is
   already running, NOT a build bug. Tell the user to open
-  `http://127.0.0.1:8766` or kill the existing `每日入院名單.exe`.
+  `http://127.0.0.1:8766` or kill the existing
+  `行政總醫師.排班.Key班.入院.exe`.
 - **Stale `dist/` / hand-zip.** File mtime ≠ build provenance. Trust only
   bundled `app/VERSION` sha (Step V.1).
 - **Never hand-rebuild to "save time" while CI is still running** — you
@@ -154,7 +168,8 @@ If any check fails → report which, do not deliver, fix root cause.
 - Repo: `https://github.com/alexdodochen/daily_admission_list_app`
 - CI: `.github/workflows/release.yml` (push:main → build+zip+release)
 - Local build doc: `BUILD.md`; spec: `packaging.spec`
-- Bundle layout: `每日入院名單/每日入院名單.exe` + `_internal/`
+- Asset: `admission-app.zip`; bundle layout inside:
+  `行政總醫師.排班.Key班.入院/行政總醫師.排班.Key班.入院.exe` + `_internal/`
 - VERSION truth: `_internal/app/VERSION` (`sha` field)
 - Port: `127.0.0.1:8766`
 - Credential drop-in (Path A): `service_account.json` → DATA_DIR shown on

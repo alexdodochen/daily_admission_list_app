@@ -41,7 +41,12 @@ API_BASE = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}"
 HTML_BASE = f"https://github.com/{REPO_OWNER}/{REPO_NAME}"
 
 # Release-asset filename uploaded by the GitHub Actions workflow.
-RELEASE_ASSET_NAME = "每日入院名單.zip"
+# MUST stay ASCII — a non-ASCII asset name gets mangled to "default.zip"
+# by action-gh-release, and `latest_release()` matches assets by exact
+# name. The Chinese bundle folder/exe (行政總醫師.排班.Key班.入院) live
+# INSIDE this zip; only the asset filename is ASCII. Must equal the
+# DestinationPath in .github/workflows/release.yml "Zip distribution".
+RELEASE_ASSET_NAME = "admission-app.zip"
 
 # repo root = parent of app/
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -225,12 +230,13 @@ def _write_swap_bat(install_dir: Path,
       - Relaunches the new .exe
       - Deletes itself
 
-    install_dir = the .exe folder currently running (e.g. C:\\...\\每日入院名單)
-    pending_inner = the freshly-extracted "每日入院名單" subfolder
+    install_dir = the .exe folder currently running
+                  (e.g. C:\\...\\行政總醫師.排班.Key班.入院)
+    pending_inner = the freshly-extracted same-named subfolder
     zip_path = the downloaded .zip
     extract_dir = parent of pending_inner (scratch dir)
     """
-    exe_name = install_dir.name + ".exe"   # 每日入院名單.exe
+    exe_name = install_dir.name + ".exe"   # 行政總醫師.排班.Key班.入院.exe
     parent = install_dir.parent
     bat_path = parent / "__update_swap__.bat"
 
@@ -305,7 +311,7 @@ async def _apply_frozen() -> dict:
     except Exception as e:
         return {"ok": False, "message": f"解壓失敗：{e}"}
 
-    # Expect extract_dir/每日入院名單/每日入院名單.exe
+    # Expect extract_dir/<bundle>/<bundle>.exe (bundle = install_dir.name)
     pending_inner = extract_dir / install_dir.name
     if not (pending_inner / f"{install_dir.name}.exe").exists():
         # Fall back: try any single top-level folder inside the zip

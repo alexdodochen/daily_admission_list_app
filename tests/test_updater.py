@@ -195,7 +195,7 @@ def test_check_frozen_same_tag_no_update(monkeypatch):
 
 
 def test_check_frozen_missing_asset_returns_error(monkeypatch):
-    """Release exists but no 每日入院名單.zip asset → can't update."""
+    """Release exists but no admission-app.zip asset → can't update."""
     monkeypatch.setattr(updater, "is_frozen", lambda: True)
     monkeypatch.setattr(updater, "current_version", lambda: {
         "sha": "x", "tag": "v1", "source": "file", "short": "x", "dirty": False,

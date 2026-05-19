@@ -5,7 +5,7 @@ PyInstaller spec for the daily-admission app.
 Build:
     pyinstaller packaging.spec --noconfirm
 
-Output: dist/每日入院名單/每日入院名單.exe (onedir).
+Output: dist/行政總醫師.排班.Key班.入院/行政總醫師.排班.Key班.入院.exe (onedir).
 
 Before running:
   1. Copy your real service-account JSON to app/bundled/service_account.json
@@ -91,7 +91,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="每日入院名單",
+    name="行政總醫師.排班.Key班.入院",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -112,5 +112,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="每日入院名單",
+    name="行政總醫師.排班.Key班.入院",
 )

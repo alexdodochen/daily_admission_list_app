@@ -30,22 +30,32 @@ pip install pyinstaller
 pyinstaller packaging.spec --noconfirm
 ```
 
-Output: `dist/admission-app/admission-app.exe` (onedir — a folder with the
-exe + an `_internal/` directory of DLLs).
+Output: `dist/行政總醫師.排班.Key班.入院/行政總醫師.排班.Key班.入院.exe`
+(onedir — a folder with the exe + an `_internal/` directory of DLLs).
+The bundle folder + exe are Chinese (set by `packaging.spec` EXE/COLLECT
+`name=`); the release-asset zip is ASCII `admission-app.zip` (a non-ASCII
+asset name gets mangled to `default.zip` by `action-gh-release`).
 
 To test:
 ```bash
-dist/admission-app/admission-app.exe
+"dist/行政總醫師.排班.Key班.入院/行政總醫師.排班.Key班.入院.exe"
 ```
 
-The app opens `http://127.0.0.1:8766` in a browser. User config is written
-to `dist/admission-app/user_data/config.json`, not the bundle, so the next
-build doesn't wipe the user's settings.
+The app opens `http://127.0.0.1:8766` in a browser. User config persists in
+`%LOCALAPPDATA%\admission-app\config.json` (DATA_DIR), not the bundle, so
+auto-update / rebuild doesn't wipe the user's settings.
 
 ## Distribution
 
-Zip the entire `dist/admission-app/` folder and send it to the new user.
-They unzip anywhere and double-click `admission-app.exe`.
+Zip the entire `dist/行政總醫師.排班.Key班.入院/` folder to an ASCII
+filename and send it to the new user:
+```powershell
+Compress-Archive -Path "dist/行政總醫師.排班.Key班.入院" `
+  -DestinationPath admission-app.zip -Force
+```
+They unzip anywhere and double-click `行政總醫師.排班.Key班.入院.exe`.
+(CI does this automatically — prefer the GitHub Release `admission-app.zip`;
+see skill `package-distribute`.)
 
 ## First-run: Chromium
 
@@ -53,7 +63,7 @@ Playwright's Chromium is **not** bundled (would add ~200 MB). On first run
 the user needs:
 
 ```bash
-<exe-folder>/admission-app.exe --install-browsers
+"<exe-folder>/行政總醫師.排班.Key班.入院.exe" --install-browsers
 ```
 
 or the app detects it and shows a "下載瀏覽器" button. (TODO: implement the

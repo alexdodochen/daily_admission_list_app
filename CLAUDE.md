@@ -34,7 +34,8 @@ playwright install chromium
 # 2. verify app/bundled/defaults.json sheet_id
 # 3. bump app/VERSION if shipping
 pyinstaller packaging.spec --noconfirm
-# Output: dist/admission-app/admission-app.exe (onedir)
+# Output: dist/行政總醫師.排班.Key班.入院/行政總醫師.排班.Key班.入院.exe (onedir)
+# Release asset is ASCII admission-app.zip (non-ASCII → action-gh-release "default.zip")
 ```
 
 There is no `.github/workflows/` directory in this clone — README mentions a `pytest.yml` CI but it is not present here; verify before referencing CI in commits.

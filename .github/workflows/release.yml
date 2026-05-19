@@ -83,28 +83,32 @@ jobs:
       - name: Verify build
         shell: pwsh
         run: |
-          $exe = "dist/每日入院名單/每日入院名單.exe"
+          $bundle = "行政總醫師.排班.Key班.入院"
+          $exe = "dist/$bundle/$bundle.exe"
           if (-not (Test-Path $exe)) { throw "Build missing: $exe" }
           $size = (Get-Item $exe).Length / 1MB
           Write-Output ("Built {0} ({1:N1} MB)" -f $exe, $size)
           # Folder size sanity check
-          $total = (Get-ChildItem dist/每日入院名單 -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB
+          $total = (Get-ChildItem "dist/$bundle" -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB
           Write-Output ("Total folder: {0:N0} MB" -f $total)
 
       - name: Zip distribution
         shell: pwsh
         run: |
           cd dist
-          # Compress-Archive handles Unicode paths fine on PowerShell 5.1+
-          Compress-Archive -Path "每日入院名單" -DestinationPath "每日入院名單.zip" -Force
-          $zipSize = (Get-Item "每日入院名單.zip").Length / 1MB
+          # Bundle folder + exe are Chinese (行政總醫師.排班.Key班.入院.exe);
+          # the RELEASE ASSET filename must stay ASCII or action-gh-release
+          # mangles the non-ASCII name to "default.zip". So zip to an ASCII
+          # name — the Chinese folder/exe are preserved INSIDE the zip.
+          Compress-Archive -Path "行政總醫師.排班.Key班.入院" -DestinationPath "admission-app.zip" -Force
+          $zipSize = (Get-Item "admission-app.zip").Length / 1MB
           Write-Output ("Zip: {0:N1} MB" -f $zipSize)
 
       - name: Upload artifact (debug only — kept for 7d)
         uses: actions/upload-artifact@v4
         with:
-          name: 每日入院名單-${{ steps.ver.outputs.tag }}
-          path: dist/每日入院名單.zip
+          name: admission-app-${{ steps.ver.outputs.tag }}
+          path: dist/admission-app.zip
           retention-days: 7
 
       - name: Create GitHub Release + upload zip
@@ -115,9 +119,9 @@ jobs:
           body: |
             自動建置 — commit `${{ steps.ver.outputs.short }}`
 
-            **安裝**：解壓 `每日入院名單.zip` 到任何資料夾 → 雙擊 `每日入院名單.exe`。
+            **安裝**：下載 `admission-app.zip` → 解壓到任何資料夾 → 雙擊 `行政總醫師.排班.Key班.入院.exe`。
             **更新**：app 內按「更新」按鈕，會自動下載最新 release 並換檔重啟。
 
             設定檔位置 `%LOCALAPPDATA%\admission-app\config.json` — 更新不會覆蓋。
           generate_release_notes: true
-          files: dist/每日入院名單.zip
+          files: dist/admission-app.zip
