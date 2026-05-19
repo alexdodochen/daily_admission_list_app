@@ -18,9 +18,21 @@
      error msg + status drop_dir now point at DATA_DIR.
   4. Tests: 338 passed (+6 regression across config/cathlab).
 
+[What this session ALSO did]
+  5. Step 1 OCR re-upload behavior changed per user rule: new
+     screenshot consulted for MEMBERSHIP ONLY. No add/remove →
+     write NOTHING (照舊, keyed cells survive). Add/remove → keep
+     each kept patient's A-L row VERBATIM, only drop removed +
+     append added; sub-table/N-V reconcile unchanged. UI message
+     de-jargoned (no "A2:L34"). 340 passed (+2 regression).
+     Trade-off: doctor-change-without-add/remove → 照舊 (not
+     auto-applied to main; UI just notes it).
+
 [Current state]
   - Branch: main. Pushed: 05e6e33 (SA fix), b7fd622 (cathlab UX),
-    c0d6cb2 (使用方法.txt one-folder wording).
+    c0d6cb2 (使用方法.txt one-folder wording), 8e595aa (docs sync).
+  - Uncommitted: app/services/ocr_service.py, app/static/app.js,
+    tests/test_ocr_service.py (the membership-only merge).
   - CI release v20260519-0638-c0d6cb2 published + STEP V VERIFIED:
     VERSION sha == HEAD, cathlab static absent (PHI-correct Path A),
     使用方法.txt at bundle root with new wording, zip+exe ok.

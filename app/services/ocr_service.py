@@ -233,23 +233,67 @@ def write_to_sheet(date: str, patients: list[dict],
         diff["sheet"]          = date
         return diff
 
-    # Snapshot sub-table state BEFORE overwriting A-L (the sub-tables live
-    # below main_end and aren't touched by the A:L write, but we read once
-    # for consistency).
-    pre_grid = sheet_service.read_range(ws, "A1:H500")
-    diff = diff_main_data(existing, patients) if existing else None
+    # ---- First-ever write (sheet empty): write the full OCR list. ----
+    if not existing:
+        body = _patients_to_ab_rows(patients)
+        end_row = 1 + len(body)
+        sheet_service.write_range(ws, f"A2:L{end_row}", body, raw=False)
+        return {
+            "rows": len(body), "sheet": date,
+            "range": f"A2:L{end_row}", "needs_confirm": False,
+            "subtable_update": {"updated": False},
+            "ordering_update": {"updated": False},
+        }
 
-    body = _patients_to_ab_rows(patients)
-    end_row = 1 + len(body)
-    sheet_service.write_range(ws, f"A2:L{end_row}", body, raw=False)
-    # Clear residual A-L rows if new patient list is shorter
+    # ---- Re-upload of a screenshot for a sheet that already has data. ----
+    # User rule (2026-05-19): the new screenshot is consulted ONLY for
+    # MEMBERSHIP — has anyone been added or removed?
+    #   * No add / no remove  → 照舊: touch NOTHING (every already-keyed
+    #     A-L cell + sub-table stays exactly as the user left it).
+    #   * Add / remove present → keep every kept patient's A-L row VERBATIM
+    #     (never re-write keyed cells from OCR), only DROP removed-chart
+    #     rows and APPEND new-chart rows; then reconcile sub-tables + N-V.
+    pre_grid = sheet_service.read_range(ws, "A1:H500")
+    diff = diff_main_data(existing, patients)
+
+    if not diff["added"] and not diff["removed"]:
+        return {
+            "rows": len(existing), "sheet": date,
+            "range": f"A2:L{1 + len(existing)}", "needs_confirm": False,
+            "unchanged": True,
+            "diff": {"added": [], "removed": [],
+                     "doctor_changed": diff["doctor_changed"]},
+            "subtable_update": {"updated": False},
+            "ordering_update": {"updated": False},
+        }
+
+    def _chart_of(row):
+        return (list(row) + [""] * 9)[8].strip()
+
+    removed_charts = {r["chart_no"] for r in diff["removed"]}
+    added_charts   = {a["chart_no"] for a in diff["added"]}
+
+    # Kept rows: existing A-L verbatim, minus removed, original order.
+    kept_rows = [
+        (list(row) + [""] * 12)[:12]
+        for row in existing
+        if _chart_of(row) not in removed_charts
+    ]
+    # Appended rows: OCR values only for the genuinely-new charts.
+    added_rows = _patients_to_ab_rows([
+        p for p in patients
+        if (p.get("chart_no") or "").strip() in added_charts
+    ])
+    merged = kept_rows + added_rows
+    end_row = 1 + len(merged)
+    sheet_service.write_range(ws, f"A2:L{end_row}", merged, raw=False)
     old_main_end = 1 + len(existing)
     if old_main_end > end_row:
         sheet_service.clear_range(ws, f"A{end_row + 1}:L{old_main_end}")
 
     sub_result: dict = {"updated": False}
     ordering_result: dict = {"updated": False}
-    if diff and (diff["added"] or diff["removed"] or diff["doctor_changed"]):
+    if diff["added"] or diff["removed"] or diff["doctor_changed"]:
         sub_result = _apply_diff_to_subtables(
             ws, pre_grid, diff, patients, format_check_service,
         )
@@ -263,8 +307,10 @@ def write_to_sheet(date: str, patients: list[dict],
                 ordering_result = {"updated": False, "error": str(e)}
 
     return {
-        "rows": len(body), "sheet": date,
+        "rows": len(merged), "sheet": date,
         "range": f"A2:L{end_row}", "needs_confirm": False,
+        "diff": {"added": diff["added"], "removed": diff["removed"],
+                 "doctor_changed": diff["doctor_changed"]},
         "subtable_update":   sub_result,
         "ordering_update":   ordering_result,
     }

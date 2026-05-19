@@ -986,23 +986,39 @@ async function step1Write(date, rows, allowOverwrite) {
       } else {
         flash($('#ocr-msg'), '取消寫入（已保留舊資料）', 'ok');
       }
+    } else if (r.unchanged) {
+      // Re-uploaded screenshot, same patients → nothing added/removed.
+      // We deliberately wrote NOTHING so every keyed value is preserved.
+      const dc = (r.diff && r.diff.doctor_changed) || [];
+      const dcNote = dc.length
+        ? `（偵測到 ${dc.length} 位主治醫師在新截圖不同，依設定維持原狀，未自動更動）`
+        : '';
+      flash($('#ocr-msg'),
+        `✓ 名單沒有新增或減少 — 維持原狀，沒有覆蓋任何已輸入的資料${dcNote}`,
+        'ok');
     } else {
-      // Auto-build sub-tables in the background so the user doesn't need to
-      // click an extra "Step 2" button — the sub-tables are derived from main
-      // A-L and there's no decision to make. Idempotent: server refuses to
-      // rebuild if sub-tables already exist (we silently swallow that error).
+      // Membership changed (someone added / removed). Kept patients' rows
+      // were preserved verbatim; only new rows appended / removed dropped.
+      // Auto-(re)build sub-tables — idempotent: server refuses if they
+      // already exist (the diff reconcile already ran server-side).
       let subNote = '';
       try {
         const fd2 = new FormData();
         fd2.append('date', date);
         const sr = await api('/api/step2/build_subtables', { method: 'POST', body: fd2 });
         const docCount = (sr.doctors || []).length;
-        // Feed the EMR step (UI ②) its patient list straight away so the user
-        // doesn't have to paste JSON — Step 1 just built the sub-tables.
         if (sr.patients && sr.patients.length) step2Ordered = sr.patients;
         if (docCount) subNote = `；子表格已建 ${docCount} 位醫師`;
       } catch (_) { /* sub-tables already exist or doctor list empty — fine */ }
-      flash($('#ocr-msg'), `✓ 已寫入 ${r.range}${subNote}`, 'ok');
+      const nAdd = (r.diff && r.diff.added || []).length;
+      const nDel = (r.diff && r.diff.removed || []).length;
+      const parts = [];
+      if (nAdd) parts.push(`新增 ${nAdd} 人`);
+      if (nDel) parts.push(`移除 ${nDel} 人`);
+      const chg = parts.length ? parts.join('、') : '已更新';
+      flash($('#ocr-msg'),
+        `✓ 名單已更新（${chg}）；其他病人原本輸入的資料保持不動${subNote}`,
+        'ok');
     }
   } catch (err) {
     flash($('#ocr-msg'), '✗ ' + err.message, 'err');

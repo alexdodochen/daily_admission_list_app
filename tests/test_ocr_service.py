@@ -224,6 +224,71 @@ def test_write_to_sheet_applies_when_confirmed(monkeypatch):
     assert any(c[0] == "A2:L3" for c in write_calls)
 
 
+def test_reupload_no_membership_change_is_noop(monkeypatch):
+    """Re-uploading a screenshot with the SAME patients → 照舊: write
+    NOTHING (keyed A-L cells must survive verbatim)."""
+    class FakeWS:
+        id = 999
+    fake_ws = FakeWS()
+    write_calls, clear_calls = [], []
+    monkeypatch.setattr(ocr_service.sheet_service, "ensure_date_sheet",
+                        lambda d: fake_ws)
+    monkeypatch.setattr(ocr_service.sheet_service, "ensure_chart_text_format",
+                        lambda ws: None)
+    # Existing row carries a user-keyed bed ("11A-01") OCR wouldn't know.
+    keyed = ["", "", "", "李文煌", "", "甲", "", "", "111", "11A-01", "", ""]
+    monkeypatch.setattr(ocr_service.sheet_service, "read_range",
+                        lambda ws, a1: [keyed] if a1 == "A2:L200" else [])
+    monkeypatch.setattr(ocr_service.sheet_service, "write_range",
+                        lambda *a, **kw: write_calls.append(a))
+    monkeypatch.setattr(ocr_service.sheet_service, "clear_range",
+                        lambda *a, **kw: clear_calls.append(a))
+    r = ocr_service.write_to_sheet(
+        "20260501", [_new("111", "甲", "李文煌")], allow_overwrite=True,
+    )
+    assert r["unchanged"] is True
+    assert write_calls == [] and clear_calls == []   # nothing touched
+
+
+def test_reupload_keeps_kept_rows_verbatim_on_membership_change(monkeypatch):
+    """Add + remove present → kept patient's A-L row is preserved EXACTLY
+    (not re-OCR'd); removed dropped; added appended from OCR."""
+    class FakeWS:
+        id = 999
+    fake_ws = FakeWS()
+    written = {}
+    monkeypatch.setattr(ocr_service.sheet_service, "ensure_date_sheet",
+                        lambda d: fake_ws)
+    monkeypatch.setattr(ocr_service.sheet_service, "ensure_chart_text_format",
+                        lambda ws: None)
+    keyed111 = ["2026-05-01", "", "CV", "李文煌", "I25.10", "甲", "M", "65",
+                "111", "11A-01", "VIP", ""]
+    monkeypatch.setattr(
+        ocr_service.sheet_service, "read_range",
+        lambda ws, a1: [keyed111] if a1 == "A2:L200" else [],
+    )
+    def fake_write(ws, a1, body, raw=False):
+        written["a1"] = a1
+        written["body"] = body
+    monkeypatch.setattr(ocr_service.sheet_service, "write_range", fake_write)
+    monkeypatch.setattr(ocr_service.sheet_service, "clear_range",
+                        lambda *a, **kw: None)
+    monkeypatch.setattr(ocr_service, "_apply_diff_to_subtables",
+                        lambda *a, **kw: {"updated": False})
+    r = ocr_service.write_to_sheet(
+        "20260501",
+        # 111 kept (but OCR now has DIFFERENT/blanker values), 999 added
+        [_new("111", "甲", "李文煌"), _new("999", "丁", "柯呈諭")],
+        allow_overwrite=True,
+    )
+    assert r.get("unchanged") is not True
+    # Row 0 = the untouched keyed 111 row (bed 11A-01, VIP hint survive)
+    assert written["body"][0] == keyed111
+    # Row 1 = the appended new patient 999 (from OCR)
+    assert written["body"][1][8] == "999"
+    assert len(written["body"]) == 2
+
+
 # --------------------- sub-table auto-update ---------------------
 
 from app.services import format_check_service as _fcs  # noqa: E402
