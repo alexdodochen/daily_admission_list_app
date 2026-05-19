@@ -1,69 +1,57 @@
 ============================================
-  HANDOFF — Last Updated: 2026-05-19 03:55
+  HANDOFF — Last Updated: 2026-05-19 14:30
 ============================================
 
 [What this session did]
-  1. Step 5 cathlab key-in UI de-jargoned + name "?" fix (321e95d,
-     CI release verified OK).
-  2. ROOT bug fixed: packaging.spec never bundled app/data/static →
-     Step 5 broke in every shipped exe. Two-ended fix + new skill
-     package-distribute (0b4e5d3, Step V verified).
-  3. Renamed exe/bundle → 行政總醫師.排班.Key班.入院; release asset
-     kept ASCII admission-app.zip (non-ASCII → action-gh-release
-     "default.zip"). 3 files synced (spec/release.yml/updater)
-     (1f86e70).
-  4. Added 使用方法.txt Chinese end-user guide (aae0cdf).
-  5. Step V on aae0cdf release found 使用方法.txt landed in _internal/
-     (PyInstaller 6.x forces datas there) → FIXED: removed from
-     packaging.spec datas, release.yml + BUILD.md now COPY it to the
-     bundle ROOT before zip; skill Step V.5 added. NOT yet committed.
+  1. Fixed SA service-account detection bug reported in the field
+     (麒翔 dropped SA into %LOCALAPPDATA%\admission-app but connection
+     failed with "No such file or directory: ''").
+  2. Root cause = two bugs stacked:
+     (a) appconfig._cached never reset → SA dropped AFTER first load()
+         stayed undetected for the process lifetime;
+     (b) save_settings unconditionally wrote the hidden/blank
+         google_creds_path form field as "" into config.json.
+  3. Fix (config.py + main.py) + 2 regression tests; 334 passed.
 
 [Current state]
-  - Branch: main, clean, IN SYNC with origin/main @ e1f9a1a.
-  - Latest release v20260519-0316-e1f9a1a — verified deliverable.
-  - Scratch cleaned (_wait_verify.py, _verify_release.zip removed).
-  - Tests: 332 passed (build-only fixes since; no code change).
-
-[DONE — distribution hardening fully shipped + verified]
-  - e1f9a1a pushed; CI release v20260519-0316-e1f9a1a published.
-  - Step V on that release: PASS — sha e1f9a1a, exe Chinese name,
-    使用方法.txt at bundle ROOT (NOT _internal/), zip ok. Deliverable.
+  - Branch: main, IN SYNC with origin (about to commit this fix).
+  - Uncommitted: app/config.py, app/main.py, tests/test_config.py.
+  - Tests: 334 passed (was 332 + 2 new regression tests).
+  - No new release built yet for this fix.
 
 [Next steps]
-  - Deliver 麒翔 from v20260519-0316-e1f9a1a: release link +
-    service_account.json + 3 cathlab JSONs (at app/data/static/,
-    gitignored PHI), all private/separate; "解壓後先讀 使用方法.txt".
-    Skill Path A. (NOT yet sent as of this handoff.)
-  - Optional: wire cathlab_static_status() into /settings drop-in card.
-  - Carry-over: /sched real-month solve→手調→套用重算 manual verify.
+  - Build + publish a new release carrying this fix so 麒翔 can
+    pure-drop the SA file with no manual steps. Then deliver per
+    package-distribute Path A.
+  - Tell 麒翔 the immediate workaround if he can't wait for the new
+    build: file must be named EXACTLY service_account.json (Windows
+    hides extensions → service_account.json.txt silently fails),
+    placed at C:\Users\Greg\AppData\Local\admission-app\, then FULLY
+    restart the app (clears stale _cached).
 
 [Known issues / blockers]
-  - Push to main gated — explicit user "授權 push" each time.
-  - RENAME = one-time auto-update break for any pre-rename install
-    (needs ONE manual re-download). [[bundle-naming-invariant]]
-  - Public CI release has NO SA / NO cathlab static (PHI by design);
-    Step 5 needs the 3 JSONs in DATA_DIR/cathlab_static.
-  - PyInstaller 6.x onedir forces datas → _internal/; root-level
-    files must be copied in the zip step, not via spec datas.
+  - Push to main gated — user authorized this session's push+release.
+  - package-distribute SKILL.md should warn recipients the dropped
+    file must be named exactly service_account.json — needs user
+    authorization to edit SKILL.md (flagged, not yet done).
+  - Public CI release still has NO SA / NO cathlab static (PHI by
+    design) — unchanged.
 
 [Don't repeat these mistakes]
-  - Don't trust file mtime for build provenance — only bundled
-    app/VERSION sha.
-  - Bundle naming: 3 files must agree, asset stays ASCII.
-    [[bundle-naming-invariant]]
-  - Never un-gitignore app/data/static (PHI). [[cathlab-static-decouple]]
-  - No engineering jargon in user-facing copy. [[no-column-letters-in-ui]]
-  - Always run Step V on the actual released zip before delivery —
-    it caught the _internal regression.
+  - appconfig._cached is process-global; any "drop a file then it
+    should be picked up" flow must call appconfig.reset_cache().
+  - Blank settings-form fields must NOT clobber bundle-supplied
+    values (mirror the llm_api_key / cathlab_pass guard).
+  - _detect_sa() only matches the literal name service_account.json.
 
 [Relevant files]
-  - packaging.spec (datas; 使用方法.txt NOT here by design)
-  - .github/workflows/release.yml (Copy 使用方法.txt → bundle root)
-  - BUILD.md (local copy step), .claude/skills/package-distribute
-  - app/services/{updater,cathlab_service}.py, 使用方法.txt
-  - app/templates/admission.html, app/static/app.js (Step 5 wording)
+  - app/config.py (save() re-detects SA on blank path; new
+    reset_cache())
+  - app/main.py (save_settings: don't wipe creds on blank submit;
+    /api/settings/test resets caches before re-load)
+  - tests/test_config.py (2 regression tests)
 
 [Important memory files]
-  - project_bundle_naming_invariant.md
-  - project_cathlab_static_decouple.md
-  - feedback_no_column_letters_in_ui.md (generalised 2026-05-19)
+  - project_cathlab_static_decouple.md (delivery context)
+  - project_bundle_naming_invariant.md (release asset naming)
+  - feedback_no_column_letters_in_ui.md

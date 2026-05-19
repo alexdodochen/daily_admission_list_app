@@ -10,6 +10,13 @@ import pytest
 
 from app import config as appconfig
 
+# Minimal shape that _looks_like_sa() accepts (no real key material).
+_SA_STUB = json.dumps({
+    "type": "service_account",
+    "private_key": "-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----\n",
+    "client_email": "test@example.iam.gserviceaccount.com",
+})
+
 
 @pytest.fixture(autouse=True)
 def _isolated_config(tmp_path, monkeypatch):
@@ -163,6 +170,53 @@ def test_bundled_sa_does_not_override_user_path(tmp_path, monkeypatch):
     )
     cfg = appconfig.load()
     assert cfg.google_creds_path == "C:/my/own/creds.json"
+
+
+def test_save_blank_creds_redetects_dropped_sa(tmp_path, monkeypatch):
+    """Regression: saving the settings page with a blank google_creds_path
+    (bundled builds hide that field) must NOT wipe a dropped SA — save()
+    re-detects it. Previously this blanked the path → connection failed
+    with "No such file or directory: ''"."""
+    sa_file = tmp_path / "service_account.json"
+    sa_file.write_text(_SA_STUB, encoding="utf-8")
+    monkeypatch.setattr(appconfig, "DATA_DIR", tmp_path)
+    cfg = appconfig.AppConfig(llm_provider="gemini", google_creds_path="")
+    appconfig.save(cfg)
+    assert cfg.google_creds_path == str(sa_file)
+    assert json.loads(appconfig.CONFIG_PATH.read_text())["google_creds_path"] \
+        == str(sa_file)
+
+
+def test_reset_cache_redetects_sa_dropped_after_first_load(tmp_path, monkeypatch):
+    """Regression: SA dropped AFTER first load() — stale _cached kept the
+    empty path forever. reset_cache() forces re-detection."""
+    monkeypatch.setattr(appconfig, "DATA_DIR", tmp_path)
+    cfg1 = appconfig.load()
+    assert cfg1.google_creds_path == ""          # SA not there yet
+    (tmp_path / "service_account.json").write_text(_SA_STUB, encoding="utf-8")
+    assert appconfig.load().google_creds_path == ""   # still stale-cached
+    appconfig.reset_cache()
+    assert appconfig.load().google_creds_path == str(
+        tmp_path / "service_account.json")
+
+
+def test_sa_detected_under_any_filename(tmp_path, monkeypatch):
+    """User may drop the Google-generated `project-abc123.json` as-is —
+    no exact rename required. It's normalised to service_account.json."""
+    monkeypatch.setattr(appconfig, "DATA_DIR", tmp_path)
+    (tmp_path / "cardiac-proj-9f3a21.json").write_text(_SA_STUB, encoding="utf-8")
+    cfg = appconfig.load()
+    assert cfg.google_creds_path == str(tmp_path / "service_account.json")
+    assert (tmp_path / "service_account.json").exists()
+
+
+def test_non_sa_json_in_data_dir_is_ignored(tmp_path, monkeypatch):
+    """A stray config-ish .json next to the app must not be mistaken
+    for a credential."""
+    monkeypatch.setattr(appconfig, "DATA_DIR", tmp_path)
+    (tmp_path / "settings-backup.json").write_text(
+        json.dumps({"sheet_id": "X"}), encoding="utf-8")
+    assert appconfig.load().google_creds_path == ""
 
 
 def test_bundled_flags_reports_what_is_available(tmp_path, monkeypatch):

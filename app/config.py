@@ -121,32 +121,75 @@ def _load_bundled_defaults() -> dict:
         return {}
 
 
+def _looks_like_sa(path: Path) -> bool:
+    """True if `path` is a Google service-account key JSON. Lets the user
+    drop the file under ANY name (the original Google-generated
+    `project-abc123.json`) instead of forcing an exact rename — Windows
+    hides extensions so a forced rename silently produces
+    `service_account.json.txt`, which used to break detection."""
+    try:
+        if path.suffix.lower() != ".json" or path.stat().st_size > 64 * 1024:
+            return False
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return (isinstance(data, dict)
+                and data.get("type") == "service_account"
+                and bool(data.get("private_key"))
+                and bool(data.get("client_email")))
+    except Exception:
+        return False
+
+
+def _scan_dir_for_sa(d: Path) -> Optional[Path]:
+    """First *.json in `d` whose content is a valid SA key (sorted for
+    determinism). The canonical `service_account.json` wins if present."""
+    try:
+        canonical = d / "service_account.json"
+        if canonical.exists() and _looks_like_sa(canonical):
+            return canonical
+        for p in sorted(d.glob("*.json")):
+            if _looks_like_sa(p):
+                return p
+    except Exception:
+        pass
+    return None
+
+
 def _detect_sa() -> Optional[Path]:
     """Find a service-account JSON the user dropped in, in priority order.
 
     Public CI release builds ship WITHOUT a bundled credential (the SA must
     never land in a public GitHub Release). The shared SA is delivered to
-    the user as a single file via a private channel; they drop it next to
-    the exe (intuitive) and we migrate it into the persistent DATA_DIR so
-    it SURVIVES every auto-update (the exe folder is replaced wholesale).
+    the user as a single file via a private channel; they drop it into the
+    settings-page DATA_DIR (or next to the exe) UNDER ANY NAME, and we
+    migrate it into the persistent DATA_DIR as `service_account.json` so it
+    SURVIVES every auto-update (the exe folder is replaced wholesale).
 
     Order:
-      1. DATA_DIR/service_account.json   — persistent, survives updates
-      2. <exe>/service_account.json      — intuitive drop spot (frozen)
-      3. <exe>/user_data/service_account.json  — legacy layout
-      4. BUNDLED_SA                      — only in hand-built (non-CI) zips
+      1. DATA_DIR/<any valid SA *.json>   — persistent, survives updates
+      2. <exe>/<any valid SA *.json>      — intuitive drop spot (frozen)
+      3. <exe>/user_data/<any valid SA>   — legacy layout
+      4. BUNDLED_SA                       — only in hand-built (non-CI) zips
     """
     persistent = DATA_DIR / "service_account.json"
-    if persistent.exists():
-        return persistent
 
-    candidates = []
+    found = _scan_dir_for_sa(DATA_DIR)
+    if found is not None:
+        if found == persistent:
+            return persistent
+        # Normalise any-named drop-in → canonical name so it's stable.
+        try:
+            persistent.write_bytes(found.read_bytes())
+            return persistent
+        except Exception:
+            return found
+
+    search_dirs = []
     if getattr(sys, "frozen", False):
         exe_dir = Path(sys.executable).parent
-        candidates += [exe_dir / "service_account.json",
-                       exe_dir / "user_data" / "service_account.json"]
-    for c in candidates:
-        if c.exists():
+        search_dirs += [exe_dir, exe_dir / "user_data"]
+    for d in search_dirs:
+        c = _scan_dir_for_sa(d)
+        if c is not None:
             # Migrate into DATA_DIR so the next auto-update keeps it.
             try:
                 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -227,8 +270,23 @@ def load() -> AppConfig:
     return _cached
 
 
+def reset_cache() -> None:
+    """Drop the cached AppConfig so the next load() re-runs bundle / SA
+    detection. Call after the user drops service_account.json into DATA_DIR
+    without restarting the app (the file may appear AFTER first load())."""
+    global _cached
+    _cached = None
+
+
 def save(cfg: AppConfig) -> None:
     global _cached
+    # If the caller left the creds path blank (bundled builds hide that
+    # field), re-detect a dropped / bundled SA now so saving the settings
+    # page doesn't blank out a perfectly good credential.
+    if not (cfg.google_creds_path or "").strip():
+        sa = _detect_sa()
+        if sa is not None:
+            cfg.google_creds_path = str(sa)
     _cached = cfg
     CONFIG_PATH.write_text(
         json.dumps(asdict(cfg), ensure_ascii=False, indent=2),

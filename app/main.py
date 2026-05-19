@@ -109,7 +109,11 @@ async def save_settings(
     if llm_api_key.strip():   # don't wipe existing key on blank submit
         cfg.llm_api_key = llm_api_key.strip()
     cfg.llm_model = llm_model.strip()
-    cfg.google_creds_path = google_creds_path.strip()
+    # Bundled builds hide this field (SA arrives via bundle / DATA_DIR drop-in),
+    # so a blank submit must NOT wipe a path the user explicitly set before.
+    # Mirrors the llm_api_key / cathlab_pass "don't wipe on blank" pattern.
+    if google_creds_path.strip():
+        cfg.google_creds_path = google_creds_path.strip()
     cfg.sheet_id = sheet_id.strip()
     cfg.schedule_sheet_id = schedule_sheet_id.strip()
     if emr_base_url.strip():
@@ -130,6 +134,11 @@ async def save_settings(
 
 @app.get("/api/settings/test")
 async def test_settings():
+    # The user may have dropped service_account.json into DATA_DIR AFTER the
+    # app first loaded config (stale _cached → empty creds path). Re-detect.
+    appconfig.reset_cache()
+    sheet_service.reset_cache()
+    scheduling_service.reset_cache()
     cfg = appconfig.load()
     result = {"llm": None, "sheet": None, "schedule_sheet": None}
     # LLM ping
