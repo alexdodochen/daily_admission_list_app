@@ -421,9 +421,13 @@ async def api_step5_verify(date: str = Form(...)):
 
 
 @app.post("/api/step5/keyin")
-async def api_step5_keyin(date: str = Form(...), dry_run: str = Form("no")):
+async def api_step5_keyin(date: str = Form(...), dry_run: str = Form("no"),
+                          overrides: str = Form("")):
     try:
-        result = await cathlab_service.keyin(date, dry_run=(dry_run == "yes"))
+        import json as _json
+        ov = _json.loads(overrides) if overrides.strip() else None
+        result = await cathlab_service.keyin(
+            date, dry_run=(dry_run == "yes"), overrides=ov)
         return {"ok": True, **result}
     except Exception as e:
         raise HTTPException(500, str(e))

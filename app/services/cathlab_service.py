@@ -280,7 +280,9 @@ def read_patients(date: str) -> list[dict]:
             continue
         if col_a and r[1].strip() and current_doctor:
             seq += 1
-            name = col_a
+            # Strip the OCR "?" / "？" uncertainty mark so it never leaks
+            # into the dry-run table or WEBCVIS keyin (same rule as Step 3).
+            name = re.sub(r"[?？]+\s*$", "", col_a).strip()
             chart = r[1].strip()
             emr  = r[2]      # C col (EMR raw with age/gender prefix); keep newlines
             note = r[7].strip()
@@ -672,10 +674,37 @@ async def _upt_patient(page, p: dict) -> dict:
     return {"chart": chart, "name": p["name"], "result": "ok"}
 
 
-async def keyin(admit_date: str, dry_run: bool = False) -> dict:
+def _apply_overrides(patients: list[dict], overrides: dict | None) -> None:
+    """Apply user's manual dry-run edits (keyed by chart no) onto the enriched
+    plan, in place. Only whitelisted fields — diag/proc IDs stay computed.
+    session='非時段'/'OFF' → in_schedule False (cosmetic; ADD uses room/time/note).
+    """
+    if not overrides:
+        return
+    allowed = ("second_doctor", "third_doctor", "note_out",
+               "room", "time", "session")
+    for p in patients:
+        ov = overrides.get(p.get("chart", ""))
+        if not ov:
+            continue
+        for k in allowed:
+            if k in ov and ov[k] is not None:
+                p[k] = str(ov[k]).strip()
+        sess = (ov.get("session") or "").strip()
+        if sess in ("OFF", "非時段"):
+            p["session"] = "OFF"
+            p["in_schedule"] = False
+        elif sess in ("AM", "PM"):
+            p["in_schedule"] = True
+
+
+async def keyin(admit_date: str, dry_run: bool = False,
+                overrides: dict | None = None) -> dict:
     """
     Real WEBCVIS ADD + UPT for all non-skipped patients.
     dry_run=True → returns the plan without launching a browser.
+    overrides: {chart: {second_doctor, third_doctor, note_out, room, time,
+    session}} — user's manual edits from the dry-run table, applied verbatim.
     """
     cfg = appconfig.load()
     if not dry_run:
@@ -683,6 +712,7 @@ async def keyin(admit_date: str, dry_run: bool = False) -> dict:
             raise RuntimeError("請先在設定頁填入 WEBCVIS URL / 帳號 / 密碼")
 
     patients = _enrich(read_patients(admit_date), admit_date)
+    _apply_overrides(patients, overrides)
     active = [p for p in patients if not p["skip"]]
     skipped = [p for p in patients if p["skip"]]
 

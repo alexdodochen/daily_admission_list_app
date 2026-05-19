@@ -1377,19 +1377,63 @@ function setupStep4() {
 function setupStep5() {
   const out = () => $('#s5-output');
 
+  // attribute-safe escape for editable input values
+  const esc = s => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+
   const renderPlan = (plan, skipped) => {
     const blocks = Object.entries(plan).map(([d, pts]) => {
       const body = pts.map(p => {
         const diagCell = p.diag_id ? `${p.diag_label} <span class="hint">[${p.diag_id}]</span>` : `<span class="err">${p.diag || '—'}（無對應 ID）</span>`;
         const procCell = p.proc_id ? `${p.proc_label} <span class="hint">[${p.proc_id}]</span>` : (p.cath ? `<span class="err">${p.cath}（無對應 ID → 進備註）</span>` : '—');
-        const sessionTag = p.in_schedule === false || p.session === 'OFF' ? '<span class="err">非時段</span>' : p.session;
-        const doctorCell = p.second_doctor ? `${p.doctor}<br><span class="hint">+${p.second_doctor}</span>` : p.doctor;
-        return `<tr><td>${p.seq}</td><td>${doctorCell}</td><td>${p.name}</td><td>${p.chart}</td><td>${sessionTag}</td><td>${p.room}</td><td>${p.time}</td><td>${diagCell}</td><td>${procCell}</td><td>${p.note_out || ''}</td></tr>`;
+        const isOff = (p.in_schedule === false || p.session === 'OFF');
+        const curSess = isOff ? '非時段' : (p.session || '');
+        const ov = f => `data-chart="${esc(p.chart)}" data-field="${f}" class="plan-ov"`;
+        const opt = v => `<option${curSess === v ? ' selected' : ''}>${v}</option>`;
+        const sessionCell = `<select ${ov('session')} data-doctor="${esc(p.doctor)}">${opt('AM')}${opt('PM')}${opt('非時段')}</select>`;
+        const secondInput = `<input ${ov('second_doctor')} value="${esc(p.second_doctor || '')}" placeholder="第二主治" style="width:80px">`;
+        const roomCell = `<input ${ov('room')} value="${esc(p.room || '')}" style="width:46px">`;
+        const timeCell = `<input ${ov('time')} value="${esc(p.time || '')}" style="width:54px">`;
+        const noteCell = `<input ${ov('note_out')} value="${esc(p.note_out || '')}" style="width:100%;min-width:140px">`;
+        return `<tr><td>${p.seq}</td><td>${esc(p.doctor)}<br>${secondInput}</td><td>${esc(p.name)}</td><td>${esc(p.chart)}</td><td>${sessionCell}</td><td>${roomCell}</td><td>${timeCell}</td><td>${diagCell}</td><td>${procCell}</td><td>${noteCell}</td></tr>`;
       }).join('');
-      return `<h3>${d} — ${pts.length} 位</h3><table class="data"><thead><tr><th>#</th><th>主治</th><th>姓名</th><th>病歷</th><th>時段</th><th>房</th><th>時間</th><th>術前診斷</th><th>預計心導管</th><th>註記</th></tr></thead><tbody>${body}</tbody></table>`;
+      return `<h3>${d} — ${pts.length} 位</h3><table class="data plan-table"><thead><tr><th>#</th><th>主治 / 第二主治</th><th>姓名</th><th>病歷</th><th>時段</th><th>房</th><th>時間</th><th>術前診斷</th><th>預計心導管</th><th>註記</th></tr></thead><tbody>${body}</tbody></table>`;
     }).join('');
-    const skips = skipped.length ? `<h3>跳過 ${skipped.length} 位</h3><ul>${skipped.map(p => `<li>${p.doctor} ${p.name} (${p.chart}) — ${p.note}</li>`).join('')}</ul>` : '';
-    return blocks + skips;
+    const skips = skipped.length ? `<h3>跳過 ${skipped.length} 位</h3><ul>${skipped.map(p => `<li>${esc(p.doctor)} ${esc(p.name)} (${esc(p.chart)}) — ${esc(p.note)}</li>`).join('')}</ul>` : '';
+    const editHint = blocks ? `<p class="hint">✎ 時段 / 房 / 時間 / 第二主治 / 註記 可直接在表格上手動修改，改完按「Keyin」會用修改後的值寫入 WEBCVIS（術前診斷/預計心導管請在 Step 4 改）。改「時段」會自動帶入時間（AM 06xx / PM 18xx / 非時段 21xx，同醫師當日依序 +1 分），需要再微調。</p>` : '';
+    return editHint + blocks + skips;
+  };
+
+  // Auto-fill 時間(+房) when the user changes a row's 時段, mirroring the
+  // backend compute_time(): AM 0600+ / PM 1800+ / 非時段 2100+, +index where
+  // index = preceding rows of the SAME doctor in that date table (matches
+  // _enrich's per-(cath,doctor) counter, skips excluded from the table).
+  const TIME_BASE = { AM: 6 * 60, PM: 18 * 60, '非時段': 21 * 60 };
+  const wirePlanAuto = () => {
+    out().querySelectorAll('select.plan-ov[data-field="session"]').forEach(sel => {
+      sel.addEventListener('change', () => {
+        const doctor = sel.dataset.doctor || '';
+        const tr = sel.closest('tr'), tbody = sel.closest('tbody');
+        if (!tr || !tbody) return;
+        let idx = 0;
+        for (const s of tbody.querySelectorAll('select.plan-ov[data-field="session"]')) {
+          if (s === sel) break;
+          if ((s.dataset.doctor || '') === doctor) idx++;
+        }
+        const base = TIME_BASE[sel.value];
+        if (base != null) {
+          const m = base + idx;
+          const t = String(Math.floor(m / 60)).padStart(2, '0') +
+                    String(m % 60).padStart(2, '0');
+          const ti = tr.querySelector('input.plan-ov[data-field="time"]');
+          if (ti) ti.value = t;
+        }
+        if (sel.value === '非時段') {
+          const ri = tr.querySelector('input.plan-ov[data-field="room"]');
+          if (ri) ri.value = 'H1';
+        }
+      });
+    });
   };
 
   $('#plan5-btn').addEventListener('click', async () => {
@@ -1400,6 +1444,7 @@ function setupStep5() {
       try {
         const r = await api(`/api/step5/plan?date=${date}`);
         out().innerHTML = renderPlan(r.plan, r.skipped);
+        wirePlanAuto();
         flash($('#s5-msg'), '✓ 計畫已產出（未寫入 WEBCVIS）', 'ok');
       } catch (err) {
         flash($('#s5-msg'), '✗ ' + err.message, 'err');
@@ -1433,9 +1478,17 @@ function setupStep5() {
     const date = $('#date-input').value.trim();
     if (!date) return flash($('#s5-msg'), '請填日期', 'err');
     if (!confirm('這會開啟 Playwright 實際新增導管排程到 WEBCVIS（ADD + UPT）。確定繼續？')) return;
+    // Collect manual edits from the dry-run table (if a plan is on screen).
+    const ov = {};
+    out().querySelectorAll('.plan-ov').forEach(el => {
+      const c = el.dataset.chart, f = el.dataset.field;
+      if (!c || !f) return;
+      (ov[c] = ov[c] || {})[f] = el.value;
+    });
     await withBusy($('#keyin5-btn'), 'Key in 中…', async () => {
     flash($('#s5-msg'), '寫入 WEBCVIS 中…（會開瀏覽器）', 'ok');
     const fd = new FormData(); fd.append('date', date); fd.append('dry_run', 'no');
+    if (Object.keys(ov).length) fd.append('overrides', JSON.stringify(ov));
     try {
       const r = await api('/api/step5/keyin', { method: 'POST', body: fd });
       const addRows = (r.add || []).map(x => `<tr class="${x.result === 'ok' ? 'ok' : (x.result === 'skip' ? '' : 'bad')}"><td>${x.result}</td><td>${x.name}</td><td>${x.chart}</td><td>${x.reason || ''}</td></tr>`).join('');
