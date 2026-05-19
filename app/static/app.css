@@ -411,6 +411,25 @@ button.viewer-src-tab.active { background: var(--accent); color: #fff; }
 }
 .subtitle { color: var(--muted); font-size: 14px; margin: 4px 0 18px; }
 
+/* Step 5 dry-run editable fields — strong black border so the user can
+   tell at a glance which boxes are hand-editable before keyin. */
+table.data td input.plan-ov,
+table.data td select.plan-ov,
+.plan-ov {
+  border: 2px solid #111;
+  border-radius: 4px;
+  background: #fffdf5;
+  padding: 3px 5px;
+  font-size: 13px;
+  font-family: inherit;
+}
+table.data td input.plan-ov:hover,
+table.data td select.plan-ov:hover,
+.plan-ov:hover { background: #fff8dc; }
+table.data td input.plan-ov:focus,
+table.data td select.plan-ov:focus,
+.plan-ov:focus { outline: 2px solid var(--accent); background: #fff; }
+
 /* Sheet viewer inline-edit feedback states (2026-05-15) */
 .viewer-modal td[contenteditable="true"] {
   cursor: text;

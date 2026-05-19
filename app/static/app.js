@@ -1392,7 +1392,11 @@ function setupStep5() {
         const opt = v => `<option${curSess === v ? ' selected' : ''}>${v}</option>`;
         const sessionCell = `<select ${ov('session')} data-doctor="${esc(p.doctor)}">${opt('AM')}${opt('PM')}${opt('非時段')}</select>`;
         const secondInput = `<input ${ov('second_doctor')} value="${esc(p.second_doctor || '')}" placeholder="第二主治" style="width:80px">`;
-        const roomCell = `<input ${ov('room')} value="${esc(p.room || '')}" style="width:46px">`;
+        const curRoom = (p.room || '').trim();
+        const roomList = ['H1', 'H2', 'C1', 'C2'];
+        const roomOpts = (roomList.includes(curRoom) || !curRoom ? roomList : [curRoom, ...roomList])
+          .map(rm => `<option${rm === curRoom ? ' selected' : ''}>${esc(rm)}</option>`).join('');
+        const roomCell = `<select ${ov('room')}>${roomOpts}</select>`;
         const timeCell = `<input ${ov('time')} value="${esc(p.time || '')}" style="width:54px">`;
         const noteCell = `<input ${ov('note_out')} value="${esc(p.note_out || '')}" style="width:100%;min-width:140px">`;
         return `<tr><td>${p.seq}</td><td>${esc(p.doctor)}<br>${secondInput}</td><td>${esc(p.name)}</td><td>${esc(p.chart)}</td><td>${sessionCell}</td><td>${roomCell}</td><td>${timeCell}</td><td>${diagCell}</td><td>${procCell}</td><td>${noteCell}</td></tr>`;
@@ -1429,7 +1433,7 @@ function setupStep5() {
           if (ti) ti.value = t;
         }
         if (sel.value === '非時段') {
-          const ri = tr.querySelector('input.plan-ov[data-field="room"]');
+          const ri = tr.querySelector('select.plan-ov[data-field="room"]');
           if (ri) ri.value = 'H1';
         }
       });
