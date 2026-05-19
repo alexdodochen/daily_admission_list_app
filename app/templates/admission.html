@@ -133,12 +133,27 @@
 </section>
 
 <section class="card panel hidden" data-panel="5">
-  <h2>Step 5 — 導管排程（WEBCVIS）</h2>
-  <p class="hint">資料驅動：讀子表格（統整資料）→ 算每位 cath_date → 規劃/驗證/keyin。</p>
+  <h2>Step 5 — 導管排程（自動 key 進 WEBCVIS 心導管室排程系統）</h2>
+  <p class="hint">系統會讀每位病人的統整資料（術前診斷 / 預計心導管 / 排程日），自動幫你 key 進 WEBCVIS。請依序按 ① → ②（可省略）→ ③。</p>
+
+  <details class="hint" style="margin:6px 0">
+    <summary>這三個按鈕在做什麼？（點開看說明）</summary>
+    <ul>
+      <li><strong>① 預覽排程</strong>：只在畫面上列出「將會 key 什麼」，<u>不會碰 WEBCVIS</u>。表格裡的時段 / 房 / 時間 / 第二主治 / 註記可以直接手動修改，改完再按 ③，會用你改後的值寫入。（術前診斷 / 預計心導管請回 ③ 入院序整合那一步改）</li>
+      <li><strong>② 與現有排程對照</strong>：登入 WEBCVIS 查一遍，比對「哪些病人已經在排程裡、哪些還沒」。只查不寫，按之前可先確認現況。可省略，直接做 ③ 也會自動先查。</li>
+      <li><strong>③ 開始 key in 排程</strong>：實際開瀏覽器把排程寫進 WEBCVIS。分兩階段自動完成：
+        <ul>
+          <li><strong>第一階段「建立排程」</strong>：把病人新增到當天的導管排程（已經在排程裡的會自動略過，不會重複）。</li>
+          <li><strong>第二階段「補上診斷與術式」</strong>：回頭把每位病人的<u>術前診斷</u>與<u>預計心導管術式</u>填進排程明細欄位（系統內部叫 pdijson / phcjson，就是這兩欄的資料格式，使用者不用理）。</li>
+        </ul>
+        最後會自動再查一次，確認每位病人都真的寫進去了。</li>
+    </ul>
+  </details>
+
   <div class="actions">
-    <button id="plan5-btn">計畫（dry-run）</button>
-    <button id="verify5-btn">驗證（登入 WEBCVIS 查）</button>
-    <button id="keyin5-btn">Keyin（ADD + UPT 到 WEBCVIS）</button>
+    <button id="plan5-btn">① 預覽排程（不寫入，可在表上修改）</button>
+    <button id="verify5-btn">② 與現有排程對照（只查，不寫入）</button>
+    <button id="keyin5-btn">③ 開始 key in 排程（寫入 WEBCVIS）</button>
     <span id="s5-msg" class="msg"></span>
   </div>
   <div id="s5-output"></div>

@@ -1381,6 +1381,14 @@ function setupStep5() {
   const esc = s => String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 
+  // Display-layer safety net: strip the OCR uncertainty mark / replacement
+  // glyph so the user never sees 「翁潘淑琴?」 in Step 5, regardless of what
+  // the sheet sub-table or an older build wrote. Backend already strips on
+  // read (cathlab_service.read_patients) — this just guarantees the UI too.
+  const cleanName = s => String(s == null ? '' : s)
+    .replace(/[?？�⁇‽]+\s*$/u, '').trim();
+  const escName = s => esc(cleanName(s));
+
   const renderPlan = (plan, skipped) => {
     const blocks = Object.entries(plan).map(([d, pts]) => {
       const body = pts.map(p => {
@@ -1399,12 +1407,12 @@ function setupStep5() {
         const roomCell = `<select ${ov('room')}>${roomOpts}</select>`;
         const timeCell = `<input ${ov('time')} value="${esc(p.time || '')}" style="width:54px">`;
         const noteCell = `<input ${ov('note_out')} value="${esc(p.note_out || '')}" style="width:100%;min-width:140px">`;
-        return `<tr><td>${p.seq}</td><td>${esc(p.doctor)}<br>${secondInput}</td><td>${esc(p.name)}</td><td>${esc(p.chart)}</td><td>${sessionCell}</td><td>${roomCell}</td><td>${timeCell}</td><td>${diagCell}</td><td>${procCell}</td><td>${noteCell}</td></tr>`;
+        return `<tr><td>${p.seq}</td><td>${esc(p.doctor)}<br>${secondInput}</td><td>${escName(p.name)}</td><td>${esc(p.chart)}</td><td>${sessionCell}</td><td>${roomCell}</td><td>${timeCell}</td><td>${diagCell}</td><td>${procCell}</td><td>${noteCell}</td></tr>`;
       }).join('');
       return `<h3>${d} — ${pts.length} 位</h3><table class="data plan-table"><thead><tr><th>#</th><th>主治 / 第二主治</th><th>姓名</th><th>病歷</th><th>時段</th><th>房</th><th>時間</th><th>術前診斷</th><th>預計心導管</th><th>註記</th></tr></thead><tbody>${body}</tbody></table>`;
     }).join('');
-    const skips = skipped.length ? `<h3>跳過 ${skipped.length} 位</h3><ul>${skipped.map(p => `<li>${esc(p.doctor)} ${esc(p.name)} (${esc(p.chart)}) — ${esc(p.note)}</li>`).join('')}</ul>` : '';
-    const editHint = blocks ? `<p class="hint">✎ 時段 / 房 / 時間 / 第二主治 / 註記 可直接在表格上手動修改，改完按「Keyin」會用修改後的值寫入 WEBCVIS（術前診斷/預計心導管請在 Step 4 改）。改「時段」會自動帶入時間（AM 06xx / PM 18xx / 非時段 21xx，同醫師當日依序 +1 分），需要再微調。</p>` : '';
+    const skips = skipped.length ? `<h3>不排（跳過）${skipped.length} 位</h3><ul>${skipped.map(p => `<li>${esc(p.doctor)} ${escName(p.name)} (${esc(p.chart)}) — ${esc(p.note)}</li>`).join('')}</ul>` : '';
+    const editHint = blocks ? `<p class="hint">✎ 時段 / 房 / 時間 / 第二主治 / 註記 可直接在表格上手動修改，改完按「③ 開始 key in 排程」會用修改後的值寫入 WEBCVIS（術前診斷／預計心導管請回「③ 入院序整合」那一步改）。改「時段」會自動帶入時間（AM 06xx / PM 18xx / 非時段 21xx，同醫師當日依序 +1 分），需要時再微調。</p>` : '';
     return editHint + blocks + skips;
   };
 
@@ -1459,19 +1467,19 @@ function setupStep5() {
   $('#verify5-btn').addEventListener('click', async () => {
     const date = $('#date-input').value.trim();
     if (!date) return flash($('#s5-msg'), '請填日期', 'err');
-    if (!confirm('這會開啟 Playwright 登入 WEBCVIS 查詢排程，繼續？')) return;
-    await withBusy($('#verify5-btn'), '驗證中…', async () => {
+    if (!confirm('這會開啟瀏覽器登入 WEBCVIS 查一遍現有排程（只查不寫），繼續？')) return;
+    await withBusy($('#verify5-btn'), '比對中…', async () => {
     flash($('#s5-msg'), '登入 WEBCVIS 查詢中…', 'ok');
     const fd = new FormData(); fd.append('date', date);
     try {
       const r = await api('/api/step5/verify', { method: 'POST', body: fd });
-      const ok  = r.found.map(p => `<tr class="ok"><td>OK</td><td>${p.cath_date}</td><td>${p.doctor}</td><td>${p.name}</td><td>${p.chart}</td></tr>`).join('');
-      const bad = r.missing.map(p => `<tr class="bad"><td>NG</td><td>${p.cath_date}</td><td>${p.doctor}</td><td>${p.name}</td><td>${p.chart}</td></tr>`).join('');
-      const skip = r.skipped.map(p => `<tr><td>${p.unexpected_present ? '⚠ SKIP 卻在排程' : 'SKIP'}</td><td>—</td><td>${p.doctor}</td><td>${p.name}</td><td>${p.chart}</td></tr>`).join('');
-      out().innerHTML = `<p>OK ${r.totals.ok} / MISSING ${r.totals.missing} / SKIP ${r.totals.skip}</p>
-        <table class="data"><thead><tr><th>狀態</th><th>cath_date</th><th>主治</th><th>姓名</th><th>病歷</th></tr></thead>
+      const ok  = r.found.map(p => `<tr class="ok"><td>✓ 已在排程</td><td>${p.cath_date}</td><td>${p.doctor}</td><td>${escName(p.name)}</td><td>${p.chart}</td></tr>`).join('');
+      const bad = r.missing.map(p => `<tr class="bad"><td>✗ 還沒進排程</td><td>${p.cath_date}</td><td>${p.doctor}</td><td>${escName(p.name)}</td><td>${p.chart}</td></tr>`).join('');
+      const skip = r.skipped.map(p => `<tr><td>${p.unexpected_present ? '⚠ 標記不排卻在排程裡' : '— 不排（跳過）'}</td><td>—</td><td>${p.doctor}</td><td>${escName(p.name)}</td><td>${p.chart}</td></tr>`).join('');
+      out().innerHTML = `<p>已在排程 ${r.totals.ok} 位 / 還沒進排程 ${r.totals.missing} 位 / 不排 ${r.totals.skip} 位</p>
+        <table class="data"><thead><tr><th>狀態</th><th>導管日期</th><th>主治</th><th>姓名</th><th>病歷</th></tr></thead>
         <tbody>${bad}${ok}${skip}</tbody></table>`;
-      flash($('#s5-msg'), `✓ 驗證完成（${r.totals.missing} 筆遺漏）`, r.totals.missing ? 'err' : 'ok');
+      flash($('#s5-msg'), r.totals.missing ? `比對完成：還有 ${r.totals.missing} 位沒進排程` : '✓ 比對完成：應排的都已在排程裡', r.totals.missing ? 'err' : 'ok');
     } catch (err) {
       flash($('#s5-msg'), '✗ ' + err.message, 'err');
     }
@@ -1481,7 +1489,7 @@ function setupStep5() {
   $('#keyin5-btn').addEventListener('click', async () => {
     const date = $('#date-input').value.trim();
     if (!date) return flash($('#s5-msg'), '請填日期', 'err');
-    if (!confirm('這會開啟 Playwright 實際新增導管排程到 WEBCVIS（ADD + UPT）。確定繼續？')) return;
+    if (!confirm('這會開啟瀏覽器，實際把導管排程「寫進」WEBCVIS（先建立排程，再補上術前診斷與術式）。確定繼續？')) return;
     // Collect manual edits from the dry-run table (if a plan is on screen).
     const ov = {};
     out().querySelectorAll('.plan-ov').forEach(el => {
@@ -1495,17 +1503,20 @@ function setupStep5() {
     if (Object.keys(ov).length) fd.append('overrides', JSON.stringify(ov));
     try {
       const r = await api('/api/step5/keyin', { method: 'POST', body: fd });
-      const addRows = (r.add || []).map(x => `<tr class="${x.result === 'ok' ? 'ok' : (x.result === 'skip' ? '' : 'bad')}"><td>${x.result}</td><td>${x.name}</td><td>${x.chart}</td><td>${x.reason || ''}</td></tr>`).join('');
-      const uptRows = (r.upt || []).map(x => `<tr><td>${x.result}</td><td>${x.name}</td><td>${x.chart}</td><td>${x.reason || ''}</td></tr>`).join('');
-      const missRows = (r.missing_after || []).map(x => `<tr class="bad"><td>MISSING</td><td>${x.name}</td><td>${x.chart}</td><td>${x.cath_date}</td></tr>`).join('');
+      const rMap = { ok: '✓ 成功', skip: '— 已存在，略過', error: '✗ 失敗' };
+      const rCls = x => x === 'ok' ? 'ok' : (x === 'skip' ? '' : 'bad');
+      const rTxt = x => rMap[x] || x;
+      const addRows = (r.add || []).map(x => `<tr class="${rCls(x.result)}"><td>${rTxt(x.result)}</td><td>${escName(x.name)}</td><td>${x.chart}</td><td>${x.reason || ''}</td></tr>`).join('');
+      const uptRows = (r.upt || []).map(x => `<tr class="${rCls(x.result)}"><td>${rTxt(x.result)}</td><td>${escName(x.name)}</td><td>${x.chart}</td><td>${x.reason || ''}</td></tr>`).join('');
+      const missRows = (r.missing_after || []).map(x => `<tr class="bad"><td>✗ 沒寫進去</td><td>${escName(x.name)}</td><td>${x.chart}</td><td>${x.cath_date}</td></tr>`).join('');
       out().innerHTML = `
-        <h3>ADD（${r.summary.ok} 成功 / ${r.summary.skip} 略過 / ${r.summary.error} 錯）</h3>
-        <table class="data"><thead><tr><th>狀態</th><th>姓名</th><th>病歷</th><th>備註</th></tr></thead><tbody>${addRows}</tbody></table>
-        <h3>UPT（補 pdijson/phcjson）</h3>
-        <table class="data"><thead><tr><th>狀態</th><th>姓名</th><th>病歷</th><th>備註</th></tr></thead><tbody>${uptRows || '<tr><td colspan=4>無</td></tr>'}</tbody></table>
-        ${missRows ? `<h3>事後驗證 MISSING</h3><table class="data"><tbody>${missRows}</tbody></table>` : '<p class="ok">事後驗證全數存在</p>'}
-        <pre class="test-output">${(r.log || []).join('\n')}</pre>`;
-      flash($('#s5-msg'), r.summary.error ? `⚠ 有 ${r.summary.error} 筆錯誤` : '✓ keyin 完成', r.summary.error ? 'err' : 'ok');
+        <h3>第一階段 — 建立排程（成功 ${r.summary.ok} / 已存在略過 ${r.summary.skip} / 失敗 ${r.summary.error}）</h3>
+        <table class="data"><thead><tr><th>狀態</th><th>姓名</th><th>病歷</th><th>說明</th></tr></thead><tbody>${addRows}</tbody></table>
+        <h3>第二階段 — 補上術前診斷與預計術式（${(r.upt || []).length} 筆）</h3>
+        <table class="data"><thead><tr><th>狀態</th><th>姓名</th><th>病歷</th><th>說明</th></tr></thead><tbody>${uptRows || '<tr><td colspan=4>無（沒有需要補診斷／術式的病人）</td></tr>'}</tbody></table>
+        ${missRows ? `<h3>key in 後再查一次：有 ${(r.missing_after||[]).length} 位沒寫進排程</h3><table class="data"><thead><tr><th>狀態</th><th>姓名</th><th>病歷</th><th>導管日期</th></tr></thead><tbody>${missRows}</tbody></table>` : '<p class="ok">key in 後再查一次：應排的病人全部都在排程裡 ✓</p>'}
+        <details class="hint"><summary>詳細執行記錄（除錯用）</summary><pre class="test-output">${(r.log || []).join('\n')}</pre></details>`;
+      flash($('#s5-msg'), r.summary.error ? `⚠ 有 ${r.summary.error} 位寫入失敗，請看上方表格` : '✓ 排程已全部 key 進 WEBCVIS', r.summary.error ? 'err' : 'ok');
     } catch (err) {
       flash($('#s5-msg'), '✗ ' + err.message, 'err');
     }

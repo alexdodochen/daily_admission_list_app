@@ -282,7 +282,7 @@ def read_patients(date: str) -> list[dict]:
             seq += 1
             # Strip the OCR "?" / "？" uncertainty mark so it never leaks
             # into the dry-run table or WEBCVIS keyin (same rule as Step 3).
-            name = re.sub(r"[?？]+\s*$", "", col_a).strip()
+            name = re.sub(r"[?？�⁇‽]+\s*$", "", col_a).strip()
             chart = r[1].strip()
             emr  = r[2]      # C col (EMR raw with age/gender prefix); keep newlines
             note = r[7].strip()

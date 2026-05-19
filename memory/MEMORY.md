@@ -16,5 +16,5 @@
 - [Sheet writes must TEXT-format chart-no](feedback_sheet_writes_must_text_format_chart.md) — USER_ENTERED strips leading 0s; call ensure_chart_text_format BEFORE write
 - [All pages share topbar via extends base](feedback_all_pages_share_topbar.md) — sub-pages must extend base.html + disable Tailwind preflight; never copy-paste header
 - [F/G options come from Sheet 下拉選單 tab](feedback_fg_options_from_sheet_dropdown_tab.md) — Sheet col A=F / col D=G is canonical; hardcoded DIAG_RULES only as fallback
-- [No column letters in user-facing UI](feedback_no_column_letters_in_ui.md) — never F/G/N-V/T/U/Q to user; always 術前診斷/預計心導管/入院序/備註(住服)/改期 etc.
+- [No column letters / jargon in user-facing UI](feedback_no_column_letters_in_ui.md) — never F/G/N-V/T/U/Q NOR dry-run/ADD/UPT/pdijson/phcjson/OK-NG-SKIP nor OCR `?` to user; plain Chinese + foldable 說明
 - [F/G popup must show all on chevron click](feedback_fg_popup_must_show_all_on_click.md) — click ▼ = all options unfiltered; typing = filter; never use native datalist
