@@ -19,22 +19,29 @@
   4. Tests: 338 passed (+6 regression across config/cathlab).
 
 [Current state]
-  - Branch: main. 05e6e33 (SA fix) pushed to origin.
-  - Uncommitted (cathlab UX): app/services/cathlab_service.py,
-    app/main.py, tests/test_cathlab_service.py — NOT yet committed.
+  - Branch: main. Pushed: 05e6e33 (SA fix), b7fd622 (cathlab UX),
+    c0d6cb2 (使用方法.txt one-folder wording).
+  - CI release v20260519-0638-c0d6cb2 published + STEP V VERIFIED:
+    VERSION sha == HEAD, cathlab static absent (PHI-correct Path A),
+    使用方法.txt at bundle root with new wording, zip+exe ok.
+    NOTE: PyInstaller onedir packs app/*.py into PYZ — cannot grep
+    .py from the zip; provenance = VERSION sha + git ancestry only.
+  - SKILL.md package-distribute updated (one-folder drop, in-app
+    update protocol, rename caveat + version-detection, Step V.3
+    rewrite). UNCOMMITTED.
   - Tests: 338 passed.
-  - No new release built yet for either fix.
 
 [Next steps]
-  - Commit the cathlab loose-drop UX change (push gated — ask user).
-  - Build + publish ONE new release carrying both fixes; deliver to
-    麒翔 per package-distribute Path A. With both fixes he now only
-    needs to drop service_account.json + the 3 cathlab JSONs (any
-    names for SA; exact names for cathlab) LOOSE into the one folder
-    %LOCALAPPDATA%\admission-app, then press 測試連線 (no restart).
-  - package-distribute SKILL.md Path A wording should be simplified
-    to "drop all files into the one settings-page folder" — needs
-    user authorization to edit SKILL.md (flagged, not yet done).
+  - Commit + push the SKILL.md sync (push gated — ask user).
+  - Deliver to 麒翔 (existing install → Path A in-app update):
+    1. FIRST check his installed version (filename: Chinese
+       行政總醫師.排班.Key班.入院.exe = post-rename → just press 更新;
+       old name = pre-rename → ONE manual re-download of
+       v20260519-0638-c0d6cb2 admission-app.zip this time).
+    2. Privately, separately send service_account.json + 3 cathlab
+       JSONs; tell him to drop ALL 4 LOOSE into
+       %LOCALAPPDATA%\admission-app (no subfolder, SA name free),
+       then press 設定頁 測試連線 (no restart).
 
 [Known issues / blockers]
   - Push to main gated — user authorized this session's push+release.
