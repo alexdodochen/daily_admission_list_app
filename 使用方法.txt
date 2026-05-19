@@ -40,25 +40,26 @@
 
   也就是： C:\Users\你的Windows帳號\AppData\Local\admission-app
 
-放法：
+放法（很簡單，4 個檔全部丟進「同一個」資料夾就好）：
   1. 開啟上面那個資料夾（admission-app）
-  2. 把 (A) service_account.json 直接丟進「admission-app」資料夾裡
-  3. 在「admission-app」資料夾裡，新建一個子資料夾，
-     名字打：cathlab_static
-  4. 把 (B)(C)(D) 三個 cathlab JSON 丟進「cathlab_static」子資料夾裡
+  2. 把我給你的 4 個檔案（A 的 service_account.json
+     + B C D 三個 cathlab JSON）「全部直接丟進」admission-app
+     資料夾裡。不用新建子資料夾、不用改檔名。
+     （service_account.json 就算還是 Google 下載時的原始長檔名
+      也沒關係，程式會自己認）
 
   完成後結構長這樣：
 
     admission-app\
-      ├─ service_account.json          ← (A) 放這層
-      ├─ config.json                   （程式自動產生，不用理）
-      └─ cathlab_static\
-           ├─ cathlab_id_maps.json     ← (B)
-           ├─ doctor_codes.json        ← (C)
-           └─ cathlab_schedule.json    ← (D)
+      ├─ service_account.json          ← (A)
+      ├─ cathlab_id_maps.json          ← (B)
+      ├─ doctor_codes.json             ← (C)
+      ├─ cathlab_schedule.json         ← (D)
+      └─ config.json                   （程式自動產生，不用理）
 
-  5. 回到瀏覽器，重新整理設定頁
-     看到 Sheet / 服務帳號 顯示「系統預設 ✓」就成功了
+  3. 回到瀏覽器設定頁，按「測試連線」按鈕
+     看到 Sheet / 服務帳號 顯示綠色成功就完成了
+     （不用重開程式；若還沒成功，再按一次測試連線）
 
 
 ------------------------------------------------------------
@@ -89,13 +90,13 @@ Q1. 雙擊 exe 沒反應 / 一閃就關 / 說連接埠被佔用
      「行政總醫師.排班.Key班.入院.exe」→ 再雙擊一次。
 
 Q2. 設定頁一直顯示找不到 Sheet / 服務帳號
-   → 檢查 service_account.json 是否放對在 admission-app 資料夾
-     「最外層」（不是 cathlab_static 裡）。放完要重開程式。
+   → 檢查 service_account.json 有沒有丟進 admission-app 資料夾。
+     放完按設定頁「測試連線」（不用重開程式）。
 
 Q3. 導管排程那一步出現「找不到導管設定檔」
-   → cathlab 的 3 個 JSON 沒放對。要放在
-     admission-app\cathlab_static\ 子資料夾裡，三個都要。
-     放完重開程式。
+   → cathlab 的 3 個 JSON 沒放對。三個都要丟進
+     admission-app 資料夾（跟 service_account.json 同一層，
+     不用建子資料夾）。放完按設定頁「測試連線」即可。
 
 Q4. 黑色命令視窗可以關嗎？
    → 不行。那是程式本體，關掉等於關掉整個系統。
