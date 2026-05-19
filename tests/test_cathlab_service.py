@@ -169,3 +169,19 @@ def test_static_data_loadable():
     assert "CAD" in cs.id_maps()["diag"]
     assert "Left heart cath." in cs.id_maps()["proc"]
     assert "詹世鴻" in cs.schedule()["doctors"]
+
+
+def test_cathlab_static_status_present_in_dev():
+    st = cs.cathlab_static_status()
+    assert st["present"] is True
+    assert "cathlab_static" in st["drop_dir"]
+    assert st["files"] == list(cs._STATIC_FILES)
+
+
+def test_load_json_missing_raises_pointing_at_dropdir(tmp_path, monkeypatch):
+    # Simulate the public CI build: resolved dir has no JSONs → the error
+    # must tell the user exactly where to drop the 3 files.
+    monkeypatch.setattr(cs, "_static_dir", tmp_path)
+    with pytest.raises(FileNotFoundError) as e:
+        cs._load_json("cathlab_id_maps.json")
+    assert "cathlab_static" in str(e.value)

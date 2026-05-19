@@ -24,6 +24,14 @@ datas = [
     ("app/bundled",     "app/bundled"),        # SA JSON + defaults.json
     ("app/VERSION",     "app"),
 ]
+# Cathlab lookup tables (id_maps / doctor_codes / schedule). .gitignore'd
+# (PHI), so this only fires on a LOCAL build where the dev disk has them —
+# the public CI release intentionally lacks them and recipients drop the 3
+# JSONs into DATA_DIR/cathlab_static (see cathlab_service._resolve_static_dir).
+import os as _osd
+if _osd.path.isdir("app/data/static"):
+    datas.append(("app/data/static", "app/data/static"))
+
 # gspread ships certificates + small JSON assets; include them all
 datas += collect_data_files("gspread")
 datas += collect_data_files("google.auth")

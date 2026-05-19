@@ -57,8 +57,21 @@ LIU_BINGYAN_NAME = "劉秉彥"
 # full freetext preserved as the name (verified for 'Others:opd', 'Others:s/p HTx').
 OTHERS_PDI = "PDI20090908120008"
 
+# The 3 cathlab lookup tables. Kept .gitignore'd (PHI: doctor / chart-no
+# maps must not hit the public repo), so the public CI release CANNOT bundle
+# them. They are resolved at runtime, mirroring the service-account drop-in
+# decouple (config._detect_sa, commit 4acbcb8): a recipient of the public
+# build drops the 3 JSONs into DATA_DIR/cathlab_static and they survive
+# every auto-update. A local Path-B build bundles them via packaging.spec
+# (datas += app/data/static) and they resolve from APP_ROOT/data/static.
+_STATIC_FILES = ("cathlab_id_maps.json", "doctor_codes.json", "cathlab_schedule.json")
+_PRIMARY = _STATIC_FILES[0]
+
+# Legacy default (= APP_ROOT/data/static in practice); kept for any external
+# reference. Real resolution goes through _resolve_static_dir().
 STATIC_DIR = Path(__file__).resolve().parent.parent / "data" / "static"
 
+_static_dir: Optional[Path] = None
 _id_maps: Optional[dict] = None
 _doctor_codes: Optional[dict] = None
 _schedule: Optional[dict] = None
@@ -66,9 +79,76 @@ _schedule: Optional[dict] = None
 
 # ---------------------------------- static loaders ----------------------------------
 
+def _has_static(d: Path) -> bool:
+    try:
+        return (d / _PRIMARY).is_file()
+    except Exception:
+        return False
+
+
+def _resolve_static_dir() -> Path:
+    """
+    Find the dir holding the 3 cathlab JSONs. Priority:
+      1. DATA_DIR/cathlab_static   — persistent drop-in, survives auto-update
+      2. <exe>/cathlab_static, <exe>/static, <exe>  — intuitive frozen drop
+         spots; on hit, migrate the files into (1) so updates keep them
+      3. APP_ROOT/data/static      — bundled by Path-B local build / dev tree
+      4. STATIC_DIR (legacy)       — last resort
+    Returns the first dir that actually contains cathlab_id_maps.json; if
+    none do, returns the persistent dir so the error message points the user
+    at where to drop the files.
+    """
+    persistent = appconfig.DATA_DIR / "cathlab_static"
+    if _has_static(persistent):
+        return persistent
+
+    import sys
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).parent
+        for cand in (exe_dir / "cathlab_static", exe_dir / "static", exe_dir):
+            if _has_static(cand):
+                try:
+                    persistent.mkdir(parents=True, exist_ok=True)
+                    for fn in _STATIC_FILES:
+                        src = cand / fn
+                        if src.is_file():
+                            (persistent / fn).write_bytes(src.read_bytes())
+                    if _has_static(persistent):
+                        return persistent
+                except Exception:
+                    pass
+                return cand
+
+    bundled = appconfig.APP_ROOT / "data" / "static"
+    if _has_static(bundled):
+        return bundled
+    if _has_static(STATIC_DIR):
+        return STATIC_DIR
+    return persistent
+
+
 def _load_json(name: str) -> dict:
-    path = STATIC_DIR / name
+    global _static_dir
+    if _static_dir is None:
+        _static_dir = _resolve_static_dir()
+    path = _static_dir / name
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"找不到導管設定檔 {name}。請把 {', '.join(_STATIC_FILES)} "
+            f"放到：{appconfig.DATA_DIR / 'cathlab_static'}（放完重開 app）。"
+        )
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def cathlab_static_status() -> dict:
+    """For the settings page / diagnostics: are the 3 JSONs available?"""
+    d = _resolve_static_dir()
+    return {
+        "present": _has_static(d),
+        "source": str(d),
+        "drop_dir": str(appconfig.DATA_DIR / "cathlab_static"),
+        "files": list(_STATIC_FILES),
+    }
 
 
 def id_maps() -> dict:
