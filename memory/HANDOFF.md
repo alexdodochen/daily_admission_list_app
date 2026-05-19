@@ -1,5 +1,5 @@
 ============================================
-  HANDOFF — Last Updated: 2026-05-19 14:30
+  HANDOFF — Last Updated: 2026-05-19 17:20
 ============================================
 
 [What this session did]
@@ -50,46 +50,47 @@
      auto-applied to main; UI just notes it).
 
 [Current state]
-  - Branch: main. Pushed: 05e6e33 (SA fix), b7fd622 (cathlab UX),
-    c0d6cb2 (使用方法.txt one-folder wording), 8e595aa (docs sync).
-  - Uncommitted: app/services/ocr_service.py, app/static/app.js,
-    tests/test_ocr_service.py (the membership-only merge).
-  - CI release v20260519-0638-c0d6cb2 published + STEP V VERIFIED:
-    VERSION sha == HEAD, cathlab static absent (PHI-correct Path A),
-    使用方法.txt at bundle root with new wording, zip+exe ok.
-    NOTE: PyInstaller onedir packs app/*.py into PYZ — cannot grep
-    .py from the zip; provenance = VERSION sha + git ancestry only.
-  - SKILL.md package-distribute updated (one-folder drop, in-app
-    update protocol, rename caveat + version-detection, Step V.3
-    rewrite). UNCOMMITTED.
-  - Tests: 338 passed.
+  - Branch: main, clean, IN SYNC with origin. HEAD = (post d0f63e3 +
+    使用方法/HANDOFF doc commit). Full chain pushed this session:
+    05e6e33 SA fix → b7fd622 cathlab loose-drop → c0d6cb2 使用方法 →
+    8e595aa docs/skill sync → b81a5b2 OCR membership-only → 780a322
+    3 field bugs → d0f63e3 bug-report feature.
+  - Tests: 353 passed.
+  - CI builds a fresh release on every push; the LATEST release (sha
+    == current HEAD) is the deliverable. Step V verified earlier on
+    c0d6cb2; same checks apply to the newest (provenance = VERSION
+    sha == HEAD + git ancestry; cannot grep app/*.py from onedir zip).
 
 [Next steps]
-  - Commit + push the SKILL.md sync (push gated — ask user).
-  - Deliver to 麒翔 (existing install → Path A in-app update):
-    1. FIRST check his installed version (filename: Chinese
-       行政總醫師.排班.Key班.入院.exe = post-rename → just press 更新;
-       old name = pre-rename → ONE manual re-download of
-       v20260519-0638-c0d6cb2 admission-app.zip this time).
-    2. Privately, separately send service_account.json + 3 cathlab
-       JSONs; tell him to drop ALL 4 LOOSE into
-       %LOCALAPPDATA%\admission-app (no subfolder, SA name free),
-       then press 設定頁 測試連線 (no restart).
+  - Deliver to 麒翔 (existing install). His build is PRE-FIX → the
+    更新 button is itself broken → he MUST manually download the
+    latest zip ONCE:
+    https://github.com/alexdodochen/daily_admission_list_app/releases/latest
+    (settings folder untouched; after this build, 更新 works forever
+    AND Playwright chromium is correct). 使用方法.txt now documents
+    this + the 🐞 回報問題 button.
+  - Then privately + separately send service_account.json + 3 cathlab
+    JSONs; he drops ALL 4 LOOSE into %LOCALAPPDATA%\admission-app
+    (no subfolder, SA name free), presses 設定頁 測試連線 (no restart).
+  - Carry-over: /sched real-month solve→手調→套用重算 manual verify.
 
 [Known issues / blockers]
-  - Push to main gated — user authorized this session's push+release.
-  - package-distribute SKILL.md should warn recipients the dropped
-    file must be named exactly service_account.json — needs user
-    authorization to edit SKILL.md (flagged, not yet done).
-  - Public CI release still has NO SA / NO cathlab static (PHI by
-    design) — unchanged.
+  - Push to main gated — explicit user authorization each time.
+  - Pre-fix installs cannot self-update (updater bug) → one manual
+    zip download required this once. [[delivery-protocol-inapp-update]]
+  - Public CI release has NO SA / NO cathlab static (PHI by design).
+  - Playwright runtime auto-install fallback NOT implemented (frozen
+    has no `python -m playwright`); CI cache-key fix is the resolution.
 
 [Don't repeat these mistakes]
-  - appconfig._cached is process-global; any "drop a file then it
-    should be picked up" flow must call appconfig.reset_cache().
-  - Blank settings-form fields must NOT clobber bundle-supplied
-    values (mirror the llm_api_key / cathlab_pass guard).
-  - _detect_sa() only matches the literal name service_account.json.
+  - Process-global caches (appconfig._cached, sheet_service._sh,
+    cathlab _static_dir): any "drop a file / new tab" flow needs an
+    explicit reset/refresh path.
+  - The in-app 更新 button calls upstream._sync_self (NOT
+    updater.apply directly) — frozen must delegate to updater.apply.
+  - CI cache keys must track the dep version, never hardcode.
+  - Bug-report scrub must never be weakened / made auto-submit
+    (public repo + PHI). [[bug-report-feature]]
 
 [Relevant files]
   - app/config.py (save() re-detects SA on blank path; new
