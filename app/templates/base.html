@@ -24,6 +24,7 @@
     <a href="https://docs.google.com/spreadsheets/d/{{ cfg.schedule_sheet_id }}/edit" target="_blank" rel="noopener" title="在新分頁開啟排班 Google Sheet">🔗 排班 Sheet</a>
     {% endif %}
     <a href="#" id="help-link">說明</a>
+    <a href="#" id="bug-link" title="把這次的問題＋診斷回報給開發者">🐞 回報問題</a>
   </nav>
   <div id="upstream-bar" class="upstream-bar">
     <button id="upstream-toggle" class="upstream-toggle" type="button" hidden>
@@ -149,6 +150,39 @@
         <li>Excel 必須是排班程式產生的格式，自己手畫的會被解析錯。</li>
         <li>失敗的班次會記在 log，可以下載 csv 自己補。</li>
       </ul>
+    </section>
+  </div>
+</div>
+
+<!-- Bug report modal — toggled by #bug-link in the topbar -->
+<div id="bug-modal" class="help-modal" hidden>
+  <div class="help-content">
+    <header>
+      <h2>🐞 回報問題給開發者</h2>
+      <button id="bug-close" class="help-close" type="button">✕</button>
+    </header>
+    <section class="help-tab-pane active">
+      <p class="hint">系統會自動附上版本、環境、最近的錯誤與 log，並
+        <b>自動隱藏病歷號 / 姓名 / 金鑰 / 密碼</b>。送出前你可以再看一次內容。</p>
+      <label class="bug-field">哪一步出問題？
+        <input id="bug-step" type="text"
+               placeholder="例：Step 3 EMR 擷取 / 按更新鈕 / 載入 20260601">
+      </label>
+      <label class="bug-field">問題描述（越詳細越好）
+        <textarea id="bug-note" rows="3"
+                  placeholder="做了什麼動作、預期結果、實際結果"></textarea>
+      </label>
+      <label class="bug-field">畫面上的錯誤訊息（會自動帶入最近一次紅色錯誤）
+        <textarea id="bug-error" rows="2"></textarea>
+      </label>
+      <div class="bug-actions">
+        <button id="bug-preview-btn" type="button">產生回報內容（預覽）</button>
+        <button id="bug-issue-btn" type="button" hidden>① 開 GitHub 回報（公開・送出前請確認沒有病人資料）</button>
+        <button id="bug-save-btn" type="button" hidden>② 存成檔案，私下傳給開發者</button>
+        <button id="bug-copy-btn" type="button" hidden>複製內容</button>
+      </div>
+      <p id="bug-msg" class="hint"></p>
+      <pre id="bug-preview" class="bug-preview" hidden></pre>
     </section>
   </div>
 </div>

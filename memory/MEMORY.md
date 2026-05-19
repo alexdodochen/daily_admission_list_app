@@ -2,6 +2,7 @@
 
 - [3-card app integration state](project_3card_app_state.md) — Phase 14 (2026-05-18→19): Card1 port+Step5, sync cutover, ② EMR autoload+name-fix+註記+collapse, ③ order on screen, SA decoupled from build. In sync @ acb012f, 330 tests.
 - [Cathlab static decouple](project_cathlab_static_decouple.md) — 3 cathlab JSONs gitignored PHI; never in public CI release; runtime DATA_DIR/cathlab_static drop-in; spec bundles only on local Path-B build; skill `package-distribute`
+- [In-app 🐞 回報問題 feature](project_bug_report_feature.md) — log ring + bug_report scrub (PHI/creds) → prefilled public GitHub issue + local private file; never auto-submit/weaken scrub
 - [OCR re-upload = membership-only, never overwrite kept rows](feedback_ocr_reupload_membership_only.md) — new screenshot only adds/removes; no add/remove → write nothing (照舊); kept patients' A-L rows preserved verbatim; doctor-change-only = 照舊
 - [Delivery protocol = in-app 更新 + private drop-in](feedback_delivery_protocol_inapp_update.md) — existing install: push→CI release + recipient clicks 更新 (never re-ship zip); SA+3 cathlab JSON private, loose into one DATA_DIR folder; rename breaks update ONCE for pre-rename installs
 - [Bundle naming invariant](project_bundle_naming_invariant.md) — exe/folder = Chinese 行政總醫師.排班.Key班.入院; release asset MUST be ASCII admission-app.zip; packaging.spec + release.yml + updater.RELEASE_ASSET_NAME must agree

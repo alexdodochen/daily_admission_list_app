@@ -31,8 +31,13 @@
   C. 20260601 not loadable: sheet_service memoised Spreadsheet; a tab
      created by another instance was invisible. Fixed: get_worksheet
      refresh-metadata+retry; list_sheets refreshes first.
-  Pending follow-up: in-app "回報 bug" button (user request) — NOT
-  yet built; design TBD (must scrub PHI/credentials).
+  D. In-app "🐞 回報問題" BUILT (user request): topbar link + modal;
+     /api/bug-report/{preview,save}; app/log_buffer.py ring +
+     app/services/bug_report.py hard scrub (config values, k=v
+     secrets, sk-/AIza/40+ blobs, 6-12 digit runs, emails, name
+     context). Both delivery paths: prefilled GitHub-issue URL (user
+     reviews before submit) + local scrubbed file under
+     DATA_DIR/bug_reports. +6 tests. 353 passed.
 
 [What this session ALSO did]
   5. Step 1 OCR re-upload behavior changed per user rule: new

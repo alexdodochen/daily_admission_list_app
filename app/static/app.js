@@ -37,6 +37,98 @@
 })();
 
 
+// ---------- Bug report modal (runs on every page) ----------
+(function () {
+  const link   = document.getElementById('bug-link');
+  const modal  = document.getElementById('bug-modal');
+  const close  = document.getElementById('bug-close');
+  if (!link || !modal) return;
+  const $$ = (id) => document.getElementById(id);
+  const msg = $$('bug-msg');
+  let issueUrl = '';
+
+  const hideActions = () => {
+    ['bug-issue-btn', 'bug-save-btn', 'bug-copy-btn'].forEach(i => {
+      const b = $$(i); if (b) b.hidden = true;
+    });
+    const pv = $$('bug-preview'); if (pv) { pv.hidden = true; pv.textContent = ''; }
+  };
+  const open = () => {
+    // Auto-fill the error box with the last red error seen this session.
+    const errBox = $$('bug-error');
+    if (errBox && !errBox.value && window.__lastError) errBox.value = window.__lastError;
+    if (msg) msg.textContent = '';
+    hideActions();
+    modal.hidden = false;
+  };
+  const dismiss = () => { modal.hidden = true; };
+
+  link.addEventListener('click', (e) => { e.preventDefault(); open(); });
+  if (close) close.addEventListener('click', dismiss);
+  modal.addEventListener('click', (e) => { if (e.target === modal) dismiss(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !modal.hidden) dismiss();
+  });
+
+  function form() {
+    const fd = new FormData();
+    fd.append('step',  ($$('bug-step')  || {}).value || '');
+    fd.append('note',  ($$('bug-note')  || {}).value || '');
+    fd.append('error', ($$('bug-error') || {}).value || '');
+    return fd;
+  }
+
+  $$('bug-preview-btn').addEventListener('click', async () => {
+    if (msg) { msg.className = 'hint'; msg.textContent = '產生中…'; }
+    try {
+      const r = await fetch('/api/bug-report/preview', { method: 'POST', body: form() })
+        .then(x => x.json());
+      if (!r.ok) throw new Error(r.error || '產生失敗');
+      issueUrl = r.issue_url || '';
+      const pv = $$('bug-preview');
+      pv.textContent = r.markdown || '';
+      pv.hidden = false;
+      ['bug-issue-btn', 'bug-save-btn', 'bug-copy-btn'].forEach(i => {
+        const b = $$(i); if (b) b.hidden = false;
+      });
+      if (msg) { msg.className = 'msg ok';
+        msg.textContent = '✓ 內容已產生（已隱藏病歷號/姓名/金鑰）。請看下方預覽，確認沒有病人資料再送出。'; }
+    } catch (err) {
+      if (msg) { msg.className = 'msg err'; msg.textContent = '✗ ' + err.message; }
+    }
+  });
+
+  $$('bug-issue-btn').addEventListener('click', () => {
+    if (!issueUrl) return;
+    if (!confirm('即將開啟 GitHub 公開回報頁。請再次確認預覽內容沒有任何病人姓名/病歷號。確定？')) return;
+    window.open(issueUrl, '_blank', 'noopener');
+  });
+
+  $$('bug-save-btn').addEventListener('click', async () => {
+    if (msg) { msg.className = 'hint'; msg.textContent = '存檔中…'; }
+    try {
+      const r = await fetch('/api/bug-report/save', { method: 'POST', body: form() })
+        .then(x => x.json());
+      if (!r.ok) throw new Error(r.error || '存檔失敗');
+      if (msg) { msg.className = 'msg ok';
+        msg.textContent = '✓ 已存到：' + r.path + '　把這個檔私下傳（LINE/email）給陳常胤醫師即可。'; }
+    } catch (err) {
+      if (msg) { msg.className = 'msg err'; msg.textContent = '✗ ' + err.message; }
+    }
+  });
+
+  $$('bug-copy-btn').addEventListener('click', async () => {
+    const pv = $$('bug-preview');
+    try {
+      await navigator.clipboard.writeText(pv ? pv.textContent : '');
+      if (msg) { msg.className = 'msg ok'; msg.textContent = '✓ 已複製，可貼到任何地方傳給開發者。'; }
+    } catch (_) {
+      if (msg) { msg.className = 'msg err'; msg.textContent = '✗ 瀏覽器不允許自動複製，請手動選取預覽內容。'; }
+    }
+  });
+})();
+
+
 // ---------- Sheet viewer modal (runs on every page) ----------
 (function () {
   const link    = document.getElementById('viewer-link');
@@ -449,6 +541,10 @@ async function api(url, { method = 'GET', body = null } = {}) {
 
 function flash(el, msg, kind = 'ok') {
   if (!el) return;
+  // Remember the most recent error so the 🐞 回報問題 modal can auto-fill it.
+  if (kind === 'err' && msg) {
+    try { window.__lastError = String(msg).slice(0, 2000); } catch (_) {}
+  }
   el.textContent = msg;
   el.className = 'msg ' + kind;
   setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 5000);

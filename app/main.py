@@ -23,6 +23,10 @@ from .services import cv_solver, scheduling_service
 from .services import reschedule_service, upstream
 from .services import keyin_routes
 from .services import draft_service
+from .services import bug_report
+from . import log_buffer
+
+log_buffer.install()  # capture recent logs for the in-app bug reporter
 
 BASE = Path(__file__).parent
 app = FastAPI(title="心臟內科總醫師 — 本地版")
@@ -619,6 +623,30 @@ async def api_update_sync(name: str, restart: str = Form("no")):
     if name == "self" and result.get("ok") and restart == "yes":
         updater.schedule_restart()
     return result
+
+
+@app.post("/api/bug-report/preview")
+async def api_bug_report_preview(note: str = Form(""), step: str = Form(""),
+                                 error: str = Form("")):
+    """Build a scrubbed diagnostic + a prefilled GitHub-issue URL.
+    Nothing is sent — the user reviews the markdown and opens the URL
+    (or saves the file) explicitly."""
+    diag = bug_report.collect({"note": note, "step": step, "error": error})
+    return {
+        "ok": True,
+        "markdown": bug_report.render_markdown(diag),
+        "issue_url": bug_report.build_issue_url(diag),
+    }
+
+
+@app.post("/api/bug-report/save")
+async def api_bug_report_save(note: str = Form(""), step: str = Form(""),
+                              error: str = Form("")):
+    """Write the scrubbed report to DATA_DIR/bug_reports for the user to
+    send privately."""
+    diag = bug_report.collect({"note": note, "step": step, "error": error})
+    path = bug_report.write_report_file(diag)
+    return {"ok": True, "path": str(path)}
 
 
 @app.on_event("startup")

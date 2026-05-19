@@ -453,3 +453,23 @@ table.data td select.plan-ov:focus,
 .viewer-modal td.viewer-cell-error {
   background: #fecaca !important;  /* red-200 — write failed, reverts to orig */
 }
+
+/* Bug-report modal */
+.bug-field { display: block; margin: 12px 0; font-size: 13px; font-weight: 600; }
+.bug-field input, .bug-field textarea {
+  display: block; width: 100%; margin-top: 4px; padding: 6px 8px;
+  font: inherit; font-weight: 400; border: 1px solid #cbd5e1; border-radius: 6px;
+  box-sizing: border-box;
+}
+.bug-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 6px; }
+.bug-actions button {
+  padding: 7px 12px; font-size: 13px; border-radius: 6px;
+  border: 1px solid #cbd5e1; background: #f1f5f9; cursor: pointer;
+}
+.bug-actions button:hover { background: #e2e8f0; }
+#bug-issue-btn { border-color: #fca5a5; background: #fef2f2; }
+.bug-preview {
+  max-height: 320px; overflow: auto; background: #0f172a; color: #e2e8f0;
+  padding: 12px; border-radius: 6px; font-size: 12px; white-space: pre-wrap;
+  word-break: break-word;
+}
