@@ -139,6 +139,7 @@ async def test_settings():
     appconfig.reset_cache()
     sheet_service.reset_cache()
     scheduling_service.reset_cache()
+    cathlab_service.reset_cache()
     cfg = appconfig.load()
     result = {"llm": None, "sheet": None, "schedule_sheet": None}
     # LLM ping

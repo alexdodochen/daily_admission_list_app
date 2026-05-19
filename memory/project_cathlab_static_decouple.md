@@ -21,14 +21,23 @@ discovered 2026-05-19:
      ("app/data/static","app/data/static"))` — fires only on a LOCAL
      Path-B build (dev disk has the files); the public CI checkout does
      not, by design.
-  2. `cathlab_service._resolve_static_dir()` search order:
-     DATA_DIR/cathlab_static (persistent drop-in, survives auto-update) →
-     frozen <exe>/cathlab_static|/static|/ (migrated into DATA_DIR on hit)
-     → APP_ROOT/data/static (bundled local build / dev) → legacy STATIC_DIR.
-     `_load_json` raises a FileNotFoundError naming
-     `DATA_DIR/cathlab_static` so a public-build user knows where to drop.
-  3. `cathlab_static_status()` exposes {present, source, drop_dir, files}
-     for a future /settings card (NOT yet wired into the UI — follow-up).
+  2. `cathlab_service._resolve_static_dir()` search order (updated
+     2026-05-19 to match the improved SA drop-in UX):
+     DATA_DIR/cathlab_static (persistent, survives auto-update) →
+     **DATA_DIR loose** (the 3 files dropped directly next to
+     service_account.json — the ONE folder the settings page tells users
+     about; migrated into cathlab_static on hit) → frozen
+     <exe>/cathlab_static|/static|/ (migrated too) → APP_ROOT/data/static
+     (bundled local build / dev) → legacy STATIC_DIR. `_load_json` raises a
+     FileNotFoundError naming `DATA_DIR` + "same folder as
+     service_account.json" + all 3 filenames.
+  3. `cathlab_service.reset_cache()` clears `_static_dir`/`_id_maps`/
+     `_doctor_codes`/`_schedule`; wired into `/api/settings/test`
+     (alongside appconfig/sheet/scheduling) so files dropped AFTER launch
+     are picked up by pressing 測試連線 — no app restart (stale-cache
+     parity with the SA fix).
+  4. `cathlab_static_status()` exposes {present, source, drop_dir=DATA_DIR,
+     files} for a future /settings card (NOT yet wired into the UI).
 
 **Why:** public repo + public GitHub Releases must stay PHI-free, but
 Step 5 still needs the maps. Same model as `service_account.json`:

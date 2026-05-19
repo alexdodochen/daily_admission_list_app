@@ -3,31 +3,38 @@
 ============================================
 
 [What this session did]
-  1. Fixed SA service-account detection bug reported in the field
-     (麒翔 dropped SA into %LOCALAPPDATA%\admission-app but connection
-     failed with "No such file or directory: ''").
-  2. Root cause = two bugs stacked:
-     (a) appconfig._cached never reset → SA dropped AFTER first load()
-         stayed undetected for the process lifetime;
-     (b) save_settings unconditionally wrote the hidden/blank
-         google_creds_path form field as "" into config.json.
-  3. Fix (config.py + main.py) + 2 regression tests; 334 passed.
+  1. Fixed SA detection bug from the field (SA dropped into
+     %LOCALAPPDATA%\admission-app, connection failed empty creds path).
+     Root cause = (a) appconfig._cached never reset; (b) save_settings
+     wrote the blank google_creds_path form field as "". Pushed 05e6e33.
+  2. Hardened _detect_sa(): accepts ANY *.json that is a valid SA key
+     (no exact-rename — Windows hides ext → service_account.json.txt),
+     normalises to canonical name. config.reset_cache() +
+     /api/settings/test cache reset (drop-after-launch, no restart).
+  3. User chose option 2 for cathlab: KEEP drop-in (not bundle PHI),
+     but upgrade UX to SA parity. cathlab_service: loose-drop into
+     DATA_DIR (next to service_account.json) now detected + migrated
+     into cathlab_static; reset_cache() wired into /api/settings/test;
+     error msg + status drop_dir now point at DATA_DIR.
+  4. Tests: 338 passed (+6 regression across config/cathlab).
 
 [Current state]
-  - Branch: main, IN SYNC with origin (about to commit this fix).
-  - Uncommitted: app/config.py, app/main.py, tests/test_config.py.
-  - Tests: 334 passed (was 332 + 2 new regression tests).
-  - No new release built yet for this fix.
+  - Branch: main. 05e6e33 (SA fix) pushed to origin.
+  - Uncommitted (cathlab UX): app/services/cathlab_service.py,
+    app/main.py, tests/test_cathlab_service.py — NOT yet committed.
+  - Tests: 338 passed.
+  - No new release built yet for either fix.
 
 [Next steps]
-  - Build + publish a new release carrying this fix so 麒翔 can
-    pure-drop the SA file with no manual steps. Then deliver per
-    package-distribute Path A.
-  - Tell 麒翔 the immediate workaround if he can't wait for the new
-    build: file must be named EXACTLY service_account.json (Windows
-    hides extensions → service_account.json.txt silently fails),
-    placed at C:\Users\Greg\AppData\Local\admission-app\, then FULLY
-    restart the app (clears stale _cached).
+  - Commit the cathlab loose-drop UX change (push gated — ask user).
+  - Build + publish ONE new release carrying both fixes; deliver to
+    麒翔 per package-distribute Path A. With both fixes he now only
+    needs to drop service_account.json + the 3 cathlab JSONs (any
+    names for SA; exact names for cathlab) LOOSE into the one folder
+    %LOCALAPPDATA%\admission-app, then press 測試連線 (no restart).
+  - package-distribute SKILL.md Path A wording should be simplified
+    to "drop all files into the one settings-page folder" — needs
+    user authorization to edit SKILL.md (flagged, not yet done).
 
 [Known issues / blockers]
   - Push to main gated — user authorized this session's push+release.

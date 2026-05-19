@@ -3,7 +3,18 @@ from __future__ import annotations
 
 import pytest
 
+from app import config as appconfig
 from app.services import cathlab_service as cs
+
+
+@pytest.fixture(autouse=True)
+def _reset_cathlab_static_cache():
+    """The static-dir + parsed-table caches are module globals; tests that
+    monkeypatch DATA_DIR / drop temp files would otherwise leak a stale
+    cached dir into later tests (incl. other files). Reset around each."""
+    cs.reset_cache()
+    yield
+    cs.reset_cache()
 
 
 # ---------------- get_cathlab_date ----------------
@@ -174,14 +185,48 @@ def test_static_data_loadable():
 def test_cathlab_static_status_present_in_dev():
     st = cs.cathlab_static_status()
     assert st["present"] is True
-    assert "cathlab_static" in st["drop_dir"]
+    # drop_dir is now DATA_DIR (same folder as service_account.json)
+    assert st["drop_dir"] == str(appconfig.DATA_DIR)
     assert st["files"] == list(cs._STATIC_FILES)
 
 
 def test_load_json_missing_raises_pointing_at_dropdir(tmp_path, monkeypatch):
     # Simulate the public CI build: resolved dir has no JSONs → the error
-    # must tell the user exactly where to drop the 3 files.
+    # must tell the user exactly where to drop the 3 files (the same folder
+    # as service_account.json) and mention all 3 filenames.
     monkeypatch.setattr(cs, "_static_dir", tmp_path)
     with pytest.raises(FileNotFoundError) as e:
         cs._load_json("cathlab_id_maps.json")
-    assert "cathlab_static" in str(e.value)
+    msg = str(e.value)
+    assert str(appconfig.DATA_DIR) in msg
+    assert "service_account.json" in msg
+    for fn in cs._STATIC_FILES:
+        assert fn in msg
+
+
+def test_loose_drop_into_data_dir_is_detected_and_migrated(tmp_path, monkeypatch):
+    """The 3 JSONs dropped LOOSE into DATA_DIR (next to service_account.json)
+    must resolve — and get normalised into DATA_DIR/cathlab_static so the
+    next auto-update keeps them."""
+    monkeypatch.setattr(appconfig, "DATA_DIR", tmp_path)
+    cs.reset_cache()
+    for fn in cs._STATIC_FILES:
+        (tmp_path / fn).write_text("{}", encoding="utf-8")
+    d = cs._resolve_static_dir()
+    assert d == tmp_path / "cathlab_static"
+    assert all((d / fn).is_file() for fn in cs._STATIC_FILES)
+
+
+def test_reset_cache_picks_up_files_dropped_after_first_access(tmp_path, monkeypatch):
+    """Stale-cache parity with the SA fix: files dropped AFTER first
+    resolution are invisible until reset_cache()."""
+    monkeypatch.setattr(appconfig, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(cs, "STATIC_DIR", tmp_path / "nope")
+    monkeypatch.setattr(appconfig, "APP_ROOT", tmp_path / "nope")
+    cs.reset_cache()
+    with pytest.raises(FileNotFoundError):
+        cs._load_json("cathlab_id_maps.json")
+    for fn in cs._STATIC_FILES:
+        (tmp_path / fn).write_text("{}", encoding="utf-8")
+    cs.reset_cache()
+    assert cs._load_json("cathlab_id_maps.json") == {}

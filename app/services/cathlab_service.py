@@ -86,14 +86,31 @@ def _has_static(d: Path) -> bool:
         return False
 
 
+def _migrate_into(persistent: Path, src_dir: Path) -> bool:
+    """Copy the 3 JSONs from src_dir into the persistent dir so they survive
+    every auto-update. Returns True if the persistent dir ends up complete."""
+    try:
+        persistent.mkdir(parents=True, exist_ok=True)
+        for fn in _STATIC_FILES:
+            src = src_dir / fn
+            if src.is_file():
+                (persistent / fn).write_bytes(src.read_bytes())
+        return _has_static(persistent)
+    except Exception:
+        return False
+
+
 def _resolve_static_dir() -> Path:
     """
     Find the dir holding the 3 cathlab JSONs. Priority:
       1. DATA_DIR/cathlab_static   — persistent drop-in, survives auto-update
-      2. <exe>/cathlab_static, <exe>/static, <exe>  — intuitive frozen drop
+      2. DATA_DIR (loose)          — same folder as service_account.json;
+         the one drop spot the settings page tells users about. Migrated
+         into (1) on hit.
+      3. <exe>/cathlab_static, <exe>/static, <exe>  — intuitive frozen drop
          spots; on hit, migrate the files into (1) so updates keep them
-      3. APP_ROOT/data/static      — bundled by Path-B local build / dev tree
-      4. STATIC_DIR (legacy)       — last resort
+      4. APP_ROOT/data/static      — bundled by Path-B local build / dev tree
+      5. STATIC_DIR (legacy)       — last resort
     Returns the first dir that actually contains cathlab_id_maps.json; if
     none do, returns the persistent dir so the error message points the user
     at where to drop the files.
@@ -102,21 +119,20 @@ def _resolve_static_dir() -> Path:
     if _has_static(persistent):
         return persistent
 
+    # Loose drop directly into DATA_DIR (next to service_account.json) —
+    # the single folder users already know from the settings page.
+    if _has_static(appconfig.DATA_DIR):
+        if _migrate_into(persistent, appconfig.DATA_DIR):
+            return persistent
+        return appconfig.DATA_DIR
+
     import sys
     if getattr(sys, "frozen", False):
         exe_dir = Path(sys.executable).parent
         for cand in (exe_dir / "cathlab_static", exe_dir / "static", exe_dir):
             if _has_static(cand):
-                try:
-                    persistent.mkdir(parents=True, exist_ok=True)
-                    for fn in _STATIC_FILES:
-                        src = cand / fn
-                        if src.is_file():
-                            (persistent / fn).write_bytes(src.read_bytes())
-                    if _has_static(persistent):
-                        return persistent
-                except Exception:
-                    pass
+                if _migrate_into(persistent, cand):
+                    return persistent
                 return cand
 
     bundled = appconfig.APP_ROOT / "data" / "static"
@@ -134,10 +150,23 @@ def _load_json(name: str) -> dict:
     path = _static_dir / name
     if not path.is_file():
         raise FileNotFoundError(
-            f"找不到導管設定檔 {name}。請把 {', '.join(_STATIC_FILES)} "
-            f"放到：{appconfig.DATA_DIR / 'cathlab_static'}（放完重開 app）。"
+            f"找不到導管設定檔 {name}。請把這 3 個檔 "
+            f"（{', '.join(_STATIC_FILES)}）放到跟 service_account.json "
+            f"同一個資料夾：{appconfig.DATA_DIR}（放完按設定頁的測試連線即可，"
+            f"不用重開 app）。"
         )
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def reset_cache() -> None:
+    """Drop cached static-dir + parsed tables so the next access re-resolves.
+    Call after the user drops the 3 JSONs without restarting (mirrors the
+    service-account drop-in: files may appear AFTER first load)."""
+    global _static_dir, _id_maps, _doctor_codes, _schedule
+    _static_dir = None
+    _id_maps = None
+    _doctor_codes = None
+    _schedule = None
 
 
 def cathlab_static_status() -> dict:
@@ -146,7 +175,8 @@ def cathlab_static_status() -> dict:
     return {
         "present": _has_static(d),
         "source": str(d),
-        "drop_dir": str(appconfig.DATA_DIR / "cathlab_static"),
+        # Same folder as service_account.json — one place to remember.
+        "drop_dir": str(appconfig.DATA_DIR),
         "files": list(_STATIC_FILES),
     }
 
