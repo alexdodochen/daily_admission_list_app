@@ -1,76 +1,71 @@
 ============================================
-  HANDOFF — Last Updated: 2026-05-19 03:30
+  HANDOFF — Last Updated: 2026-05-19 03:55
 ============================================
 
 [What this session did]
-  1. Step 5 cathlab key-in UI de-jargoned + name "?" fix.
-     Pushed @ 321e95d (CI release v20260519-0126-321e95d, verified OK).
-  2. Found + fixed ROOT bug: packaging.spec never bundled
-     app/data/static → every shipped exe had Step 5 broken
-     (FileNotFoundError). Two-ended fix (user: 兩段都修):
-     spec conditionally bundles it (local Path-B only) +
-     cathlab_service._resolve_static_dir() DATA_DIR/cathlab_static
-     drop-in. New skill .claude/skills/package-distribute. @ 0b4e5d3
-     (CI release v20260519-0244-0b4e5d3 — Step V verified: sha match,
-     plain-language markers present, PHI/SA absent by design, zip ok).
-  3b. Added 使用方法.txt (Chinese end-user guide) at repo root,
-     bundled at zip root via packaging.spec datas ("使用方法.txt",".").
-     3 cathlab JSONs live at app/data/static/ (gitignored, PHI);
-     source mirror C:\...\每日入院名單 Claude\.
-  3. Renamed exe/bundle → 行政總醫師.排班.Key班.入院 (user request).
-     Release asset kept ASCII admission-app.zip (non-ASCII →
-     action-gh-release "default.zip"). Updated packaging.spec,
-     release.yml (zip/verify/upload/body), updater.RELEASE_ASSET_NAME,
-     skill, BUILD.md, CLAUDE.md. Tests 332 green.
+  1. Step 5 cathlab key-in UI de-jargoned + name "?" fix (321e95d,
+     CI release verified OK).
+  2. ROOT bug fixed: packaging.spec never bundled app/data/static →
+     Step 5 broke in every shipped exe. Two-ended fix + new skill
+     package-distribute (0b4e5d3, Step V verified).
+  3. Renamed exe/bundle → 行政總醫師.排班.Key班.入院; release asset
+     kept ASCII admission-app.zip (non-ASCII → action-gh-release
+     "default.zip"). 3 files synced (spec/release.yml/updater)
+     (1f86e70).
+  4. Added 使用方法.txt Chinese end-user guide (aae0cdf).
+  5. Step V on aae0cdf release found 使用方法.txt landed in _internal/
+     (PyInstaller 6.x forces datas there) → FIXED: removed from
+     packaging.spec datas, release.yml + BUILD.md now COPY it to the
+     bundle ROOT before zip; skill Step V.5 added. NOT yet committed.
 
 [Current state]
-  - Branch: main. 321e95d + 0b4e5d3 pushed (CI released both).
-  - The rename commit (packaging.spec/release.yml/updater/docs/memory)
-    is NOT yet committed — staged, awaiting user "授權 push".
-  - Tests: 332 passed.
+  - Branch: main, clean except staged Step-5 fix above + untracked
+    _wait_verify.py (bg task b03jbjgtt finished — safe to delete).
+  - origin/main @ aae0cdf (pushed). CI for aae0cdf = success;
+    release v20260519-0308-aae0cdf published (asset admission-app.zip,
+    375 MB, exe name + sha verified correct).
+  - The _internal-fix changes (packaging.spec, release.yml, BUILD.md,
+    skill) are committed locally? NO — pending commit + "授權 push".
+  - Tests: 332 passed (last full run; this fix is build-only, no code).
 
 [Next steps]
-  - Commit + push the rename change (needs "授權 push") → CI emits a
-    new release whose asset is admission-app.zip and whose exe is
-    行政總醫師.排班.Key班.入院.exe.
-  - After that CI is success: optionally re-run Step V on the new
-    release to confirm exe filename + ASCII asset name.
-  - Deliver 麒翔 from that release (NOT 9e0a531 zip): release link +
-    service_account.json + 3 cathlab JSONs, all separately, drop into
-    DATA_DIR (cathlab → DATA_DIR/cathlab_static). See skill Path A.
-  - Optional follow-up: wire cathlab_static_status() into /settings as
-    a drop-in card (mirror SA card). Not done.
+  - Commit + push the 使用方法.txt-to-root fix (needs "授權 push")
+    → CI emits a release where 使用方法.txt is at the visible root.
+  - Re-run Step V on THAT release to confirm guide at depth-1
+    (not _internal/). Reuse the verify approach.
+  - Deliver 麒翔 from the corrected release: link + service_account
+    .json + 3 cathlab JSONs (at app/data/static/, gitignored PHI),
+    all private/separate; "解壓後先讀 使用方法.txt". Skill Path A.
+  - Optional: wire cathlab_static_status() into /settings drop-in card.
   - Carry-over: /sched real-month solve→手調→套用重算 manual verify.
 
 [Known issues / blockers]
   - Push to main gated — explicit user "授權 push" each time.
-  - RENAME = one-time auto-update break: any pre-rename install
-    (folder 每日入院名單, old updater expecting 每日入院名單.zip) can't
-    auto-update across this change; needs ONE manual re-download, then
-    resumes. Acceptable (麒翔 not yet delivered final).
+  - RENAME = one-time auto-update break for any pre-rename install
+    (needs ONE manual re-download). [[bundle-naming-invariant]]
   - Public CI release has NO SA / NO cathlab static (PHI by design);
-    Step 5 needs the 3 JSONs dropped into DATA_DIR/cathlab_static.
-  - "exe 無法啟動" earlier = port 8766 already bound, not a build bug.
+    Step 5 needs the 3 JSONs in DATA_DIR/cathlab_static.
+  - PyInstaller 6.x onedir forces datas → _internal/; root-level
+    files must be copied in the zip step, not via spec datas.
 
 [Don't repeat these mistakes]
-  - Bundle naming: 3 files must agree (packaging.spec name=,
-    release.yml zip/files, updater.RELEASE_ASSET_NAME); asset stays
-    ASCII. [[bundle-naming-invariant]]
-  - Never un-gitignore app/data/static (PHI). [[cathlab-static-decouple]]
   - Don't trust file mtime for build provenance — only bundled
     app/VERSION sha.
+  - Bundle naming: 3 files must agree, asset stays ASCII.
+    [[bundle-naming-invariant]]
+  - Never un-gitignore app/data/static (PHI). [[cathlab-static-decouple]]
   - No engineering jargon in user-facing copy. [[no-column-letters-in-ui]]
+  - Always run Step V on the actual released zip before delivery —
+    it caught the _internal regression.
 
 [Relevant files]
-  - packaging.spec (name=, datas app/data/static)
-  - .github/workflows/release.yml (zip ASCII / verify / body)
-  - app/services/updater.py (RELEASE_ASSET_NAME=admission-app.zip)
-  - app/services/cathlab_service.py (_resolve_static_dir, status)
-  - .claude/skills/package-distribute/SKILL.md
-  - BUILD.md, CLAUDE.md (paths), app/templates/admission.html,
-    app/static/app.js (Step 5 wording), tests/test_cathlab_service.py
+  - packaging.spec (datas; 使用方法.txt NOT here by design)
+  - .github/workflows/release.yml (Copy 使用方法.txt → bundle root)
+  - BUILD.md (local copy step), .claude/skills/package-distribute
+  - app/services/{updater,cathlab_service}.py, 使用方法.txt
+  - app/templates/admission.html, app/static/app.js (Step 5 wording)
 
 [Important memory files]
-  - project_bundle_naming_invariant.md (NEW)
+  - project_bundle_naming_invariant.md
   - project_cathlab_static_decouple.md
   - feedback_no_column_letters_in_ui.md (generalised 2026-05-19)

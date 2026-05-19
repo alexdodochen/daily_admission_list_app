@@ -23,8 +23,12 @@ datas = [
     ("app/templates",   "app/templates"),
     ("app/bundled",     "app/bundled"),        # SA JSON + defaults.json
     ("app/VERSION",     "app"),
-    ("使用方法.txt",     "."),                  # end-user guide at bundle root
 ]
+# NOTE: 使用方法.txt is NOT bundled via datas — PyInstaller 6.x onedir
+# forces all datas into _internal/, where end users won't find it. It is
+# copied to the bundle ROOT (next to the exe) by the "Zip distribution"
+# step in .github/workflows/release.yml (and manually for local Path-B
+# builds, see BUILD.md).
 # Cathlab lookup tables (id_maps / doctor_codes / schedule). .gitignore'd
 # (PHI), so this only fires on a LOCAL build where the dev disk has them —
 # the public CI release intentionally lacks them and recipients drop the 3

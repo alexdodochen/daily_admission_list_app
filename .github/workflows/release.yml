@@ -95,6 +95,10 @@ jobs:
       - name: Zip distribution
         shell: pwsh
         run: |
+          # Put the end-user guide at the bundle ROOT (next to the exe).
+          # Can't do this via packaging.spec datas — PyInstaller 6.x onedir
+          # forces datas into _internal/ where users won't find it.
+          Copy-Item "使用方法.txt" "dist/行政總醫師.排班.Key班.入院/使用方法.txt" -Force
           cd dist
           # Bundle folder + exe are Chinese (行政總醫師.排班.Key班.入院.exe);
           # the RELEASE ASSET filename must stay ASCII or action-gh-release

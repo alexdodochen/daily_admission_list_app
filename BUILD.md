@@ -47,9 +47,11 @@ auto-update / rebuild doesn't wipe the user's settings.
 
 ## Distribution
 
-Zip the entire `dist/行政總醫師.排班.Key班.入院/` folder to an ASCII
-filename and send it to the new user:
+Copy the end-user guide to the bundle ROOT (it can't ride in via
+`packaging.spec` datas — PyInstaller 6.x onedir forces datas into
+`_internal/`), then zip the folder to an ASCII filename:
 ```powershell
+Copy-Item "使用方法.txt" "dist/行政總醫師.排班.Key班.入院/使用方法.txt" -Force
 Compress-Archive -Path "dist/行政總醫師.排班.Key班.入院" `
   -DestinationPath admission-app.zip -Force
 ```
