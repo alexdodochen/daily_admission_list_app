@@ -17,6 +17,16 @@ State as of 2026-05-18 (Phase 14 — Card 1 full UI port from Key-Schedule-APP +
 - **Tests**: 335/335 (unchanged count — recompute_from_schedule/apply-edits not yet unit-tested; pure-logic candidates for next session).
 - Commits: `7a94419` (/sched $ collision fix), `101f0f1` (Card 1 port + Step 5). Both pushed to `daily_admission_list_app` main.
 
+**Delivered (Phase 14 cont. — 2026-05-18 → 19):**
+- **Sync cutover** — ALL sync now `daily_admission_list_app` ONLY (no Key-Schedule-APP / CV-Schedulling-APP / claude-skills). `upstream.py` SOURCES={self}, base.html upstream panel = 1 row, test_upstream rewritten. See [[feedback-card1-sync-source-cutover]]. (82c0bd0)
+- **② EMR auto-loads patient list** — `step1Write` caches `build_subtables` patients into `step2Ordered`; `run3-btn` falls back to `/api/step4/subtables?date=` when no in-session list. No more pasting JSON. Session URL still user-pasted. (3cba995)
+- **姓名 always EMR-corrected, "?" stripped** — `emr_service.clean_patient_name`/`best_patient_name`; applied to main F (`apply_emr_main_fixes`), sub-table A (`write_results_to_subtables`), EMR cards (`dispName`). + manual **註記 (sub-table col H)** free-text field via bare `input.fg-input data-col=8` (wireFgInputsIn auto-saves). F:/G: labels → 術前診斷/預計心導管. (61492de)
+- **③ 入院序整合 shows result on screen** — `renderOrderResult(date)` reads N-W via /api/sheet/read after lottery/integrate, renders 10-col table into `#order-result`. (9e0a531)
+- **② EMR body collapsible** — has-record card body wrapped in `<details class=emr-body open>` + 全部收合/展開 bar so the page stays short. (61f3907)
+- **SA credential decoupled from build** — `config._detect_sa()` priority DATA_DIR → exe-adjacent (auto-migrated to DATA_DIR) → bundled; CI/public releases ship NO SA (repo is public — never leak it there), recipient drops one `service_account.json` into the DATA_DIR shown on /settings → survives every auto-update. `sa_status()` + settings drop-in card. (4acbcb8)
+- **(user/other machine) Step 5 extras** — 房 dropdown (H1/H2/C1/C2), editable dry-run, auto time-by-session, OCR '?' fix. (e9254d6, acb012f)
+- exe built+zipped → `C:\Users\dr\Downloads\Y\每日入院名單 for 麒翔.zip` (380MB, outside repo). Tests 330 pass. In sync with origin @ acb012f.
+
 State as of 2026-05-15 (Phase 13 — same-day field-test + upstream-alignment burst):
 
 **Delivered (Phase 13):**

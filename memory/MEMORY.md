@@ -1,6 +1,6 @@
 # Memory index — daily_admission_list_app
 
-- [3-card app integration state](project_3card_app_state.md) — Phase 14 (2026-05-18): Card 1 UI fully ported from Key-Schedule-APP (vs_holiday_exempt/prev_tail/projected_cum) + Step 5 manual edit + exe delivered (麒翔). Commits 7a94419/101f0f1. 335 tests.
+- [3-card app integration state](project_3card_app_state.md) — Phase 14 (2026-05-18→19): Card1 port+Step5, sync cutover, ② EMR autoload+name-fix+註記+collapse, ③ order on screen, SA decoupled from build. In sync @ acb012f, 330 tests.
 - [Sync source cutover — project repo ONLY](feedback_card1_sync_source_cutover.md) — from 2026-05-18 ALL sync is daily_admission_list_app only; never touch Key-Schedule-APP / CV-Schedulling-APP / claude-skills / any other repo
 - [Sub-page inline script must IIFE-wrap](feedback_subpage_iife_scope.md) — extends base.html → app.js global $ collides; redeclare aborts whole script → dead buttons. Wrap in (function(){})()
 - [Key 班 upstream source](reference_keyin_upstream.md) — port target https://github.com/alexdodochen/Key-Schedule-APP (Phase 11)
