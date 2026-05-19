@@ -19,23 +19,21 @@
      bundle ROOT before zip; skill Step V.5 added. NOT yet committed.
 
 [Current state]
-  - Branch: main, clean except staged Step-5 fix above + untracked
-    _wait_verify.py (bg task b03jbjgtt finished — safe to delete).
-  - origin/main @ aae0cdf (pushed). CI for aae0cdf = success;
-    release v20260519-0308-aae0cdf published (asset admission-app.zip,
-    375 MB, exe name + sha verified correct).
-  - The _internal-fix changes (packaging.spec, release.yml, BUILD.md,
-    skill) are committed locally? NO — pending commit + "授權 push".
-  - Tests: 332 passed (last full run; this fix is build-only, no code).
+  - Branch: main, clean, IN SYNC with origin/main @ e1f9a1a.
+  - Latest release v20260519-0316-e1f9a1a — verified deliverable.
+  - Scratch cleaned (_wait_verify.py, _verify_release.zip removed).
+  - Tests: 332 passed (build-only fixes since; no code change).
+
+[DONE — distribution hardening fully shipped + verified]
+  - e1f9a1a pushed; CI release v20260519-0316-e1f9a1a published.
+  - Step V on that release: PASS — sha e1f9a1a, exe Chinese name,
+    使用方法.txt at bundle ROOT (NOT _internal/), zip ok. Deliverable.
 
 [Next steps]
-  - Commit + push the 使用方法.txt-to-root fix (needs "授權 push")
-    → CI emits a release where 使用方法.txt is at the visible root.
-  - Re-run Step V on THAT release to confirm guide at depth-1
-    (not _internal/). Reuse the verify approach.
-  - Deliver 麒翔 from the corrected release: link + service_account
-    .json + 3 cathlab JSONs (at app/data/static/, gitignored PHI),
-    all private/separate; "解壓後先讀 使用方法.txt". Skill Path A.
+  - Deliver 麒翔 from v20260519-0316-e1f9a1a: release link +
+    service_account.json + 3 cathlab JSONs (at app/data/static/,
+    gitignored PHI), all private/separate; "解壓後先讀 使用方法.txt".
+    Skill Path A. (NOT yet sent as of this handoff.)
   - Optional: wire cathlab_static_status() into /settings drop-in card.
   - Carry-over: /sched real-month solve→手調→套用重算 manual verify.
 
