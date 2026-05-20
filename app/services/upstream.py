@@ -1,32 +1,22 @@
 """
-多源（multi-source）upstream 檢查 + 同步。
+Self-source updater for this app.
 
-本 App 依賴 3 個 GitHub repo，每次 App 啟動都會背景檢查它們的 HEAD：
+Since the 2026-05-18 sync-source cutover, `daily_admission_list_app` is the
+SINGLE source of truth — the old multi-repo mirroring of
+`daily-admission-list-public` / `Key-Schedule-APP` is retired. This module
+keeps the `check_*` / `sync_*` shape that the topbar JS expects, but only
+the `self` source is wired.
 
-  self        本 App         alexdodochen/daily_admission_list_app
-  admission   入院清單上游    alexdodochen/daily-admission-list-public
-  schedule    排班 / Key 班   alexdodochen/Key-Schedule-APP
-
-對 "self" 來說 sync 等同於 `git pull --ff-only` 在 REPO_ROOT 上跑（保留舊
-`updater.apply()` 的語意）。
-
-對 "admission" / "schedule" 上游來說 sync 是把該 repo `git clone` 或
-`git pull` 到本機快取目錄 EXTERNAL_DIR/<repo_name>/，然後依 `sync_manifest`
-把白名單裡的「資料型」檔案複製進 app/data/static/。Python 程式碼變更不會自動
-覆寫——manifest 把它們標 `needs_port`，UI 會提示開發者下次手動 port。
-
-呼叫面：
-  - check_source(name)            → dict（含 current / remote / available）
-  - check_all()                   → {name: dict}
-  - sync_source(name)             → dict（git pull/clone 結果 + 自動 mirror 結果）
-  - sync_state()                  → 讀 integration_state.json
+Call surface:
+  - check_source('self')      → dict (current / remote / available)
+  - check_all()               → {'self': dict}
+  - sync_source('self')       → dict (git pull --ff-only, or frozen-bundle swap)
+  - sync_state()              → read integration_state.json
 """
 from __future__ import annotations
 
 import asyncio
 import json
-import os
-import shutil
 import subprocess
 import sys
 import urllib.error
@@ -36,8 +26,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from . import sync_manifest
-
 
 # ----------------------------- paths -----------------------------
 
@@ -45,20 +33,13 @@ from . import sync_manifest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 APP_DIR = REPO_ROOT / "app"
 
-# 上游快取放這。dev 跟 PyInstaller frozen 都在 .exe 旁邊，避免被打包進 _MEIPASS。
 if getattr(sys, "frozen", False):
-    EXTERNAL_DIR = Path(sys.executable).parent / "external"
     DATA_DIR = Path(sys.executable).parent / "user_data"
 else:
-    EXTERNAL_DIR = REPO_ROOT / "external"
     DATA_DIR = APP_DIR / "data"
 
-EXTERNAL_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 STATE_PATH = DATA_DIR / "integration_state.json"
-
-# Static-data destination root for auto-mirror.
-STATIC_DEST_ROOT = DATA_DIR / "static"
 
 
 # ----------------------------- source registry -----------------------------
@@ -131,10 +112,9 @@ def _fetch_json(url: str, timeout: int = 10) -> dict:
 # ----------------------------- per-source repo path -----------------------------
 
 def repo_path(spec: SourceSpec) -> Path:
-    """Where this source's working tree lives on disk."""
-    if spec.kind == "self":
-        return REPO_ROOT
-    return EXTERNAL_DIR / spec.name
+    """Where this source's working tree lives on disk. Only `self` is wired
+    since the 2026-05-18 cutover, so always returns REPO_ROOT."""
+    return REPO_ROOT
 
 
 def _is_git_checkout(p: Path) -> bool:
@@ -147,34 +127,28 @@ def current_version(spec: SourceSpec) -> dict:
     """
     Return {sha, short, source, dirty}.
 
-    For 'self': identical behavior to legacy updater.current_version().
-    For upstream: read HEAD of the cloned working tree under EXTERNAL_DIR.
-    Returns source='uncloned' if upstream cache is missing.
+    Git checkout → HEAD sha (preferred).
+    PyInstaller frozen bundle → app/VERSION file fallback.
     """
     path = repo_path(spec)
-
-    if spec.kind == "upstream" and not _is_git_checkout(path):
-        return {"sha": "", "short": "", "source": "uncloned", "dirty": False}
-
     rc, sha, _ = _git(["rev-parse", "HEAD"], cwd=path)
     if rc == 0 and sha:
         rc2, status, _ = _git(["status", "--porcelain"], cwd=path)
         dirty = bool(rc2 == 0 and status)
         return {"sha": sha, "short": sha[:7], "source": "git", "dirty": dirty}
 
-    # self only: VERSION file fallback (used by PyInstaller bundles)
-    if spec.kind == "self":
-        version_file = APP_DIR / "VERSION"
-        if version_file.exists():
-            raw = version_file.read_text(encoding="utf-8").strip()
-            try:
-                data = json.loads(raw)
-                vsha = data.get("sha", "")
-                return {"sha": vsha, "short": vsha[:7] if vsha else "",
-                        "source": "file", "dirty": False,
-                        "built_at": data.get("built_at", "")}
-            except json.JSONDecodeError:
-                return {"sha": raw, "short": raw[:7], "source": "file", "dirty": False}
+    # VERSION file fallback for PyInstaller bundles
+    version_file = APP_DIR / "VERSION"
+    if version_file.exists():
+        raw = version_file.read_text(encoding="utf-8").strip()
+        try:
+            data = json.loads(raw)
+            vsha = data.get("sha", "")
+            return {"sha": vsha, "short": vsha[:7] if vsha else "",
+                    "source": "file", "dirty": False,
+                    "built_at": data.get("built_at", "")}
+        except json.JSONDecodeError:
+            return {"sha": raw, "short": raw[:7], "source": "file", "dirty": False}
 
     return {"sha": "", "short": "", "source": "unknown", "dirty": False}
 
@@ -234,11 +208,8 @@ async def check_source(name: str) -> dict:
 
     cur_sha = cur.get("sha", "") or last_synced_sha
     remote_sha = remote.get("sha", "")
-    if cur["source"] == "uncloned":
-        # 還沒 clone 過上游 → 視為「有更新待同步」
-        available = bool(remote_sha)
-    elif not cur_sha:
-        available = bool(remote_sha)   # 本地未知版本，提示同步
+    if not cur_sha:
+        available = bool(remote_sha)   # local version unknown, prompt sync
     else:
         available = bool(remote_sha and remote_sha != cur_sha)
 
@@ -307,10 +278,7 @@ def _record_sync(name: str, sha: str, mirrored: list[str]) -> None:
 # ----------------------------- sync -----------------------------
 
 async def sync_source(name: str) -> dict:
-    spec = SOURCES[name]
-    if spec.kind == "self":
-        return await _sync_self(spec)
-    return await _sync_upstream(spec)
+    return await _sync_self(SOURCES[name])
 
 
 async def _sync_self(spec: SourceSpec) -> dict:
@@ -357,81 +325,6 @@ async def _sync_self(spec: SourceSpec) -> dict:
         "to": new.get("short", ""),
         "stdout": out,
     }
-
-
-async def _sync_upstream(spec: SourceSpec) -> dict:
-    """Clone if missing, otherwise fetch+reset to origin/<branch>. Then run the
-    auto-mirror manifest for this source."""
-    path = repo_path(spec)
-    EXTERNAL_DIR.mkdir(parents=True, exist_ok=True)
-
-    if not _is_git_checkout(path):
-        # Fresh clone (shallow, single branch — keeps download small)
-        if path.exists():
-            # Path exists but isn't a git checkout — refuse to nuke it
-            return {"ok": False,
-                    "message": f"{path} 已存在但不是 git checkout，請手動移除後再試。"}
-        rc, out, err = await asyncio.to_thread(
-            _git, ["clone", "--depth", "1", "--branch", spec.branch,
-                   spec.clone_url, str(path)],
-            cwd=EXTERNAL_DIR, timeout=180,
-        )
-        if rc != 0:
-            return {"ok": False, "message": f"git clone 失敗：{err}"}
-    else:
-        # Update existing checkout. Use fetch + reset --hard origin/<branch>
-        # so that any local divergence (this dir is dev-managed, not ours) is
-        # discarded — upstream is source of truth.
-        rc, _, err = await asyncio.to_thread(
-            _git, ["fetch", "--prune", "--depth", "1", "origin", spec.branch],
-            cwd=path, timeout=120,
-        )
-        if rc != 0:
-            return {"ok": False, "message": f"git fetch 失敗：{err}"}
-        rc, _, err = await asyncio.to_thread(
-            _git, ["reset", "--hard", f"origin/{spec.branch}"],
-            cwd=path, timeout=60,
-        )
-        if rc != 0:
-            return {"ok": False, "message": f"git reset 失敗：{err}"}
-
-    # Mirror auto-safe files into app/data/static/
-    cur = current_version(spec)
-    mirrored, mirror_errors = _run_mirror(spec, path)
-    _record_sync(spec.key, cur.get("sha", ""), mirrored)
-
-    return {
-        "ok": True,
-        "message": f"上游 {spec.name} 同步成功（{cur.get('short','')}），"
-                   f"mirror {len(mirrored)} 檔" +
-                   (f"，{len(mirror_errors)} 檔失敗" if mirror_errors else ""),
-        "to": cur.get("short", ""),
-        "mirrored": mirrored,
-        "mirror_errors": mirror_errors,
-        "needs_port": sync_manifest.MANIFEST.get(spec.key, {}).get("needs_port", []),
-    }
-
-
-def _run_mirror(spec: SourceSpec, repo_root: Path) -> tuple[list[str], list[dict]]:
-    """Copy whitelisted files from the cloned upstream into DATA_DIR.
-    Manifest dest paths are relative to DATA_DIR (e.g. 'static/foo.json' →
-    DATA_DIR/static/foo.json). Returns (mirrored_paths, errors)."""
-    mirrored: list[str] = []
-    errors: list[dict] = []
-    rules = sync_manifest.MANIFEST.get(spec.key, {}).get("auto_mirror", [])
-    for src_rel, dest_rel in rules:
-        src = repo_root / src_rel
-        dest = DATA_DIR / dest_rel
-        try:
-            if not src.exists():
-                errors.append({"src": src_rel, "error": "上游檔案不存在"})
-                continue
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dest)
-            mirrored.append(dest_rel)
-        except Exception as e:
-            errors.append({"src": src_rel, "error": str(e)})
-    return mirrored, errors
 
 
 # ----------------------------- back-compat shims -----------------------------

@@ -20,7 +20,7 @@ from .services import sheet_service, ocr_service, lottery_service, subtable_serv
 from .services import emr_service, ordering_service, line_service
 from .services import updater, cathlab_service, format_check_service, finalize_service
 from .services import cv_solver, scheduling_service
-from .services import reschedule_service, upstream
+from .services import upstream
 from .services import keyin_routes
 from .services import draft_service
 from .services import bug_report
@@ -490,56 +490,6 @@ async def api_op_list():
     """Diagnostic: list currently-running long-ops."""
     from .services import cancel_registry
     return {"ok": True, "running": cancel_registry.list_running()}
-
-
-# ------------------------------ Reschedule (V flag + full move) ------------------------------
-
-@app.post("/api/reschedule/v_flag_plan")
-async def api_reschedule_v_flag_plan(date: str = Form(...),
-                                     mapping_json: str = Form(...)):
-    """Preview the V-flag plan. `mapping_json` = {chart_no: target_date}."""
-    import json as _json
-    try:
-        mapping = _json.loads(mapping_json)
-        return {"ok": True, **reschedule_service.plan_v_flag(date, mapping)}
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.post("/api/reschedule/v_flag_apply")
-async def api_reschedule_v_flag_apply(date: str = Form(...),
-                                      mapping_json: str = Form(...)):
-    import json as _json
-    try:
-        mapping = _json.loads(mapping_json)
-        return {"ok": True, **reschedule_service.apply_v_flag(date, mapping)}
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.post("/api/reschedule/full_move_plan")
-async def api_reschedule_full_move_plan(date: str = Form(...),
-                                        mapping_json: str = Form(...)):
-    """Preview a full-move reschedule: V patches, main A-L rows to copy,
-    cathlab DEL list. User must confirm before applying side effects."""
-    import json as _json
-    try:
-        mapping = _json.loads(mapping_json)
-        return {"ok": True, **reschedule_service.plan_full_move(date, mapping)}
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.post("/api/reschedule/cathlab_del")
-async def api_reschedule_cathlab_del(pairs_json: str = Form(...)):
-    """Run WEBCVIS DEL for [[chart, cath_date], ...] pairs."""
-    import json as _json
-    try:
-        pairs = _json.loads(pairs_json)
-        pair_list = [(c, d) for c, d in pairs]
-        return {"ok": True, **(await cathlab_service.del_charts(pair_list))}
-    except Exception as e:
-        raise HTTPException(500, str(e))
 
 
 # ------------------------------ EMR main verify ------------------------------

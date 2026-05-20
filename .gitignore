@@ -1,6 +1,4 @@
 app/data/
-app/external/
-external/
 __pycache__/
 *.pyc
 .venv/
