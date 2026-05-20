@@ -222,85 +222,136 @@ def _write_swap_bat(install_dir: Path,
                     zip_path: Path,
                     extract_dir: Path) -> Path:
     """
-    Generate a .bat that:
-      - Waits for the running .exe process to exit (by PID — ASCII-safe)
+    Generate a swap script that:
+      - Waits for the running .exe to exit (by PID, bounded timeout)
+      - Force-kills it if still alive after timeout
       - Renames current install_dir → install_dir.old
       - Moves pending_inner → install_dir
       - Cleans up zip + extract scratch + .old
       - Relaunches the new .exe
-      - Deletes itself
 
-    install_dir = the .exe folder currently running
-                  (e.g. C:\\...\\行政總醫師.排班.Key班.入院)
-    pending_inner = the freshly-extracted same-named subfolder
-    zip_path = the downloaded .zip
-    extract_dir = parent of pending_inner (scratch dir)
+    *Why PowerShell now (and not .bat)* — field bugs 2026-05-20:
+      Bug 1 (bricked install A): cmd.exe parses .bat in the active console
+      codepage (CP950 on TW Windows). UTF-8 .bat with Chinese paths
+      became mojibake → `find /I` never matched → wait loop spun forever.
+      Bug 2 (bricked install B): even after switching to PID-based wait
+      via `tasklist | find " N "`, the loop kept matching because
+      tasklist output formatting + cmd codepage made the check unreliable.
 
-    *Codepage trap* (field bug 2026-05-20 — bricked an install):
-    cmd.exe parses .bat files using the system's *active console* codepage
-    (CP950 on Traditional-Chinese Windows), NOT what `chcp 65001` says.
-    So a UTF-8 .bat with Chinese paths becomes mojibake at parse time,
-    `find /I` never matches the real process name, the wait loop spins
-    forever, and the swap never completes.
+      PowerShell handles UTF-8 with BOM natively, has a real `Get-Process`
+      API that doesn't need string-parsing, and has the same syntax across
+      console codepages. So we generate a .ps1 and launch via powershell.exe
+      `-ExecutionPolicy Bypass -NoProfile -File <ps1>`. The .bat is kept
+      as a thin shim that just invokes PowerShell — needed because
+      subprocess.Popen path resolution + Detached Process flags work
+      cleanest with a .bat entry point.
 
-    Two-pronged fix:
-      1. Wait by PID (`tasklist /FI "PID eq N"`) — number is ASCII, never
-         hits the codepage issue regardless of folder language.
-      2. Write the .bat in the OEM codepage (Windows: GetOEMCP() → 950
-         on TW) so cmd.exe reads the Chinese paths in `ren` / `move` /
-         `start` lines as the bytes it expects. Fallback to ANSI codepage,
-         then to UTF-8 with BOM if both lookups fail.
+      Hard bound: wait up to 60s for graceful exit. If process is still
+      alive past that, taskkill /F by PID. This guarantees we never spin
+      forever again.
     """
     import os as _os
-    exe_name = install_dir.name + ".exe"   # 行政總醫師.排班.Key班.入院.exe
+    exe_name = install_dir.name + ".exe"
     parent = install_dir.parent
+    ps1_path = parent / "__update_swap__.ps1"
     bat_path = parent / "__update_swap__.bat"
 
     current_pid = _os.getpid()
 
-    bat = f"""@echo off
-cd /d "{parent}"
-echo Waiting for current app (PID {current_pid}) to exit...
-:waitloop
-tasklist /FI "PID eq {current_pid}" 2>nul | find " {current_pid} " >nul
-if not errorlevel 1 (
-  timeout /t 1 /nobreak >nul
-  goto waitloop
-)
-echo Swapping install...
-ren "{install_dir.name}" "{install_dir.name}.old"
-if errorlevel 1 (
-  echo [ERR] cannot rename old install. Aborting.
-  pause
-  exit /b 1
-)
-move "{pending_inner}" "{install_dir}"
-if errorlevel 1 (
-  echo [ERR] cannot move new install. Rolling back.
-  ren "{install_dir.name}.old" "{install_dir.name}"
-  pause
-  exit /b 1
-)
-rmdir /s /q "{install_dir}.old" 2>nul
-rmdir /s /q "{extract_dir}" 2>nul
-del /q "{zip_path}" 2>nul
-echo Restarting...
-start "" "{install_dir}\\{exe_name}"
-del "%~f0"
+    # PowerShell single-quoted strings escape literal ' as ''. Paths from
+    # pathlib don't contain single quotes (Windows forbids them), but be
+    # safe just in case.
+    def _psq(s: str) -> str:
+        return str(s).replace("'", "''")
+
+    ps1 = f"""# Auto-generated swap script. Safe to delete.
+$ErrorActionPreference = 'Continue'
+$installDir   = '{_psq(install_dir)}'
+$pendingInner = '{_psq(pending_inner)}'
+$zipPath      = '{_psq(zip_path)}'
+$extractDir   = '{_psq(extract_dir)}'
+$oldPid       = {current_pid}
+$exeName      = '{_psq(exe_name)}'
+
+Write-Host "Waiting for old app (PID $oldPid) to exit (max 60s)..."
+$deadline = (Get-Date).AddSeconds(60)
+while ((Get-Date) -lt $deadline) {{
+    $p = Get-Process -Id $oldPid -ErrorAction SilentlyContinue
+    if ($null -eq $p) {{ break }}
+    Start-Sleep -Milliseconds 500
+}}
+
+# Belt-and-suspenders: if still alive, force-kill. We are the only thing
+# that should be holding files in $installDir at this point.
+$p = Get-Process -Id $oldPid -ErrorAction SilentlyContinue
+if ($p) {{
+    Write-Host "Process did not exit gracefully — taskkill /F /PID $oldPid"
+    Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 800
+}}
+
+# Try the rename a few times — Windows can hold a stale file lock briefly
+# even after process death.
+$renamed = $false
+for ($i = 0; $i -lt 20; $i++) {{
+    try {{
+        Rename-Item -LiteralPath $installDir -NewName ($installDir + '.old') -ErrorAction Stop
+        $renamed = $true
+        break
+    }} catch {{
+        Start-Sleep -Milliseconds 500
+    }}
+}}
+if (-not $renamed) {{
+    Write-Host "[ERR] Cannot rename old install dir. Aborting; old app left intact."
+    Read-Host 'Press Enter'
+    exit 1
+}}
+
+try {{
+    Move-Item -LiteralPath $pendingInner -Destination $installDir -ErrorAction Stop
+}} catch {{
+    Write-Host "[ERR] Move-Item failed: $_. Rolling back."
+    Rename-Item -LiteralPath ($installDir + '.old') -NewName ([System.IO.Path]::GetFileName($installDir))
+    Read-Host 'Press Enter'
+    exit 1
+}}
+
+Remove-Item -LiteralPath ($installDir + '.old') -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
+
+$newExe = Join-Path $installDir $exeName
+Write-Host "Restarting: $newExe"
+Start-Process -FilePath $newExe -WorkingDirectory $installDir
+
+# Self-delete (best-effort)
+Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
 """
-    _write_bat_in_console_codepage(bat_path, bat)
+
+    # PowerShell is happy reading UTF-8 BOM. This sidesteps the cmd.exe
+    # codepage trap entirely because cmd never parses any path content
+    # — it only launches powershell.exe with a -File argument (ASCII).
+    ps1_path.write_text(ps1, encoding="utf-8-sig")
+
+    # Thin .bat that just launches the .ps1. Everything here is ASCII so
+    # codepage doesn't matter. We keep the .bat so the caller's
+    # subprocess.Popen invocation is identical to the old contract.
+    bat = (
+        "@echo off\r\n"
+        "powershell.exe -ExecutionPolicy Bypass -NoProfile -File \"%~dp0__update_swap__.ps1\"\r\n"
+        "del \"%~f0\"\r\n"
+    )
+    bat_path.write_text(bat, encoding="ascii")
     return bat_path
 
 
 def _write_bat_in_console_codepage(bat_path: Path, content: str) -> None:
-    """Write the .bat using whatever encoding cmd.exe will actually read it
-    as. On Windows that's the OEM codepage (CP950 on Traditional-Chinese
-    systems); on non-Windows we just use UTF-8 (the script will never run
-    there but the dev test harness still touches it).
+    """Retained for backward compatibility / other call sites. Writes the
+    .bat using whatever encoding cmd.exe will actually read it as.
 
-    Falls back gracefully: OEM cp → ANSI cp → UTF-8 with BOM.
-    Any chars that can't round-trip in the chosen codepage are XML-escaped
-    so cmd at worst sees a literal `&#NNNN;` rather than corrupted bytes.
+    Active swap-bat path now uses PowerShell (see _write_swap_bat) so this
+    helper is unused there, but kept to avoid breaking any external caller.
     """
     if sys.platform != "win32":
         bat_path.write_text(content, encoding="utf-8")

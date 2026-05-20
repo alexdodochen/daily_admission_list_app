@@ -261,24 +261,25 @@ def test_schedule_restart_dev_uses_execv(monkeypatch):
     assert "x" in execv_called
 
 
-# ---------------- _write_swap_bat — codepage + PID-wait regression ----------------
-# Field bug 2026-05-20: the swap .bat was written UTF-8 and used IMAGENAME
-# matching, but cmd.exe on TW Windows parses .bat in CP950 → Chinese path
-# became mojibake → find /I never matched → bat froze in wait loop → app
-# bricked (old exe already os._exit'd, new exe never relaunched).
-#
-# Two invariants we now pin:
-#   1. Wait condition is PID-based ('tasklist /FI "PID eq N"'), NEVER
-#      IMAGENAME-based — PIDs are ASCII digits and survive any codepage.
-#   2. The .bat content is written with a codepage that round-trips the
-#      Chinese install dir name to BYTES cmd.exe will read correctly.
-#      On Windows this means OEM codepage; non-Windows we keep utf-8 for
-#      the dev-test harness.
+# ---------------- _write_swap_bat — PowerShell migration ----------------
+# 2026-05-20 field bugs (multiple bricks):
+#   v1 (a68c3da):  UTF-8 .bat + chcp 65001 + IMAGENAME match. CP950 cmd
+#                  parser turned Chinese exe name into mojibake → find /I
+#                  never matched → wait loop forever.
+#   v2 (4eae323):  OEM-encoded .bat + PID-based wait via tasklist | find.
+#                  Still bricked — tasklist output parsing is unreliable
+#                  across codepages and PID column alignment.
+#   v3 (current):  Generate a .ps1 (PowerShell). Get-Process is a real
+#                  API, no string parsing. PowerShell handles UTF-8 BOM
+#                  natively → Chinese paths round-trip cleanly. .bat is
+#                  now a thin ASCII shim that just launches the .ps1.
+#                  Hard 60s timeout + taskkill fallback so the loop CAN
+#                  NEVER spin forever again.
 
 
-def test_swap_bat_waits_by_pid_not_imagename(tmp_path, monkeypatch):
-    """Wait loop MUST filter by PID. Field bug: IMAGENAME with Chinese
-    filename never matched after codepage corruption."""
+def test_swap_writes_ps1_alongside_bat(tmp_path, monkeypatch):
+    """The swap is now driven by PowerShell. Both files should exist —
+    the .bat is a thin shim that invokes the .ps1."""
     install_dir = tmp_path / "行政總醫師.排班.Key班.入院"
     install_dir.mkdir()
     pending = tmp_path / "__update_extract__" / install_dir.name
@@ -291,71 +292,15 @@ def test_swap_bat_waits_by_pid_not_imagename(tmp_path, monkeypatch):
 
     bat_path = updater._write_swap_bat(install_dir, pending, zip_path,
                                        pending.parent)
+    ps1_path = bat_path.parent / "__update_swap__.ps1"
     assert bat_path.exists()
-    # Read with utf-8 errors=replace just to look at the structure; the
-    # PID number itself is always ASCII so this read is safe.
-    raw = bat_path.read_bytes()
-    text = raw.decode("ascii", errors="replace")
-    assert 'PID eq 12345' in text, \
-        "wait loop must filter by PID, not IMAGENAME (codepage-fragile)"
-    assert "12345" in text
-    # The OLD logic used `tasklist /FI "IMAGENAME eq <exe_name>"` and then
-    # `find /I "<exe_name>"`. After the fix, IMAGENAME should not appear.
-    assert "IMAGENAME" not in text, \
-        "IMAGENAME match was the codepage-fragile path (2026-05-20 brick)"
+    assert ps1_path.exists()
 
 
-def test_swap_bat_chinese_paths_roundtrip_in_oem_codepage(tmp_path, monkeypatch):
-    """The .bat must encode Chinese install path in a codepage cmd.exe will
-    read correctly. On Windows that's the OEM codepage; we check the file
-    round-trips back to the original characters."""
+def test_swap_bat_is_ascii_only_shim(tmp_path, monkeypatch):
+    """The .bat must contain only ASCII — that's the whole point of moving
+    the Chinese-path logic into PowerShell. No codepage trap possible."""
     install_dir = tmp_path / "行政總醫師.排班.Key班.入院"
-    install_dir.mkdir()
-    pending = tmp_path / "__update_extract__" / install_dir.name
-    pending.parent.mkdir()
-    pending.mkdir()
-    zip_path = tmp_path / "__update__.zip"
-    zip_path.touch()
-
-    bat_path = updater._write_swap_bat(install_dir, pending, zip_path,
-                                       pending.parent)
-    raw = bat_path.read_bytes()
-
-    # The file should be readable in SOME encoding that round-trips the
-    # Chinese name. Try OEM (Windows) → ANSI → UTF-8 with BOM.
-    candidates = []
-    if sys.platform == "win32":
-        try:
-            import ctypes
-            candidates.append(f"cp{ctypes.windll.kernel32.GetOEMCP()}")
-            candidates.append(f"cp{ctypes.windll.kernel32.GetACP()}")
-        except Exception:
-            pass
-    candidates.append("utf-8-sig")
-    candidates.append("utf-8")
-
-    decoded = None
-    for cp in candidates:
-        try:
-            decoded = raw.decode(cp)
-            if "行政總醫師" in decoded:
-                break
-        except Exception:
-            continue
-    assert decoded is not None, "bat must decode in at least one common cp"
-    assert "行政總醫師" in decoded, \
-        "Chinese folder name must survive the chosen file encoding"
-    # The previous bug was producing UTF-8 bytes which, when decoded as
-    # CP950, became mojibake like '鈞蝮虜揮'. With the fix we should
-    # never see those characters in the file.
-    assert "鈞" not in decoded, "mojibake leaked through the encoder"
-
-
-def test_swap_bat_has_no_chcp_command(tmp_path, monkeypatch):
-    """`chcp 65001 >nul` was a misleading no-op (only affects OUTPUT codepage,
-    not how cmd PARSES the script). Removing it both shortens startup and
-    avoids the false impression the script is codepage-safe."""
-    install_dir = tmp_path / "X"
     install_dir.mkdir()
     pending = tmp_path / "ext" / install_dir.name
     pending.parent.mkdir()
@@ -366,6 +311,90 @@ def test_swap_bat_has_no_chcp_command(tmp_path, monkeypatch):
     bat_path = updater._write_swap_bat(install_dir, pending, zip_path,
                                        pending.parent)
     raw = bat_path.read_bytes()
-    text = raw.decode("ascii", errors="replace")
-    assert "chcp 65001" not in text, \
-        "chcp 65001 was the misleading 'fix' that didn't actually work"
+    # raises UnicodeDecodeError if any non-ASCII bytes leaked in
+    text = raw.decode("ascii")
+    assert "powershell" in text.lower()
+    assert "__update_swap__.ps1" in text
+
+
+def test_swap_ps1_has_chinese_paths_in_utf8(tmp_path, monkeypatch):
+    """The PowerShell script must carry the Chinese install path verbatim
+    and be saved as UTF-8 with BOM (so PowerShell reads it correctly)."""
+    install_dir = tmp_path / "行政總醫師.排班.Key班.入院"
+    install_dir.mkdir()
+    pending = tmp_path / "ext" / install_dir.name
+    pending.parent.mkdir()
+    pending.mkdir()
+    zip_path = tmp_path / "z.zip"
+    zip_path.touch()
+
+    monkeypatch.setattr(os, "getpid", lambda: 12345)
+
+    updater._write_swap_bat(install_dir, pending, zip_path, pending.parent)
+    ps1_path = tmp_path / "__update_swap__.ps1"
+    raw = ps1_path.read_bytes()
+    # Must start with UTF-8 BOM (EF BB BF)
+    assert raw[:3] == b"\xef\xbb\xbf", "PS1 must be saved UTF-8 BOM"
+    text = raw.decode("utf-8-sig")
+    assert "行政總醫師" in text, "Chinese path must round-trip in PS1"
+
+
+def test_swap_ps1_uses_get_process_not_tasklist(tmp_path, monkeypatch):
+    """Wait logic must use Get-Process (real API). Field bug: tasklist
+    output parsing was the root cause of the v2 brick — output formatting
+    varies and the `find " N "` heuristic was unreliable."""
+    install_dir = tmp_path / "X"
+    install_dir.mkdir()
+    pending = tmp_path / "ext" / install_dir.name
+    pending.parent.mkdir()
+    pending.mkdir()
+    zip_path = tmp_path / "z.zip"
+    zip_path.touch()
+
+    monkeypatch.setattr(os, "getpid", lambda: 99999)
+
+    updater._write_swap_bat(install_dir, pending, zip_path, pending.parent)
+    ps1 = (tmp_path / "__update_swap__.ps1").read_text(encoding="utf-8-sig")
+    assert "$oldPid       = 99999" in ps1, "PID must be set as variable"
+    assert "Get-Process -Id $oldPid" in ps1, \
+        "must use Get-Process for the wait, not tasklist parsing"
+    assert "Stop-Process -Id $oldPid" in ps1, \
+        "must have a taskkill fallback so the loop cannot spin forever"
+    assert "tasklist" not in ps1.lower(), \
+        "tasklist parsing was the v2 brick path — must not appear"
+
+
+def test_swap_ps1_has_bounded_wait(tmp_path):
+    """A previous brick spun in an infinite wait loop because exit
+    detection was broken. The new logic MUST cap the wait at 60 seconds —
+    after that, the script force-kills the process and proceeds."""
+    install_dir = tmp_path / "X"
+    install_dir.mkdir()
+    pending = tmp_path / "ext" / install_dir.name
+    pending.parent.mkdir()
+    pending.mkdir()
+    zip_path = tmp_path / "z.zip"
+    zip_path.touch()
+
+    updater._write_swap_bat(install_dir, pending, zip_path, pending.parent)
+    ps1 = (tmp_path / "__update_swap__.ps1").read_text(encoding="utf-8-sig")
+    assert "60" in ps1, "must have a hard 60s timeout"
+    assert "AddSeconds(60)" in ps1
+
+
+def test_swap_bat_has_no_chcp_command(tmp_path, monkeypatch):
+    """`chcp 65001 >nul` was a misleading no-op (only affects OUTPUT codepage,
+    not how cmd PARSES the script). The new shim doesn't need it at all
+    since the .bat is pure ASCII."""
+    install_dir = tmp_path / "X"
+    install_dir.mkdir()
+    pending = tmp_path / "ext" / install_dir.name
+    pending.parent.mkdir()
+    pending.mkdir()
+    zip_path = tmp_path / "z.zip"
+    zip_path.touch()
+
+    bat_path = updater._write_swap_bat(install_dir, pending, zip_path,
+                                       pending.parent)
+    text = bat_path.read_bytes().decode("ascii")
+    assert "chcp 65001" not in text
