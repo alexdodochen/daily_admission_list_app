@@ -1,98 +1,98 @@
 ============================================
-  HANDOFF — Last Updated: 2026-05-20 04:00
+  HANDOFF — Last Updated: 2026-05-20 (Phase 15)
 ============================================
 
 [What this session did]
-  1. Triaged field bug report GitHub issue #1 (2026-05-20):
-     - DNS error on sheets.googleapis.com (network-side, not code)
-     - 🐞 button too pale → red pill (white 700 text, 2px dark-red
-       border, shadow) — see app/static/app.css.
-  2. Built `app/services/diagnose.py` — maps 8 common conn failures
-     (DNS / timeout / 403 / 404 / invalid_grant / SA missing / SSL /
-     quota) → {title, cause, suggestions, is_code_bug}. Hooked into
-     /api/settings/test; UI renders friendly cards via renderConnTest()
-     (no more raw JSON dump). +13 tests.
-  3. Fixed self-sync 'TypeError: Failed to fetch' UX race — moved
-     schedule_restart to FastAPI BackgroundTasks so the response flushes
-     BEFORE os._exit fires; bumped restart delay 0.8s → 1.5s; JS treats
-     Failed-to-fetch on name='self' as expected restart and auto-reload.
-  4. Topbar split into two rows — Row1: brand + upstream-bar + status;
-     Row2: nav links + 🐞 (right-aligned). Wraps cleanly on narrow.
-  5. **Critical** — fixed in-app updater that bricked an install:
-     - v1 (a68c3da): UTF-8 .bat + chcp + IMAGENAME → mojibake → stuck
-     - v2 (4eae323): OEM .bat + tasklist|find " PID " → still stuck
-       (user saw `find:23168` looping)
-     - v3 (0e3501b stable): **PowerShell .ps1 + Get-Process -Id +
-       60s hard timeout + Stop-Process fallback + 20×500ms rename
-       retries + ASCII .bat shim.** Loop CANNOT spin forever now.
-
-[Field-bug triage 2026-05-20 — 6 commits, 372 passed]
-  407023d — feat: diagnose + red bug button (issue #1 both parts)
-  2d87786 — fix: self-sync Failed to fetch (BackgroundTasks)
-  4eae323 — fix(updater): swap.bat codepage trap (incomplete)
-  e53beda — ui: 2-row topbar
-  0e3501b — fix(updater): migrate swap to PowerShell (stable)
+  Shipped a 10-issue field-bug batch from 麒翔's deployed install
+  (commit c47d357). All bugs surfaced from real day-to-day use:
+  1. ② EMR 註記 → ③ 入院序整合 not syncing — `renderSubtables` H-col
+     was a plain <td>; now a `noteInput()` editable input with the
+     existing fg-input bidirectional sync wiring.
+  2. 主治醫師 / 病人姓名 not canonicalised from EMR — added
+     `matched_doctor` flag to `fetch_raw_html`; `extract_visit_doctor`
+     parses "<date> <doc> 門診"; `apply_emr_main_fixes` patches main D
+     (only when matched_doctor=True, not on FALLBACK visits).
+     `_name_variants` strips OCR "?" so "李文煌?" matches.
+  3. 吳石秀 / 魏瑞泰 "查無 EMR" — `FALLBACK_DOCTORS` pool grown
+     6 → 28 via `_load_cv_doctor_pool()` reading doctor_codes.json.
+  4. Same-day re-upload moving patients between subs — `_apply_diff_to_subtables`
+     dropped the doctor_changed branch entirely; same chart_no rows
+     never touched.
+  5. Load-existing-date no longer auto-jumps to Step 4 tab.
+  6. 資料檢查 panel moved to bottom of /admission.
+  7. New floating ⬆ scroll-to-top button on every page (base.html).
+  8. ③ sub-table now shows 性別 + 年齡 (parsed from c_text prefix).
+  9. Step 5 per-patient overrides: 「排」 checkbox to skip + 「導管日期」
+     date input to shift one patient to a different day. Backend
+     `_apply_overrides` whitelist gains `skip` + `cath_date`.
+  10. Step 5 missing_after now shows 原因 column paired from Phase-1
+      `add_results` row — never bare "✗ 沒寫進去".
 
 [Current state]
-  - Branch: main, clean, IN SYNC with origin/main @ 0e3501b
-  - Tests: 372 passed (353 → +19 across diagnose + updater)
-  - CI release: 0e3501b is the deliverable once GitHub Actions finishes
-    its ~5-10 min build (release asset = ASCII admission-app.zip,
-    361 MB onedir bundle).
-  - GitHub Issue #1: closed + 2 follow-up comments posted explaining
-    the DNS triage, the diagnose feature, and the 3-attempt updater fix.
+  - Branch: main, clean, IN SYNC with origin/main @ c47d357
+  - Tests: 372 passed (2 ocr_service tests rewritten for new
+    doctor-unchanged rule, all others unchanged)
+  - CI release: c47d357 is the next deliverable. GitHub Actions
+    should be ~5-10 min into building the release zip when this
+    handoff is written.
+  - 麒翔's install will pick up all 10 fixes via 🔄 更新 button
+    once CI finishes.
 
 [Next steps]
-  - When CI finishes building 0e3501b release: tell every existing user
-    on any commit BETWEEN a68c3da and 4eae323 (inclusive) that they
-    MUST manually download the latest release zip ONCE — clicking the
-    in-app 更新 button on those versions still uses the buggy bat code
-    and will brick. After that one manual install, all future updates
-    are safe (PS1-based).
-  - If user 麒翔's install is currently bricked from the field bug:
-    close stuck cmd window → relaunch old exe from install_dir
-    (file lock not yet acquired since rename failed) → manually drop
-    new release zip ONCE.
-  - Carry-over from prior session: /sched real-month solve→手調→套用重算
-    manual verify (still pending, lower priority).
+  - Watch the CI build for c47d357 (release asset = ASCII
+    admission-app.zip). If it succeeds, tell 麒翔 to click 更新.
+  - Field-verify: ask 麒翔 to retry 吳石秀 / 魏瑞泰 EMR fetch
+    after updating — should now succeed via the 28-doctor pool.
+    If still "查無 EMR" → genuinely no 一年內門診 (any CV doc),
+    user fills 註記/F/G manually from inpatient notes.
+  - Field-verify: 主治醫師 OCR-typo cases — should now show up
+    in the "📝 EMR 自動更正主表" table with field=主治醫師.
+  - Carry-over: /sched real-month solve→手調→套用重算 manual
+    verify (still pending, low priority).
+  - Sub-table title rows (`<doc>（N人）`) NOT auto-renamed when
+    main D gets EMR-canonicalised — known limitation, no fix
+    queued. Workaround: editable 📋 查閱 viewer for manual rename.
 
 [Known issues / blockers]
-  - Pre-0e3501b installs cannot self-update without bricking. ONE
-    manual zip download required per affected install.
-    [[updater-swap-must-use-powershell]]
-  - Push to main is still authorization-gated per session.
-  - Public CI release has NO SA + NO 3 cathlab JSONs (PHI by design;
-    [[delivery-protocol-inapp-update]]).
+  - Pre-0e3501b installs (a68c3da..4eae323) still need ONE manual
+    zip download (their updater is the buggy .bat that bricks).
+    All current installs should already be on PS1 updater.
+  - Public CI release has NO SA + NO 3 cathlab JSONs (PHI by
+    design; [[delivery-protocol-inapp-update]]).
+  - Sub-table title auto-rename on EMR doctor canon: deferred.
 
 [Don't repeat these mistakes]
-  - Never embed Chinese paths in a cmd .bat — cmd parses .bat in OEM
-    codepage regardless of `chcp 65001`. Use PowerShell for any post-
-    update / restart script touching Chinese paths.
-    [[updater-swap-must-use-powershell]]
-  - Never use `tasklist | find " N "` for process-alive checks — output
-    formatting and PID column alignment make it unreliable. Use
-    Get-Process -Id from PowerShell instead.
-  - Never let an exit-detection loop be unbounded — always cap with a
-    timeout + force-kill fallback so a broken check can't spin forever.
-  - Common operational errors must surface actionable hints, NOT raw
-    stack traces. [[diagnose-common-errors-not-raw-traces]]
-  - Self-restart endpoints must use BackgroundTasks so the response is
-    flushed before the process dies — otherwise the browser sees
-    Failed-to-fetch and the user thinks the update failed.
+  - When user says "不要動" about same-chart_no rows, that means
+    EVERYTHING including doctor — don't silently re-apply
+    doctor_changed in sub-table sync. [[ocr-reupload-membership-only]]
+  - "Verify-after-write" results must pair STATUS with REASON in
+    the same row, sourced from the write phase. Don't make users
+    dig through detailed logs for a 2-line answer.
+    [[missing-after-must-show-reason]]
+  - Load / refresh buttons must NOT switch tabs. Hydrate data, leave
+    focus alone. [[load-existing-no-tab-jump]]
+  - Hardcoded fallback lists go stale as the team grows — union
+    with the live JSON (doctor_codes.json) but keep the hardcoded
+    floor for sanitised installs. [[emr-fallback-pool-from-doctor-codes]]
 
 [Relevant files]
-  - app/services/diagnose.py (new — 150 lines, 8 error patterns)
-  - app/services/updater.py (_write_swap_bat → PowerShell .ps1)
-  - app/main.py (/api/settings/test hint wiring, /api/update/sync
-    BackgroundTasks)
-  - app/static/app.js (renderConnTest + self-sync restart catch)
-  - app/static/app.css (red bug-link pill + conn-block hint cards +
-    2-row topbar)
-  - app/templates/base.html (2-row topbar structure)
-  - tests/test_diagnose.py (new — 13 cases)
-  - tests/test_updater.py (+6 cases for PS1 contract)
+  - app/services/ocr_service.py (doctor_changed branch removed)
+  - app/services/emr_service.py (matched_doctor 4-tuple,
+    extract_visit_doctor, _load_cv_doctor_pool, apply_emr_main_fixes D-col)
+  - app/services/cathlab_service.py (_apply_overrides skip + cath_date,
+    missing_after reason pairing)
+  - app/static/app.js (renderSubtables 性別/年齡 + noteInput,
+    renderPlan skip/cath_date columns, missing_after reason column,
+    scroll-to-top wiring, load-existing no jump)
+  - app/static/app.css (.scroll-to-top styling)
+  - app/templates/admission.html (資料檢查 → bottom)
+  - app/templates/base.html (#scroll-to-top button)
+  - tests/test_ocr_service.py (2 doctor_changed tests rewritten)
 
 [Important memory files]
-  - feedback_updater_swap_must_use_powershell.md (NEW — pin PS1 rule)
-  - feedback_diagnose_common_errors_not_raw_traces.md (NEW — hint rule)
-  - feedback_delivery_protocol_inapp_update.md (still holds, w/ caveat)
+  - feedback_ocr_reupload_membership_only.md (UPDATED — 2026-05-20 rule)
+  - reference_emr_fallback_pool_from_doctor_codes.md (NEW)
+  - feedback_missing_after_must_show_reason.md (NEW)
+  - feedback_load_existing_no_tab_jump.md (NEW)
+  - project_emr_doctor_canonicalization.md (NEW)
+  - project_3card_app_state.md (UPDATED — Phase 15 prepended)

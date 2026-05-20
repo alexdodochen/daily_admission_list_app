@@ -1,11 +1,15 @@
 # Memory index — daily_admission_list_app
 
+- [Re-upload screenshot is MEMBERSHIP-only, never touches existing chart rows](feedback_ocr_reupload_membership_only.md) — 2026-05-20 strengthened: doctor_changed ALWAYS ignored, not just when no add/remove
+- [EMR FALLBACK_DOCTORS pool unions doctor_codes.json + hardcoded floor](reference_emr_fallback_pool_from_doctor_codes.md) — 6 → 28 names; closes "查無 EMR" gap for inpatient-only consult cases
+- [missing_after must show 原因, not just status](feedback_missing_after_must_show_reason.md) — Step 5 verify-after-write pairs status with reason from Phase-1 add_results
+- [Load-existing-date button stays on current step](feedback_load_existing_no_tab_jump.md) — never auto-switch tabs after data hydration
+- [EMR doctor canonicalization for main D col](project_emr_doctor_canonicalization.md) — matched_doctor=True → extract_visit_doctor → apply_emr_main_fixes patches D; FALLBACK visits refused
 - [Updater swap must use PowerShell, not cmd.bat](feedback_updater_swap_must_use_powershell.md) — Windows install path is Chinese. 3 brick attempts on 2026-05-20 before PS1+Get-Process+60s-timeout settled. Never tasklist|find, never .bat parsing Chinese paths.
 - [Diagnose common errors with actionable hints, not raw traces](feedback_diagnose_common_errors_not_raw_traces.md) — operational failures (DNS/403/404/SSL/quota…) MUST render a hint card via app/services/diagnose.py; raw stack-trace dumps drive false bug reports
-- [3-card app integration state](project_3card_app_state.md) — Phase 14 (2026-05-18→19): Card1 port+Step5, sync cutover, ② EMR autoload+name-fix+註記+collapse, ③ order on screen, SA decoupled from build. In sync @ acb012f, 330 tests.
+- [3-card app integration state](project_3card_app_state.md) — Phase 15 (2026-05-20): 10-issue field-bug batch (EMR doctor canon, FALLBACK 6→28, doctor_changed always ignored, Step 5 skip+date override, missing_after reason, ③ 性別/年齡, ② ↔ ③ 註記 sync, scroll-to-top, 資料檢查 to bottom, load-existing no jump). c47d357, 372 tests.
 - [Cathlab static decouple](project_cathlab_static_decouple.md) — 3 cathlab JSONs gitignored PHI; never in public CI release; runtime DATA_DIR/cathlab_static drop-in; spec bundles only on local Path-B build; skill `package-distribute`
 - [In-app 🐞 回報問題 feature](project_bug_report_feature.md) — log ring + bug_report scrub (PHI/creds) → prefilled public GitHub issue + local private file; never auto-submit/weaken scrub
-- [OCR re-upload = membership-only, never overwrite kept rows](feedback_ocr_reupload_membership_only.md) — new screenshot only adds/removes; no add/remove → write nothing (照舊); kept patients' A-L rows preserved verbatim; doctor-change-only = 照舊
 - [Delivery protocol = in-app 更新 + private drop-in](feedback_delivery_protocol_inapp_update.md) — existing install: push→CI release + recipient clicks 更新 (never re-ship zip); SA+3 cathlab JSON private, loose into one DATA_DIR folder; rename breaks update ONCE for pre-rename installs
 - [Bundle naming invariant](project_bundle_naming_invariant.md) — exe/folder = Chinese 行政總醫師.排班.Key班.入院; release asset MUST be ASCII admission-app.zip; packaging.spec + release.yml + updater.RELEASE_ASSET_NAME must agree
 - [Sync source cutover — project repo ONLY](feedback_card1_sync_source_cutover.md) — from 2026-05-18 ALL sync is daily_admission_list_app only; never touch Key-Schedule-APP / CV-Schedulling-APP / claude-skills / any other repo
