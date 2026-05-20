@@ -1,5 +1,6 @@
 # Memory index — daily_admission_list_app
 
+- [fetch_raw_html must sentinel-stamp #divUserSpec](feedback_emr_divuserspec_race_fix.md) — 石文明 → 周素珍 root cause; off-by-one corruption; mirror _verify_query_and_read pattern
 - [Cancel registry for Step 3 + Step 5 long ops](project_cancel_registry.md) — cooperative checkpoint pattern; `step{N}_{date}` op_id; `/api/op/cancel`; partial results + `canceled` flag; don't switch to asyncio.Task.cancel
 - [EMR writeback preserves existing C/F/G](feedback_emr_preserve_existing.md) — chart with ANY filled cell → skip ALL writes; clear cells manually to re-fetch
 - [Cathlab 第二醫師 from 主治醫師導管時段表 overlay](project_cathlab_schedule_overlay.md) — 詹世鴻(軨) → second=許毓軨 etc.; reads admission Sheet A1:G15 of 主治醫師導管時段表; busts cache per Step 5 entry

@@ -699,20 +699,24 @@ def write_results_to_subtables(date: str, results: list[dict]) -> dict:
             continue
         row = chart_to_row[chart]
         existing = chart_to_existing.get(chart, {})
+        # 姓名 (col A) — EMR is authoritative; ALWAYS patched on canonical
+        # difference, even when C/F/G are preserved. This is critical for
+        # cases where a prior wrong fetch (e.g., divUserSpec race condition
+        # serving the previous chart's data) wrote the wrong name into A.
+        # `emr_name` comes from the EMR's own #divUserSpec parse, so when it
+        # disagrees with the sub-table A value the sub-table is stale.
+        emr_only_name = (r.get("emr_name") or "").strip()
+        if emr_only_name and emr_only_name != chart_to_name.get(chart, ""):
+            patches.append((f"A{row}", emr_only_name))
         # Preserve-existing rule: if ANY of C / F / G already has user content,
-        # skip ALL writes for this chart (keep the row exactly as the user left
-        # it). 姓名 also preserved in this branch since the row is "claimed".
+        # skip writes for those three fields (user-typed F / manually edited C
+        # must not be destroyed when re-running EMR after adding 1 new patient).
         if existing.get("emr") or existing.get("diagnosis") or existing.get("cathlab"):
             preserved.append(chart)
             continue
         c_text = r.get("c_text") or ""
         f_val  = r.get("f") or ""
         g_val  = r.get("g") or ""
-        # 姓名 (col A) — EMR is authoritative; also strips any OCR "?" so the
-        # sub-table never displays an uncertain name. Only patch on change.
-        best_name = best_patient_name(r)
-        if best_name and best_name != chart_to_name.get(chart, ""):
-            patches.append((f"A{row}", best_name))
         if c_text:
             patches.append((f"C{row}", c_text))
         if f_val:
@@ -940,10 +944,21 @@ async def fetch_raw_html(page, session_url: str, chart_no: str,
     sentinel_q = f"FETCH-{chart_no}-{int(_time.time() * 1000)}-QUERY"
     sentinel_c = f"FETCH-{chart_no}-{int(_time.time() * 1000)}-CLICK"
 
-    # 1. stamp leftFrame + mainFrame, then submit the query in topFrame.
+    # 1. stamp leftFrame + mainFrame AND divUserSpec, then submit the query
+    # in topFrame. divUserSpec MUST be stamped (5/12 race-fix from
+    # _verify_query_and_read): it's in a different frame and refreshes
+    # async after BTQuery — without a sentinel we'd read the PREVIOUS
+    # chart's name (off-by-one corruption — see 石文明 vs 周素珍 2026-05-21 case).
     await page.evaluate(f"""() => {{
         try {{ window.frames['leftFrame'].document.body.innerHTML = '<!--{sentinel_q}-->'; }} catch(e) {{}}
         try {{ window.frames['mainFrame'].document.body.innerHTML = '<!--{sentinel_q}-->'; }} catch(e) {{}}
+        // Stamp divUserSpec across every frame so we know it's been refreshed.
+        for (let i = 0; i < window.frames.length; i++) {{
+            try {{
+                const el = window.frames[i].document.querySelector('#divUserSpec');
+                if (el) el.innerText = '{sentinel_q}';
+            }} catch(e) {{}}
+        }}
     }}""")
 
     submit = await page.evaluate(f"""() => {{
@@ -976,34 +991,61 @@ async def fetch_raw_html(page, session_url: str, chart_no: str,
     if not submit.get("ok"):
         return "", "", "", False
 
-    # 2. poll leftFrame for visit-tree readiness.
+    # 2. poll leftFrame for visit-tree readiness AND divUserSpec for refresh.
+    # divUserSpec MUST be sentinel-free + carry the 姓名 marker — otherwise
+    # we'd read the previous chart's data and mis-name the patient.
     left_ready = False
+    div_ready = False
     for _ in range(24):  # 24 × 0.5s = 12s
         await page.wait_for_timeout(500)
         state = await page.evaluate(f"""() => {{
+            let out = {{left: 'err', divuser: 'stamped'}};
             try {{
                 let d = window.frames['leftFrame'].document;
                 let html = d.body.innerHTML || '';
-                if (html.indexOf('{sentinel_q}') >= 0) return 'stamped';
-                let links = d.querySelectorAll('a');
-                let count = 0;
-                for (let l of links) if ((l.innerText || '').includes('門診')) count++;
-                return count > 0 ? 'ready' : 'empty';
-            }} catch(e) {{ return 'err'; }}
+                if (html.indexOf('{sentinel_q}') >= 0) {{ out.left = 'stamped'; }}
+                else {{
+                    let links = d.querySelectorAll('a');
+                    let count = 0;
+                    for (let l of links) if ((l.innerText || '').includes('門診')) count++;
+                    out.left = count > 0 ? 'ready' : 'empty';
+                }}
+            }} catch(e) {{}}
+            for (let i = 0; i < window.frames.length; i++) {{
+                try {{
+                    const el = window.frames[i].document.querySelector('#divUserSpec');
+                    if (!el) continue;
+                    const t = el.innerText || '';
+                    if (t.indexOf('{sentinel_q}') >= 0) {{ out.divuser = 'stamped'; }}
+                    else if (t.indexOf('姓名') >= 0) {{ out.divuser = 'ready'; break; }}
+                    else {{ out.divuser = 'empty'; }}
+                }} catch(e) {{}}
+            }}
+            return out;
         }}""")
-        if state == "ready":
+        if state.get("left") == "ready":
             left_ready = True
+        if state.get("divuser") == "ready":
+            div_ready = True
+        if left_ready and div_ready:
             break
 
-    div_spec = await page.evaluate("""() => {
-        for (let i = 0; i < window.frames.length; i++) {
-            try {
+    # Small settling delay (mirrors _verify_query_and_read's 0.4s) so any
+    # late paint of divUserSpec lands before we read.
+    await page.wait_for_timeout(400)
+    div_spec = await page.evaluate(f"""() => {{
+        for (let i = 0; i < window.frames.length; i++) {{
+            try {{
                 let el = window.frames[i].document.getElementById('divUserSpec');
-                if (el && el.innerText.trim()) return el.innerText.trim();
-            } catch(e) {}
-        }
+                if (!el) continue;
+                let t = (el.innerText || '').trim();
+                // Reject sentinel echo + only accept rows that include 姓名 marker
+                if (!t || t.indexOf('{sentinel_q}') >= 0) continue;
+                if (t.indexOf('姓名') >= 0) return t;
+            }} catch(e) {{}}
+        }}
         return '';
-    }""") or ""
+    }}""") or ""
 
     if not left_ready:
         return "", div_spec, "", False

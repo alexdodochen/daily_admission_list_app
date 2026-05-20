@@ -13,9 +13,17 @@ Step 3 EMR for the whole batch (or just to fetch the new one), the old
 behavior overwrote every chart's C/F/G — destroying any F that the user
 had typed manually, or any 註記 in C that the user had edited.
 
-**Rule (per-chart, all-or-nothing):**
+**Rule (refined 2026-05-21 after the 石文明 → 周素珍 case):**
+- 姓名 (col A) — **always** patched on EMR canonical-name difference,
+  even when C/F/G are preserved. EMR `#divUserSpec` is the authoritative
+  source for the patient's real name; the sub-table A column must follow.
+  This is what unsticks "前一個病人的名字卡在這個 chart_no" scenarios after
+  a divUserSpec race-condition fix.
+- C / F / G — preserved per the all-or-nothing rule below.
+
+**Rule (C/F/G, all-or-nothing):**
 - If sub-table row's `emr` (C) OR `diagnosis` (F) OR `cathlab` (G) is
-  non-empty → preserve the row entirely. No patches at all for that chart.
+  non-empty → preserve those THREE fields. No patches to C/F/G.
 - All three empty → write normally.
 - Error results (failed fetch) → skipped regardless (not "preserved").
 

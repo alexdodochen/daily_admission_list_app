@@ -547,6 +547,30 @@ def test_writeback_skips_error_results(monkeypatch):
     assert written == []
 
 
+def test_writeback_emr_name_overrides_preserved_row(monkeypatch):
+    """When C/F/G filled (preserve) but EMR canonical name differs from
+    sub-table A, A IS still patched. Models the 2026-05-21 石文明 → 周素珍
+    case (prior fetch wrote wrong name due to divUserSpec race; new fetch
+    must rename even with the row otherwise preserved).
+    """
+    tables = {"詹世鴻": [{
+        "row": 7, "name": "石文明", "chart_no": "00385733",
+        "emr": "65 y/o 男\nOLD", "diagnosis": "CAD", "cathlab": "LHC",
+    }]}
+    written = _stub_writeback_io(monkeypatch, tables)
+    results = [{"chart_no": "00385733",
+                "c_text": "NEW", "f": "AS", "g": "TAVI",
+                "emr_name": "周素珍"}]
+    out = es.write_results_to_subtables("20260526", results)
+    # C/F/G NOT written (preserved); A IS written (canonical name update).
+    assert "00385733" in out["preserved"]
+    cells = [(p[0], p[1]) for p in written]
+    assert ("A7", "周素珍") in cells
+    assert not any(c.startswith("C7") for c, _ in cells)
+    assert not any(c.startswith("F7") for c, _ in cells)
+    assert not any(c.startswith("G7") for c, _ in cells)
+
+
 def test_writeback_mixed_batch_one_preserved_one_new(monkeypatch):
     """Two charts: one already-EMR'd → preserved; one fresh → written."""
     tables = {"許志新": [
