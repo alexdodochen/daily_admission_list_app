@@ -26,7 +26,7 @@
   </div>
 </section>
 
-<!-- 載入既有日期：跳過 OCR，直接從 Sheet 把 Step 1 表 + Step 4 子表格拉回來 -->
+<!-- 載入既有日期：跳過 OCR，直接從 Sheet 把 ① 主表 + ③ 子表格拉回來 -->
 <section class="card load-existing-card">
   <h2>📂 載入已存在的日期工作表 <span class="optional-tag">接續做</span></h2>
   <p class="hint">如果這個日期已經做過 Step 1 (主表 A-L) 或更後面的步驟，選下面的日期一鍵把現況拉回來，繼續修改 / 補做。<u>不會清掉 Sheet 任何資料</u>。</p>
@@ -40,9 +40,9 @@
   </div>
 </section>
 
-<!-- Step 1 -->
+<!-- Panel for stepper ① -->
 <section class="card panel" data-panel="1">
-  <h2>Step 1 — 住院名單截圖 OCR</h2>
+  <h2>① 匯入名單 — 住院名單截圖 OCR</h2>
   <div class="drop-zone" id="drop-zone">
     <p>將截圖拖到這裡，或 <input type="file" id="file-input" accept="image/*" style="display:inline"></p>
   </div>
@@ -68,15 +68,19 @@
   <div id="s2-output"></div>
 </section>
 
-<!-- Step 3 -->
+<!-- Panel for stepper ② EMR 擷取 -->
 <section class="card panel hidden" data-panel="3">
-  <h2>Step 3 — EMR 擷取（Playwright）</h2>
+  <h2>② EMR 擷取（Playwright）</h2>
   <p class="hint">請自己先在瀏覽器登入 EMR，然後把查詢頁網址貼過來。每位病人會擷取 raw SOAP + #divUserSpec，並自動偵測 F (術前診斷) / G (預計心導管)。摘要功能已停用 (5/10)。</p>
   <label>Session URL
     <input id="session-url" placeholder="http://.../Emrquery/...">
   </label>
-  <p class="hint">病人清單預設取 Step 2 的 ordered 結果，你也可以貼 JSON。</p>
-  <textarea id="emr-patients" rows="6" placeholder='[{"chart_no":"123","name":"王小明","doctor":"李文煌"}]'></textarea>
+  <p class="hint">病人清單會從 ① 匯入名單 / 載入既有日期 自動帶入。下方預覽是即將擷取的清單；要手動加減人請改下方 JSON 欄。</p>
+  <div id="emr-patients-preview"></div>
+  <details>
+    <summary class="hint">📋 進階：手動編輯病人 JSON</summary>
+    <textarea id="emr-patients" rows="6" placeholder='[{"chart_no":"123","name":"王小明","doctor":"李文煌"}]'></textarea>
+  </details>
   <div class="actions">
     <button id="run3-btn">開始擷取 + 自動偵測 F/G</button>
     <button id="cancel3-btn" type="button" style="display:none;background:#dc2626;color:#fff" title="跑到一半要中止？">✕ 取消擷取</button>
@@ -85,9 +89,9 @@
   <div id="emr-results"></div>
 </section>
 
-<!-- Step 4 -->
+<!-- Panel for stepper ③ 入院序整合 -->
 <section class="card panel hidden" data-panel="4">
-  <h2>Step 4 — F/G 檢查 + 抽籤 + 入院序</h2>
+  <h2>③ 入院序整合 — F/G 檢查 + 抽籤 + 入院序</h2>
   <details class="step-help">
     <summary>📖 流程說明（點開）</summary>
     <p><strong>① 讀取醫師子表格</strong>：把該日所有醫師子表格抓下來顯示，並讓 <strong>術前診斷 / 預計心導管</strong> 可即時編輯（點 ▼ 選或自填）。</p>
@@ -103,7 +107,7 @@
       <li>Pin 層 2：<strong>📌 病人 pin</strong> 面板 = 指定特定病人為全域第 N 位</li>
       <li>Pin 層 3：<strong>📌 醫師 pin</strong> 面板 = 指定某醫師為 RR 第 N 順位</li>
     </ul>
-    <p><strong>術前診斷 / 預計心導管</strong> 自填的內容會被 Step 5 keyin 走 WEBCVIS 的 OTHERS / 備註。</p>
+    <p><strong>術前診斷 / 預計心導管</strong> 自填的內容會被 ④ 導管排程 走 WEBCVIS 的 OTHERS / 備註。</p>
   </details>
   <div class="actions">
     <button id="load4-btn">① 讀取醫師子表格</button>
@@ -116,7 +120,7 @@
 </section>
 
 <section class="card panel hidden" data-panel="5">
-  <h2>Step 5 — 導管排程（自動 key 進 WEBCVIS 心導管室排程系統）</h2>
+  <h2>④ 導管排程（自動 key 進 WEBCVIS 心導管室排程系統）</h2>
   <p class="hint">系統會讀每位病人的統整資料（術前診斷 / 預計心導管 / 排程日），自動幫你 key 進 WEBCVIS。請依序按 ① → ②（可省略）→ ③。</p>
 
   <details class="hint" style="margin:6px 0">
@@ -144,7 +148,7 @@
 </section>
 
 <section class="card panel hidden" data-panel="6">
-  <h2>Step 6 — LINE 推播（入院名單給住服）</h2>
+  <h2>⑤ LINE 推播（入院名單給住服）</h2>
   <p class="hint">從 Sheet N-Q 四欄（序號 / 主治 / 姓名 / 備註(住服)）組成訊息，推到 LINE group。</p>
   <label>Group ID（留空用設定頁的預設）
     <input id="line-group" placeholder="C xxxxx...">
@@ -159,7 +163,7 @@
 
 <section class="card checks-card">
   <h2>資料檢查 <span class="optional-tag">選用</span></h2>
-  <p class="hint"><strong>需要整理 Google Sheet 格式問題時再使用即可，平常可略過。</strong>用上方日期分頁。格式檢查找表頭 / 子表格 / 病歷號文字格式問題，可一鍵修正；定案檢查確認 D/F/I + 子表格 F/G + N 列數，達成才能進 Step 5/6。</p>
+  <p class="hint"><strong>需要整理 Google Sheet 格式問題時再使用即可，平常可略過。</strong>用上方日期分頁。格式檢查找表頭 / 子表格 / 病歷號文字格式問題，可一鍵修正；定案檢查確認 主治醫師/姓名/病歷號 + 子表格 術前診斷/預計心導管 + 入院序列數，達成才能進 ④ 導管排程 / ⑤ LINE 推播。</p>
   <div class="checks-row">
     <div class="format-check-wrap">
       <button id="fmt-check-btn" type="button">檢查格式</button>

@@ -102,20 +102,19 @@
         <li><b>設定頁</b> 填：LLM key (Anthropic / OpenAI / Gemini 任一) → Google service account JSON 路徑 → Sheet ID → WEBCVIS 帳密 → LINE token。「測試連線」要兩個 ✓ 才能繼續。</li>
         <li>把 service account 的 email 加入該 Sheet 的「編輯者」（或把 Sheet 設「知道連結都可以編輯」）。</li>
       </ol>
-      <h3>每天 6 步</h3>
+      <h3>每天 5 步</h3>
       <ol>
-        <li><b>Step 1 OCR</b> — 拖入院名單截圖 → LLM 辨識成主表 → 對病歷號 → 寫入 Sheet（OCR 會自動填日期，diff 會更新子表格）。</li>
-        <li><b>Step 2 生成 subtable</b> — 依主表順序，把病人按主治醫師分組，產生子表格。<u>不抽籤、不寫入院序</u>。已有子表格會拒絕覆寫。</li>
-        <li><b>Step 3 EMR 擷取</b> — 自己登入 EMR 後貼 session URL → Playwright 抓 SOAP → 自動偵測 術前診斷 / 預計心導管（含 plan-section 規則）→ 寫回子表格的 EMR / 術前診斷 / 預計心導管 + 修正主表 姓名 / 性別 / 年齡。診斷 / 心導管 在 EMR 卡片可即時編輯（▼ 下拉或自填）。</li>
-        <li><b>Step 4 抽籤 + 入院序</b> — 三層 pin（同醫師排序欄 / 病人 / 醫師）→「② 首次抽籤」整段重寫入院序（會清掉 備註(住服) / 改期）；改完 術前診斷 / 預計心導管 / 同醫師排序 之後用「③ 整合寫入」（保留 備註(住服) / 改期）。</li>
-        <li><b>Step 5 導管 keyin</b> — Plan (dry-run) / Verify (查 WEBCVIS) / Keyin (ADD + UPT)。術前診斷 / 預計心導管 自填的內容會走 OTHERS_PDI / 備註。</li>
-        <li><b>Step 6 LINE 推播</b> — 讀 入院序 / 主治 / 姓名 / 備註(住服) 四欄 → 預覽訊息 → 推到指定 group。</li>
+        <li><b>① 匯入名單 (OCR)</b> — 拖入院名單截圖 → LLM 辨識成主表 → 對病歷號 → 寫入 Sheet（OCR 會自動填日期，子表格會自動產生 + 自動帶入下一步）。</li>
+        <li><b>② EMR 擷取</b> — 自己登入 EMR 後貼 session URL → Playwright 抓 SOAP → 自動偵測 術前診斷 / 預計心導管（含 plan-section 規則）→ 寫回子表格的 EMR / 術前診斷 / 預計心導管 + 修正主表 姓名 / 性別 / 年齡。診斷 / 心導管 在 EMR 卡片可即時編輯（▼ 下拉或自填）。</li>
+        <li><b>③ 入院序整合</b> — 三層 pin（同醫師排序欄 / 病人 / 醫師）→「② 首次抽籤」整段重寫入院序（會清掉 備註(住服) / 改期）；改完 術前診斷 / 預計心導管 / 同醫師排序 之後用「③ 整合寫入」（保留 備註(住服) / 改期）。</li>
+        <li><b>④ 導管排程</b> — Plan (dry-run) / Verify (查 WEBCVIS) / Keyin (ADD + UPT)。術前診斷 / 預計心導管 自填的內容會走 OTHERS_PDI / 備註。</li>
+        <li><b>⑤ LINE 推播</b> — 讀 入院序 / 主治 / 姓名 / 備註(住服) 四欄 → 預覽訊息 → 推到指定 group。</li>
       </ol>
       <h3>遇到問題</h3>
       <ul>
         <li>頂端紅燈 = 設定還沒填好 → 回設定頁。</li>
-        <li>Step 3 / 5 卡住 = EMR / WEBCVIS session 過期 → 重新登入再貼一次 URL。</li>
-        <li>OCR 病歷號錯 = Sheet 主資料 I 欄直接改後重跑 Step 3 (EMR)。EMR 會用 <code>#divUserSpec</code> 反查校正姓名/年齡/性別。</li>
+        <li>② EMR / ④ 導管排程 卡住 = EMR / WEBCVIS session 過期 → 重新登入再貼一次 URL。</li>
+        <li>OCR 病歷號錯 = Sheet 主資料 I 欄直接改後重跑 ② EMR 擷取。EMR 會用 <code>#divUserSpec</code> 反查校正姓名/年齡/性別。</li>
         <li>所有設定存在 <code>%LOCALAPPDATA%\admission-app\config.json</code>，更新 app 不會被覆蓋。</li>
       </ul>
     </section>
@@ -168,7 +167,7 @@
         <b>自動隱藏病歷號 / 姓名 / 金鑰 / 密碼</b>。送出前你可以再看一次內容。</p>
       <label class="bug-field">哪一步出問題？
         <input id="bug-step" type="text"
-               placeholder="例：Step 3 EMR 擷取 / 按更新鈕 / 載入 20260601">
+               placeholder="例：② EMR 擷取 / 按更新鈕 / 載入 20260601">
       </label>
       <label class="bug-field">問題描述（越詳細越好）
         <textarea id="bug-note" rows="3"

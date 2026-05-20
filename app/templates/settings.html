@@ -111,7 +111,7 @@
 
     {% if not bundled.emr_base_url %}
     <fieldset>
-      <legend>3. EMR（選填，Step 3 需要）</legend>
+      <legend>3. EMR（選填，② EMR 擷取需要）</legend>
       <label>EMR base URL
         <input name="emr_base_url" value="{{ cfg.emr_base_url }}">
       </label>
@@ -121,7 +121,7 @@
     {% endif %}
 
     <fieldset>
-      <legend>{% if bundled.emr_base_url %}3{% else %}4{% endif %}. 導管排程 WEBCVIS（Step 5 需要）</legend>
+      <legend>{% if bundled.emr_base_url %}3{% else %}4{% endif %}. 導管排程 WEBCVIS（④ 導管排程需要）</legend>
       {% if bundled.cathlab_base_url %}
       <input type="hidden" name="cathlab_base_url" value="{{ cfg.cathlab_base_url }}">
       {% else %}
@@ -138,7 +138,7 @@
     </fieldset>
 
     <fieldset>
-      <legend>{% if bundled.emr_base_url %}4{% else %}5{% endif %}. LINE 推播（選填，Step 6 需要）</legend>
+      <legend>{% if bundled.emr_base_url %}4{% else %}5{% endif %}. LINE 推播（選填，⑤ LINE 推播需要）</legend>
       <label>Channel access token
         <input type="password" name="line_token" placeholder="{% if cfg.line_token %}（已儲存）{% endif %}">
       </label>
@@ -172,7 +172,7 @@
           </li>
           <li>注意：channel 預設「Auto-reply messages」會擾民，建議到「Response settings」關掉。</li>
         </ol>
-        <p>不會做也沒關係 — Step 6 是選填，跳過 Step 6 不影響 Step 1-5 的功能。</p>
+        <p>不會做也沒關係 — ⑤ LINE 推播是選填，跳過不影響 ①-④ 的功能。</p>
       </details>
     </fieldset>
 

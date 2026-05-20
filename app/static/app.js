@@ -810,12 +810,12 @@ function setupLoadExisting() {
         if (emrResults.length && typeof renderEmrResults === 'function') {
           await renderEmrResults(emrResults, {});
           renderedEmr = emrResults.length;
-          // Pre-fill the EMR patient JSON input so a re-run uses the same list
-          if ($('#emr-patients')) {
-            $('#emr-patients').value = JSON.stringify(
-              emrResults.map(p => ({chart_no: p.chart_no, name: p.name, doctor: p.doctor})),
-              null, 0);
-          }
+          // Auto-feed the ② EMR panel preview + JSON textarea so re-run picks
+          // the same list. (renderStep2AutofillPreview also syncs the textarea.)
+          step2Ordered = emrResults.map(p => ({
+            chart_no: p.chart_no, name: p.name, doctor: p.doctor,
+          }));
+          renderStep2AutofillPreview(step2Ordered);
         }
 
         // 4) Trigger sub-table read so the F/G editor populates the (possibly
@@ -1158,9 +1158,38 @@ async function step1Write(date, rows, allowOverwrite) {
         fd2.append('date', date);
         const sr = await api('/api/step2/build_subtables', { method: 'POST', body: fd2 });
         const docCount = (sr.doctors || []).length;
-        if (sr.patients && sr.patients.length) step2Ordered = sr.patients;
+        if (sr.patients && sr.patients.length) {
+          step2Ordered = sr.patients;
+          // Auto-feed the patient list into the ② EMR panel so user sees
+          // who's queued for the next step (preview + JSON sync).
+          renderStep2AutofillPreview(sr.patients);
+        }
         if (docCount) subNote = `；子表格已建 ${docCount} 位醫師`;
       } catch (_) { /* sub-tables already exist or doctor list empty — fine */ }
+      // Sub-tables may already exist (first-write returned no patients in sr).
+      // Fall back to reading the date-sheet's sub-tables so the preview still
+      // populates on the typical "first OCR write of a brand new date" path.
+      if (!step2Ordered.length) {
+        try {
+          const st = await api('/api/step4/subtables?date=' + encodeURIComponent(date));
+          const flat = [];
+          for (const [doc, pts] of Object.entries(st.tables || {})) {
+            for (const p of (pts || [])) {
+              if ((p.chart_no || '').trim()) {
+                flat.push({
+                  chart_no: p.chart_no.trim(),
+                  name: (p.name || '').trim(),
+                  doctor: doc,
+                });
+              }
+            }
+          }
+          if (flat.length) {
+            step2Ordered = flat;
+            renderStep2AutofillPreview(flat);
+          }
+        } catch (_) { /* sheet read failed — leave preview empty */ }
+      }
       const nAdd = (r.diff && r.diff.added || []).length;
       const nDel = (r.diff && r.diff.removed || []).length;
       const parts = [];
@@ -1203,7 +1232,7 @@ function showStep1DiffAndConfirm(diff) {
       ${rowHtml('added',   '新增',   diff.added)}
       ${rowHtml('removed', '取消',   diff.removed)}
       ${rowHtml('changed', '換醫師', diff.doctor_changed)}
-      <p class="hint">確認後：A-L 主資料覆蓋為新清單；**子表格自動跟著動**（取消的列刪除、新增的病人掛到對應主治、換醫師的列搬到新醫師），新列 F/G 留白待 Step 3 EMR 填。<strong>N-V 入院序仍不會自動更新</strong> — 動到病人數量請手動重跑 Step 2 + Step 4。</p>
+      <p class="hint">確認後：A-L 主資料覆蓋為新清單；**子表格自動跟著動**（取消的列刪除、新增的病人掛到對應主治、換醫師的列搬到新醫師），新列 術前診斷 / 預計心導管 留白待 ② EMR 擷取填。<strong>入院序仍不會自動更新</strong> — 動到病人數量請手動重跑 ② EMR + ③ 入院序整合。</p>
       <button id="diff-confirm-btn" class="primary">確認覆蓋</button>
       <button id="diff-cancel-btn">取消</button>
     </div>
@@ -1287,6 +1316,43 @@ function renderStep2Subtables(doctors) {
   }).join('');
   $('#s2-output').innerHTML = html || '<p class="hint">沒有可寫入的醫師資料</p>';
 }
+
+// Render the auto-fed patient preview shown above the ② EMR textarea so the
+// user can eyeball who's about to be fetched without parsing the JSON.
+// Also keeps the JSON textarea in sync so a re-run picks the same list.
+function renderStep2AutofillPreview(patients) {
+  const preview = document.getElementById('emr-patients-preview');
+  const ta = document.getElementById('emr-patients');
+  if (!preview) return;
+  if (!patients || !patients.length) {
+    preview.innerHTML = '';
+    return;
+  }
+  // Also pin to the JSON textarea so #run3-btn click uses this exact list.
+  if (ta) {
+    ta.value = JSON.stringify(
+      patients.map(p => ({
+        chart_no: p.chart_no, name: p.name, doctor: p.doctor,
+      })), null, 0);
+  }
+  const esc = s => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const rows = patients.map((p, i) =>
+    `<tr><td>${i + 1}</td><td>${esc(p.doctor || '')}</td>` +
+    `<td>${esc(p.name || '')}</td><td>${esc(p.chart_no || '')}</td></tr>`
+  ).join('');
+  preview.innerHTML =
+    `<div style="background:#ecfdf5;border:1px solid #10b981;color:#065f46;` +
+    `padding:8px 12px;border-radius:6px;margin:8px 0;font-weight:600">` +
+    `✓ 已自動帶入 ${patients.length} 位病人（按「開始擷取」即可開跑）` +
+    `</div>` +
+    `<div style="max-height:180px;overflow-y:auto;border:1px solid #e2e8f0;` +
+    `border-radius:6px;margin-bottom:8px">` +
+    `<table class="data" style="margin:0">` +
+    `<thead><tr><th>#</th><th>主治</th><th>姓名</th><th>病歷號</th></tr></thead>` +
+    `<tbody>${rows}</tbody></table></div>`;
+}
+
 
 // ---------- Step 3: EMR ----------
 function setupStep3() {

@@ -1059,35 +1059,57 @@ async def fetch_raw_html(page, session_url: str, chart_no: str,
         try {{ window.frames['mainFrame'].document.body.innerHTML = '<!--{sentinel_c}-->'; }} catch(e) {{}}
     }}""")
     click = await page.evaluate(f"""() => {{
+        // Normalize: strip ALL whitespace (incl. fullwidth) + NFC, so
+        // anchor text 「2026/05/29 鄭朝允　門診」 still matches variant
+        // 「鄭朝允」 (handles 5/21 field bug where 「鄭朝允」 link existed
+        // but raw substring miss left patient marked as 無門診紀錄).
+        const norm = s => (s || '').replace(/[\\s\\u3000\\u00a0]+/g, '').normalize('NFC');
+        const seen = [];
         try {{
             let d = window.frames['leftFrame'].document;
             let links = d.querySelectorAll('a');
             let variants = {variants_js};
+            let variants_norm = variants.map(norm);
             for (let link of links) {{
-                let t = (link.innerText || '').trim();
-                if (!t.includes('門診')) continue;
-                for (let v of variants) {{
-                    if (t.includes(v)) {{
+                let raw = (link.innerText || '').trim();
+                if (!raw.includes('門診')) continue;
+                seen.push(raw);
+                let t = norm(raw);
+                for (let i = 0; i < variants_norm.length; i++) {{
+                    if (variants_norm[i] && t.includes(variants_norm[i])) {{
                         link.click();
-                        return {{ok: true, visit: t, matched_doctor: true}};
+                        return {{ok: true, visit: raw, matched_doctor: true}};
                     }}
                 }}
             }}
             let allow = {fallback_js};
             for (let fb of allow) {{
+                let fb_n = norm(fb);
+                if (!fb_n) continue;
                 for (let link of links) {{
-                    let t = (link.innerText || '').trim();
-                    if (t.includes('門診') && t.includes(fb)) {{
+                    let raw = (link.innerText || '').trim();
+                    if (!raw.includes('門診')) continue;
+                    if (norm(raw).includes(fb_n)) {{
                         link.click();
-                        return {{ok: true, visit: t, matched_doctor: false}};
+                        return {{ok: true, visit: raw, matched_doctor: false}};
                     }}
                 }}
             }}
-        }} catch(e) {{}}
-        return {{ok: false}};
+        }} catch(e) {{
+            return {{ok: false, seen_visits: seen, error: String(e)}};
+        }}
+        return {{ok: false, seen_visits: seen}};
     }}""")
 
     if not click.get("ok"):
+        # Diagnostic: surface the 門診 anchor texts that WERE present so the
+        # user can see why the match failed (variant typo, Unicode sibling,
+        # missing FALLBACK_DOCTORS entry, etc.). Returned via visit_label
+        # so process_patient + the EMR card can surface it without changing
+        # the function signature.
+        seen = click.get("seen_visits") or []
+        if seen:
+            return "", div_spec, f"[查無匹配 — 看到 {len(seen)} 筆門診：" + "｜".join(seen[:5]) + "]", False
         return "", div_spec, "", False
 
     visit_label = click.get("visit", "")
