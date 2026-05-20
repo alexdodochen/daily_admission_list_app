@@ -223,7 +223,7 @@ def _write_swap_bat(install_dir: Path,
                     extract_dir: Path) -> Path:
     """
     Generate a .bat that:
-      - Waits for the running .exe process to exit
+      - Waits for the running .exe process to exit (by PID — ASCII-safe)
       - Renames current install_dir → install_dir.old
       - Moves pending_inner → install_dir
       - Cleans up zip + extract scratch + .old
@@ -235,19 +235,34 @@ def _write_swap_bat(install_dir: Path,
     pending_inner = the freshly-extracted same-named subfolder
     zip_path = the downloaded .zip
     extract_dir = parent of pending_inner (scratch dir)
+
+    *Codepage trap* (field bug 2026-05-20 — bricked an install):
+    cmd.exe parses .bat files using the system's *active console* codepage
+    (CP950 on Traditional-Chinese Windows), NOT what `chcp 65001` says.
+    So a UTF-8 .bat with Chinese paths becomes mojibake at parse time,
+    `find /I` never matches the real process name, the wait loop spins
+    forever, and the swap never completes.
+
+    Two-pronged fix:
+      1. Wait by PID (`tasklist /FI "PID eq N"`) — number is ASCII, never
+         hits the codepage issue regardless of folder language.
+      2. Write the .bat in the OEM codepage (Windows: GetOEMCP() → 950
+         on TW) so cmd.exe reads the Chinese paths in `ren` / `move` /
+         `start` lines as the bytes it expects. Fallback to ANSI codepage,
+         then to UTF-8 with BOM if both lookups fail.
     """
+    import os as _os
     exe_name = install_dir.name + ".exe"   # 行政總醫師.排班.Key班.入院.exe
     parent = install_dir.parent
     bat_path = parent / "__update_swap__.bat"
 
-    # ASCII-safe encoding: the .bat must run on cp950 / Big5 default consoles.
-    # Use chcp 65001 to flip to UTF-8 for the duration of the script.
+    current_pid = _os.getpid()
+
     bat = f"""@echo off
-chcp 65001 >nul
 cd /d "{parent}"
-echo Waiting for current app to exit...
+echo Waiting for current app (PID {current_pid}) to exit...
 :waitloop
-tasklist /FI "IMAGENAME eq {exe_name}" 2>nul | find /I "{exe_name}" >nul
+tasklist /FI "PID eq {current_pid}" 2>nul | find " {current_pid} " >nul
 if not errorlevel 1 (
   timeout /t 1 /nobreak >nul
   goto waitloop
@@ -273,8 +288,40 @@ echo Restarting...
 start "" "{install_dir}\\{exe_name}"
 del "%~f0"
 """
-    bat_path.write_text(bat, encoding="utf-8")
+    _write_bat_in_console_codepage(bat_path, bat)
     return bat_path
+
+
+def _write_bat_in_console_codepage(bat_path: Path, content: str) -> None:
+    """Write the .bat using whatever encoding cmd.exe will actually read it
+    as. On Windows that's the OEM codepage (CP950 on Traditional-Chinese
+    systems); on non-Windows we just use UTF-8 (the script will never run
+    there but the dev test harness still touches it).
+
+    Falls back gracefully: OEM cp → ANSI cp → UTF-8 with BOM.
+    Any chars that can't round-trip in the chosen codepage are XML-escaped
+    so cmd at worst sees a literal `&#NNNN;` rather than corrupted bytes.
+    """
+    if sys.platform != "win32":
+        bat_path.write_text(content, encoding="utf-8")
+        return
+    try:
+        import ctypes
+        oem_cp = ctypes.windll.kernel32.GetOEMCP()
+        encoding = f"cp{oem_cp}"
+        bat_path.write_text(content, encoding=encoding, errors="xmlcharrefreplace")
+        return
+    except Exception:
+        pass
+    try:
+        import ctypes
+        ansi_cp = ctypes.windll.kernel32.GetACP()
+        bat_path.write_text(content, encoding=f"cp{ansi_cp}",
+                            errors="xmlcharrefreplace")
+        return
+    except Exception:
+        pass
+    bat_path.write_text("﻿" + content, encoding="utf-8")
 
 
 async def _apply_frozen() -> dict:

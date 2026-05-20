@@ -6,6 +6,9 @@ from __future__ import annotations
 
 import json
 import asyncio
+import os
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -256,3 +259,113 @@ def test_schedule_restart_dev_uses_execv(monkeypatch):
     import time
     time.sleep(0.1)
     assert "x" in execv_called
+
+
+# ---------------- _write_swap_bat — codepage + PID-wait regression ----------------
+# Field bug 2026-05-20: the swap .bat was written UTF-8 and used IMAGENAME
+# matching, but cmd.exe on TW Windows parses .bat in CP950 → Chinese path
+# became mojibake → find /I never matched → bat froze in wait loop → app
+# bricked (old exe already os._exit'd, new exe never relaunched).
+#
+# Two invariants we now pin:
+#   1. Wait condition is PID-based ('tasklist /FI "PID eq N"'), NEVER
+#      IMAGENAME-based — PIDs are ASCII digits and survive any codepage.
+#   2. The .bat content is written with a codepage that round-trips the
+#      Chinese install dir name to BYTES cmd.exe will read correctly.
+#      On Windows this means OEM codepage; non-Windows we keep utf-8 for
+#      the dev-test harness.
+
+
+def test_swap_bat_waits_by_pid_not_imagename(tmp_path, monkeypatch):
+    """Wait loop MUST filter by PID. Field bug: IMAGENAME with Chinese
+    filename never matched after codepage corruption."""
+    install_dir = tmp_path / "行政總醫師.排班.Key班.入院"
+    install_dir.mkdir()
+    pending = tmp_path / "__update_extract__" / install_dir.name
+    pending.parent.mkdir()
+    pending.mkdir()
+    zip_path = tmp_path / "__update__.zip"
+    zip_path.touch()
+
+    monkeypatch.setattr(os, "getpid", lambda: 12345)
+
+    bat_path = updater._write_swap_bat(install_dir, pending, zip_path,
+                                       pending.parent)
+    assert bat_path.exists()
+    # Read with utf-8 errors=replace just to look at the structure; the
+    # PID number itself is always ASCII so this read is safe.
+    raw = bat_path.read_bytes()
+    text = raw.decode("ascii", errors="replace")
+    assert 'PID eq 12345' in text, \
+        "wait loop must filter by PID, not IMAGENAME (codepage-fragile)"
+    assert "12345" in text
+    # The OLD logic used `tasklist /FI "IMAGENAME eq <exe_name>"` and then
+    # `find /I "<exe_name>"`. After the fix, IMAGENAME should not appear.
+    assert "IMAGENAME" not in text, \
+        "IMAGENAME match was the codepage-fragile path (2026-05-20 brick)"
+
+
+def test_swap_bat_chinese_paths_roundtrip_in_oem_codepage(tmp_path, monkeypatch):
+    """The .bat must encode Chinese install path in a codepage cmd.exe will
+    read correctly. On Windows that's the OEM codepage; we check the file
+    round-trips back to the original characters."""
+    install_dir = tmp_path / "行政總醫師.排班.Key班.入院"
+    install_dir.mkdir()
+    pending = tmp_path / "__update_extract__" / install_dir.name
+    pending.parent.mkdir()
+    pending.mkdir()
+    zip_path = tmp_path / "__update__.zip"
+    zip_path.touch()
+
+    bat_path = updater._write_swap_bat(install_dir, pending, zip_path,
+                                       pending.parent)
+    raw = bat_path.read_bytes()
+
+    # The file should be readable in SOME encoding that round-trips the
+    # Chinese name. Try OEM (Windows) → ANSI → UTF-8 with BOM.
+    candidates = []
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            candidates.append(f"cp{ctypes.windll.kernel32.GetOEMCP()}")
+            candidates.append(f"cp{ctypes.windll.kernel32.GetACP()}")
+        except Exception:
+            pass
+    candidates.append("utf-8-sig")
+    candidates.append("utf-8")
+
+    decoded = None
+    for cp in candidates:
+        try:
+            decoded = raw.decode(cp)
+            if "行政總醫師" in decoded:
+                break
+        except Exception:
+            continue
+    assert decoded is not None, "bat must decode in at least one common cp"
+    assert "行政總醫師" in decoded, \
+        "Chinese folder name must survive the chosen file encoding"
+    # The previous bug was producing UTF-8 bytes which, when decoded as
+    # CP950, became mojibake like '鈞蝮虜揮'. With the fix we should
+    # never see those characters in the file.
+    assert "鈞" not in decoded, "mojibake leaked through the encoder"
+
+
+def test_swap_bat_has_no_chcp_command(tmp_path, monkeypatch):
+    """`chcp 65001 >nul` was a misleading no-op (only affects OUTPUT codepage,
+    not how cmd PARSES the script). Removing it both shortens startup and
+    avoids the false impression the script is codepage-safe."""
+    install_dir = tmp_path / "X"
+    install_dir.mkdir()
+    pending = tmp_path / "ext" / install_dir.name
+    pending.parent.mkdir()
+    pending.mkdir()
+    zip_path = tmp_path / "z.zip"
+    zip_path.touch()
+
+    bat_path = updater._write_swap_bat(install_dir, pending, zip_path,
+                                       pending.parent)
+    raw = bat_path.read_bytes()
+    text = raw.decode("ascii", errors="replace")
+    assert "chcp 65001" not in text, \
+        "chcp 65001 was the misleading 'fix' that didn't actually work"
