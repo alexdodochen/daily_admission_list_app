@@ -145,7 +145,9 @@ Date sheets are titled `YYYYMMDD`. Canonical layout:
 - **N–W** (ordering, 10 cols): 序號 / 主治醫師 / 病人姓名 / 備註(住服) / 備註 / 病歷號 / 術前診斷 / 預計心導管 / 每日續等清單 / 改期
 - Sub-tables below, one per doctor, title row `<doctor>（N人）`, ≥2 blank rows between sections.
 
-Headers are the source of truth — `format_check_service.EXPECTED_MAIN_HEADER` / `EXPECTED_ORDER_HEADER` must stay in sync with `sheet_service.ensure_date_sheet`.
+Headers are the source of truth — `format_check_service.EXPECTED_MAIN_HEADER` / `EXPECTED_ORDER_HEADER` / `EXPECTED_SUB_HEADER` must stay in sync with `sheet_service.ensure_date_sheet` + `subtable_service.SUB_HEADER` + `ocr_service.SUB_HEADER` + `app.js SUB_HEADER`. The canonical SUB_HEADER labels (per `daily-admission-list-public`) are `["姓名","病歷號","EMR","EMR摘要","手動設定入院序","術前診斷","預計心導管","註記"]` — never use `summary` / `入院序` (legacy, Phase 16 cleanup).
+
+**Sub-table H → N-V R sync (Phase 18, 2026-05-20)**: `ordering_service.integrate_ordering` + `sync_ordering_after_diff` copy sub-table H (註記) into N-V R (備註) when H is non-empty; preserve existing R when H is empty. Mirrors `daily-admission-list-public`'s canonical mapping. Q (備註住服) and V (改期) remain preserved verbatim — different workflow.
 
 ### Auto-update
 

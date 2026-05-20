@@ -6,7 +6,26 @@ originSessionId: 72454ca2-3f8b-459c-b668-ba750a7a2e97
 ---
 This repo (`daily_admission_list_app`, cloned at `C:\Users\dr\Downloads\Y\排班 Key班 DayList APP`) is the **public integration target** for a 3-card home (排班 / Key班 / 入院清單).
 
-State as of 2026-05-20 (Phase 15 — 10-issue field-bug batch from 麒翔's install):
+State as of 2026-05-20 evening (Phase 18 — format alignment with daily-admission-list-public):
+
+**Delivered (Phase 18 — 2026-05-20):**
+- **SUB_HEADER 中文標準命名** — D 欄表頭 `summary` → `EMR摘要`、E 欄 `入院序`
+  → `手動設定入院序`,對齊 reference repo `daily-admission-list-public`。
+  改動於 `subtable_service.py:19-20`、`ocr_service.py:348-349`、
+  `static/app.js:160`。
+- **子表格 H 註記 → N-V R 備註 sync** — `ordering_service.integrate_ordering`
+  與 `sync_ordering_after_diff` 新增 H→R 邏輯:H 非空覆蓋 R,H 空保留
+  existing R(避免清掉使用者手填)。詳見 [[subtable-h-to-r-ordering]]。
+- **format_check_service 新增 `sub_header_wrong` 偵測** — `EXPECTED_SUB_HEADER`
+  常數;`check_issues` 新增 sub_headers 參數;`check()` 讀每個 sub-table 的
+  subheader 列;`fix()` 可自動重寫 subheader 為標準命名。
+- **N-V 一律 9-col (V=改期)** — `app.js` ORDER_HEADER 移除多餘的
+  `每日續等清單`(原 10-col);viewer 標題從「入院序 N-W」改「入院序 N-V」。
+- **Tests:** 288 → 289 (+4 新測試:H→R sync 3 + sub_header_wrong 1);format
+  check + ordering tests 全綠;37 cathlab tests 因 PHI gitignored JSONs 在
+  fresh clone 上預期 fail,非本次新增的問題。
+
+State as of 2026-05-20 morning (Phase 15 — 10-issue field-bug batch from 麒翔's install):
 
 **Delivered (Phase 15 — 2026-05-20 → c47d357):**
 - **② EMR 註記 ↔ ③ 入院序整合 註記 bidirectional sync** — `renderSubtables`

@@ -164,17 +164,20 @@ def integrate_ordering(date: str) -> dict:
         for slot_idx, p in enumerate(positions):
             reordered[p] = new_rows[slot_idx]
 
-    # Renumber 序號 + patch T/U from sub-tables; preserve Q (住服) + V (改期)
+    # Renumber 序號 + patch T/U + R from sub-tables; preserve Q (住服) + V (改期)
+    # R (備註) <- sub-table H (註記) when H non-empty; else preserve existing R.
+    # Mirrors daily-admission-list-public mapping H → R (feedback_subtable_H_to_R_ordering).
     out: list[list[str]] = []
     for seq, r in enumerate(reordered, start=1):
         chart = r[5].strip()
         info = lookup.get(chart, {})
+        sub_note = (info.get("note") or "").strip()
         out.append([
             str(seq),                                # N 序號
             r[1],                                    # O 主治醫師
             r[2],                                    # P 姓名
             r[3],                                    # Q 備註(住服) — preserve
-            r[4],                                    # R 備註 — preserve
+            sub_note if sub_note else r[4],          # R 備註 ← 子表格 H 註記
             r[5],                                    # S 病歷號
             info.get("diagnosis", r[6]),             # T 術前診斷
             info.get("cathlab",   r[7]),             # U 預計心導管
@@ -213,7 +216,7 @@ def sync_ordering_after_diff(date: str) -> dict:
         return {"updated": False, "reason": "sheet missing"}
 
     tables = read_doctor_subtables(date)
-    # chart_no → {doctor, name, diagnosis, cathlab}
+    # chart_no → {doctor, name, diagnosis, cathlab, note}
     chart_info: dict[str, dict] = {}
     # ordered list of (doctor, chart_no) tuples for stable append order
     fresh_order: list[tuple[str, str]] = []
@@ -229,6 +232,7 @@ def sync_ordering_after_diff(date: str) -> dict:
                 "name":      p.get("name", ""),
                 "diagnosis": p.get("diagnosis", ""),
                 "cathlab":   p.get("cathlab", ""),
+                "note":      p.get("note", ""),
             }
             fresh_order.append((doc, ch))
 
@@ -253,12 +257,13 @@ def sync_ordering_after_diff(date: str) -> dict:
         new_doc = info["doctor"]
         if old_doc and new_doc and old_doc != new_doc:
             doctor_changed.append({"chart_no": chart, "old": old_doc, "new": new_doc})
+        sub_note = (info.get("note") or "").strip()
         kept.append([
             "",                # N — renumbered below
             new_doc,           # O
             info["name"] or (r[2] or "").strip(),
             r[3],              # Q preserve
-            r[4],              # R preserve
+            sub_note if sub_note else r[4],  # R ← 子表格 H 註記; fallback preserve
             chart,             # S
             info["diagnosis"], # T refresh
             info["cathlab"],   # U refresh
@@ -271,7 +276,7 @@ def sync_ordering_after_diff(date: str) -> dict:
             continue
         info = chart_info[chart]
         kept.append([
-            "", doc, info["name"], "", "", chart,
+            "", doc, info["name"], "", info.get("note", ""), chart,
             info["diagnosis"], info["cathlab"], "",
         ])
         added.append({"chart_no": chart, "doctor": doc, "name": info["name"]})

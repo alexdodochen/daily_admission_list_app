@@ -1,114 +1,57 @@
 ============================================
-  HANDOFF — Last Updated: 2026-05-21 (Phase 17)
+  交班文件 — Last Updated: 2026-05-20 evening (Phase 18)
 ============================================
 
-[What this session did]
-  Two batches across 4 commits (e9a06f0 → 6f73d17 → b6b6b0a):
+【本次 session 做了什麼】
+  1. clone 公開 repo daily_admission_list_app 到 ALL APP Developer 目錄
+  2. Phase 18 — 對齊 daily-admission-list-public 的 Sheet 格式:
+     a) 子表格 H 註記 → N-V R 備註 sync (H 空時保留 R 手填)
+     b) SUB_HEADER 中文標準命名 (summary → EMR摘要、入院序 → 手動設定入院序)
+     c) format_check_service 新增 sub_header_wrong 偵測 + 自動修正
+     d) app.js ORDER_HEADER 由 10-col 修正為 9-col N-V (刪 每日續等清單)
+  3. /workflow-docs 更新 memory + CLAUDE.md + HANDOFF (本檔)
 
-  6f73d17 — Release dead-code purge (~900 lines):
-    * external/ + 2 stale .gitignore lines
-    * CV_APP_INTEGRATION_HANDOFF.md (5/10 plan, integration done)
-    * Reschedule feature fully removed: 4 endpoints + service (195L)
-      + test (220L) + WEBCVIS DEL block in cathlab_service (112L)
-      + 4 DEL-related tests in test_cathlab_enrich_plan
-    * Multi-source upstream trim: sync_manifest.py (95L) + upstream.py
-      461 → 354 (_sync_upstream/_run_mirror/EXTERNAL_DIR gone)
-    * Kept (per memory directive): /api/step2/{run,write,context}
-      legacy lottery endpoints + their 4 service funcs
-    * Tests 416 → 396 (only deleted-feature tests removed)
+【當前狀態】
+  - Working dir: C:\心臟內科總醫師\行政總醫師\ALL APP Developer\daily_admission_list_app
+  - Branch: 預設 main(fresh clone) — 尚未 commit/push 本次變更
+  - Tests: 289 non-cathlab passing / 37 cathlab failing(fresh clone
+    缺 PHI gitignored JSONs,屬預期,非本次新增的問題)
+  - 部署狀態: 未部署;exe 也未重 build
+  - 對應 GitHub: https://github.com/alexdodochen/daily_admission_list_app.git
 
-  b6b6b0a — 3-issue field batch + skill enhancement:
-    1. UI step3→step2 字眼修正: stepper was renumbered ①-⑤ in Phase 13
-       but H2 headings / help text / settings legends still said
-       "Step 3/4/5/6". Fixed: admission.html 5 sections + comments,
-       base.html 操作說明 6-list + 3 hint lines + bug-modal placeholder,
-       settings.html EMR/cathlab/LINE legends + 跳過 note, app.js diff
-       confirm message.
-    2. Step 1 OCR → ② EMR auto-feed: new renderStep2AutofillPreview()
-       shows patient preview table (主治/姓名/病歷號) above EMR textarea
-       after step1Write success AND load-existing. JSON textarea moved
-       into foldable <details>. Falls back to /api/step4/subtables when
-       build_subtables returned empty (already-built case).
-    3. 鄭朝允 / 陳淑貞 (1555245) 無一年內門診紀錄 root cause: leftFrame
-       click loop did raw `t.includes(variant)`. NCKUH EMR anchor uses
-       fullwidth space 「鄭朝允　門診」 → raw substring miss → fall to
-       FALLBACK (also miss) → wrong flag. Fix: NFC + strip-all-whitespace
-       normalizer applied to BOTH anchor text and every variant/fallback.
-       Plus diagnostic: visit_label carries the 門診 anchor texts seen
-       when no match found (so future bugs of this shape show their data).
+【下一步該做什麼】
+  - 等使用者確認後 commit + push 本次變更到 origin/main
+  - 若要上線:回 BUILD.md 流程
+      cp service_account.json app/bundled/
+      pyinstaller packaging.spec --noconfirm
+      → release admission-app.zip
+  - 或使用者直接在現有 install 按「更新」按鈕拉新版
 
-  Skill: /check-previous-progress now auto-fetches open GitHub issues
-    every session start. New helper ~/.claude/skills/check-previous-
-    progress/github_issues.py reads cwd's git remote, calls
-    `repos/{slug}/issues?state=open`, prints one line per issue.
-    SKILL.md adds Step 2 (between git fetch + HANDOFF) wiring this
-    into the standard session-start summary. Skill lives ONLY on this
-    machine (~/.claude/skills is not git-tracked, and sync to
-    claude-skills repo is forbidden per the 2026-05-18 cutover).
+【已知問題 / 卡關】
+  - 37 cathlab tests 在 fresh clone 上 FAIL(FileNotFoundError):
+    需從私有來源放入 cathlab_id_maps.json / doctor_codes.json /
+    cathlab_schedule.json 才能跑(屬永久狀態,CLAUDE.md Phase 11 章節有說明)
 
-[Current state]
-  - Branch: main, clean, IN SYNC with origin/main @ b6b6b0a
-  - Tests: 396 passed (was 416; -20 from removed reschedule + DEL
-    tests; no regressions)
-  - CI release: b6b6b0a is the latest deliverable. ASCII admission-app.zip
-    builds automatically; 麒翔's install picks it up via 🔄 更新.
+【不要重蹈覆轍】
+  - 「NU欄」這種模糊欄位簡稱要先確認 — 本次差點誤判,使用者最終澄清是
+    N-V ordering area 內的 R 欄
+  - 改 SUB_HEADER 要同時改 4 處:subtable_service / ocr_service / app.js /
+    format_check_service.EXPECTED_SUB_HEADER。漏一個就會在某個流程顯示舊標籤
+  - R 欄同步邏輯不能無腦覆蓋,要 `H if H else R`,否則使用者手填會被清掉
+  - daily-admission-list-public 是 read-only 參考,別 push 改動上去
 
-[Next steps]
-  - Field-verify chart 1555245 (陳淑貞 / 鄭朝允) on 麒翔's install
-    after CI completes:
-      * Should now match the 鄭朝允 visit and write EMR data.
-      * If it STILL misses → look at the EMR card's visit_label,
-        which now prints "[查無匹配 — 看到 N 筆門診：t1｜t2｜…]" —
-        forward that string to me so we can add the missing
-        Unicode-sibling pair to NAME_ALIASES + normalizer.
-  - Field-verify ① OCR → ② auto-feed: green "✓ 已自動帶入 N 位病人"
-    banner + table preview should show above EMR textarea after Step
-    1 write. JSON textarea hidden inside foldable 進階.
-  - Field-verify UI step-numbering consistency: every section title
-    should match the top stepper (no more "Step 3" while in ②).
-  - Eyeball the GitHub Issues inbox: next time you /check-previous-
-    progress in any repo, the helper auto-prints open issues. Try it
-    on a repo that has open issues to confirm formatting.
+【相關檔案】
+  - app/services/ordering_service.py — H→R sync 兩處
+  - app/services/subtable_service.py:19-20 — SUB_HEADER
+  - app/services/ocr_service.py:348-349 — SUB_HEADER
+  - app/services/format_check_service.py — EXPECTED_SUB_HEADER + 新檢查
+  - app/static/app.js — SUB_HEADER + ORDER_HEADER + ORDER_COLS
+  - tests/test_ordering_service.py — +3 新測試
+  - tests/test_format_check_service.py — +1 新測試 + _fake_read_range 更新
+  - CLAUDE.md — Phase 16 段落 + SUB_HEADER 真理來源句
 
-[Known issues / blockers]
-  - 鄭朝允 fix is heuristic (whitespace + NFC). If anchor uses an
-    actual Unicode sibling code-point we don't know about yet, the
-    diagnostic visit_label string will reveal it; add a NAME_ALIASES
-    entry then.
-  - ~/.claude/skills is not git-tracked. The github_issues.py helper
-    + SKILL.md update lives on THIS MACHINE only. To use on another
-    machine, copy ~/.claude/skills/check-previous-progress/ manually
-    (or wait for the user to formalize a skill-sync mechanism that
-    doesn't violate the 2026-05-18 cutover).
-  - Pre-fix sub-tables with wrong-name data still need ONE re-fetch
-    after麒翔 updates so 姓名 (col A) gets canonical EMR name via
-    the preserve-existing override branch.
-
-[Don't repeat these mistakes]
-  - When the stepper gets renumbered, ALSO update every H2 heading,
-    help text, settings legend, and JS user-facing message — the
-    user sees the mismatch immediately and rightly calls it a bug.
-  - JS substring `t.includes(v)` is unsafe across EMR anchors because
-    NCKUH inserts fullwidth spaces. Always normalize via NFC + strip
-    all whitespace forms before comparing names. [[visit-match-norm-unicode]]
-  - When deleting "dead" code that memory says to KEEP as legacy
-    (e.g. /api/step2/{run,write,context}), respect the memory directive
-    — don't get aggressive just because the user said "you decide".
-
-[Relevant files]
-  - app/services/emr_service.py (fetch_raw_html click loop NFC norm
-    + diagnostic seen_visits)
-  - app/services/upstream.py (461 → 354 trim)
-  - app/services/cathlab_service.py (WEBCVIS DEL block removed)
-  - app/main.py (4 /api/reschedule/* endpoints removed, imports cleaned)
-  - app/static/app.js (renderStep2AutofillPreview, diff confirm copy,
-    load-existing autofeed wiring)
-  - app/templates/admission.html (H2 renumber + foldable JSON textarea
-    + emr-patients-preview div)
-  - app/templates/base.html (操作說明 renumber)
-  - app/templates/settings.html (legends renumber)
-  - ~/.claude/skills/check-previous-progress/SKILL.md
-  - ~/.claude/skills/check-previous-progress/github_issues.py (NEW)
-
-[Important memory files]
-  - feedback_visit_match_norm_unicode.md (NEW)
+【重要 memory 檔】
+  - feedback_subtable_h_to_r_ordering.md (新)
+  - reference_format_source_of_truth.md (新)
+  - project_3card_app_state.md (Phase 16 段落)
+  - MEMORY.md (索引更新)

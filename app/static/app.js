@@ -156,8 +156,8 @@
   if (!link || !modal) return;
 
   const MAIN_HEADER  = ['實際住院日','開刀日','科別','主治醫師','主診斷(ICD)','姓名','性別','年齡','病歷號碼','病床號','入院提示','住急'];
-  const ORDER_HEADER = ['序號','主治醫師','病人姓名','備註(住服)','備註','病歷號','術前診斷','預計心導管','每日續等清單','改期'];
-  const SUB_HEADER   = ['姓名','病歷號','EMR','summary','入院序','術前診斷','預計心導管','註記'];
+  const ORDER_HEADER = ['序號','主治醫師','病人姓名','備註(住服)','備註','病歷號','術前診斷','預計心導管','改期'];
+  const SUB_HEADER   = ['姓名','病歷號','EMR','EMR摘要','手動設定入院序','術前診斷','預計心導管','註記'];
 
   // Track the currently-loaded sheet name so cell writes know where to land.
   let currentSheet = '';
@@ -214,7 +214,7 @@
     const orderRows = (data.ordering || []).slice(1);
     const main  = `<div class="viewer-section"><h3>主資料 A-L（${mainRows.length} 列）</h3>${renderTable(MAIN_HEADER, mainRows, 2, 1)}</div>`;
     // Ordering block lives at columns N..W = 14..23. Pass colOffset=14.
-    const order = `<div class="viewer-section"><h3>入院序 N-W（${orderRows.length} 列）</h3>${renderTable(ORDER_HEADER, orderRows, 2, 14)}</div>`;
+    const order = `<div class="viewer-section"><h3>入院序 N-V（${orderRows.length} 列）</h3>${renderTable(ORDER_HEADER, orderRows, 2, 14)}</div>`;
     const subsHtml = (data.subs && data.subs.length)
       ? `<div class="viewer-section"><h3>子表格（${data.subs.length} 位醫師）</h3>${data.subs.map(renderSub).join('')}</div>`
       : '<div class="viewer-section"><h3>子表格</h3><p class="viewer-empty">（無子表格）</p></div>';
@@ -1569,7 +1569,7 @@ function setupStep4() {
   // show it on screen so the user can eyeball the order without opening the
   // Sheet or the 查閱 modal.
   const ORDER_COLS = ['序號','主治醫師','病人姓名','備註(住服)','備註',
-                      '病歷號','術前診斷','預計心導管','每日續等清單','改期'];
+                      '病歷號','術前診斷','預計心導管','改期'];
   async function renderOrderResult(date) {
     const box = $('#order-result');
     if (!box) return;

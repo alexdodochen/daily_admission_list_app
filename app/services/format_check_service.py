@@ -35,6 +35,11 @@ EXPECTED_ORDER_HEADER = [
     "序號", "主治醫師", "病人姓名", "備註(住服)", "備註",
     "病歷號", "術前診斷", "預計心導管", "改期",
 ]
+# Canonical SUB_HEADER row labels — aligned with daily-admission-list-public.
+EXPECTED_SUB_HEADER = [
+    "姓名", "病歷號", "EMR", "EMR摘要", "手動設定入院序",
+    "術前診斷", "預計心導管", "註記",
+]
 
 TITLE_RE = re.compile(r"^(.+)（(\d+)人）$")
 
@@ -123,7 +128,8 @@ def parse_structure(col_a: list[str]) -> dict:
 
 def check_issues(structure: dict,
                  main_header: list[str],
-                 order_header: list[str]) -> list[dict]:
+                 order_header: list[str],
+                 sub_headers: dict[int, list[str]] | None = None) -> list[dict]:
     issues: list[dict] = []
 
     if main_header != EXPECTED_MAIN_HEADER:
@@ -137,6 +143,23 @@ def check_issues(structure: dict,
                        "expected": EXPECTED_ORDER_HEADER,
                        "actual":   order_header,
                        "fixable":  True})
+
+    sub_headers = sub_headers or {}
+    for s in structure["subs"]:
+        sub_row = s.get("subheader_row")
+        if not sub_row or s.get("orphan"):
+            continue
+        actual = sub_headers.get(sub_row, [])
+        actual_padded = (actual + [""] * 8)[:8]
+        if actual_padded != EXPECTED_SUB_HEADER:
+            issues.append({
+                "type":     "sub_header_wrong",
+                "doctor":   s.get("doctor"),
+                "row":      sub_row,
+                "expected": EXPECTED_SUB_HEADER,
+                "actual":   actual_padded,
+                "fixable":  True,
+            })
 
     main_end = structure["main_end"]
     prev_last = main_end
@@ -232,9 +255,20 @@ def check(date: str) -> dict:
     order_header = (order_header + [""] * 9)[:9]
 
     structure = parse_structure(col_a)
-    issues = check_issues(structure, main_header, order_header)
+
+    # Read each sub-table's subheader row (A:H) for SUB_HEADER validation.
+    sub_headers: dict[int, list[str]] = {}
+    for s in structure["subs"]:
+        row = s.get("subheader_row")
+        if not row or s.get("orphan"):
+            continue
+        got = sheet_service.read_range(ws, f"A{row}:H{row}")
+        sub_headers[row] = (got[0] if got else [])
+
+    issues = check_issues(structure, main_header, order_header, sub_headers)
     return {"structure": structure, "issues": issues,
-            "main_header": main_header, "order_header": order_header}
+            "main_header": main_header, "order_header": order_header,
+            "sub_headers": sub_headers}
 
 
 def _text_fmt_req(sheet_id: int, start_col: int, end_col: int,
@@ -300,6 +334,11 @@ def fix(date: str, types: Optional[list[str]] = None) -> dict:
     if any(i["type"] == "order_header_wrong" for i in issues) and want("order_header_wrong"):
         sheet_service.write_range(ws, "N1:V1", [EXPECTED_ORDER_HEADER], raw=False)
         applied.append({"type": "order_header_wrong"})
+    if want("sub_header_wrong"):
+        for issue in [i for i in issues if i["type"] == "sub_header_wrong"]:
+            sheet_service.write_range(ws, f"A{issue['row']}:H{issue['row']}",
+                                      [EXPECTED_SUB_HEADER], raw=False)
+            applied.append(issue)
 
     # 3. re-read structure (gap inserts / title moves) before count fix
     if gap_issues:

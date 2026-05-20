@@ -16,7 +16,7 @@ from __future__ import annotations
 from . import sheet_service, format_check_service
 
 
-SUB_HEADER = ["姓名", "病歷號", "EMR", "summary", "入院序",
+SUB_HEADER = ["姓名", "病歷號", "EMR", "EMR摘要", "手動設定入院序",
               "術前診斷", "預計心導管", "註記"]
 
 

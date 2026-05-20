@@ -1,5 +1,7 @@
 # Memory index — daily_admission_list_app
 
+- [子表格 H 註記 → N-V R 備註 sync](feedback_subtable_h_to_r_ordering.md) — Phase 18 (2026-05-20):H 非空覆蓋 R,H 空保留 R 手填;Q/V 規則不同。對齊 reference repo
+- [格式真理來源 daily-admission-list-public](reference_format_source_of_truth.md) — public reference repo;CLAUDE.md + gsheet_utils.py + memory/ 是 canonical;9-col N-V 為準
 - [EMR visit-link match must NFC + strip whitespace](feedback_visit_match_norm_unicode.md) — 鄭朝允 / 陳淑貞 root cause; raw t.includes() missed fullwidth-space variants; diagnostic now surfaces seen anchor texts
 - [fetch_raw_html must sentinel-stamp #divUserSpec](feedback_emr_divuserspec_race_fix.md) — 石文明 → 周素珍 root cause; off-by-one corruption; mirror _verify_query_and_read pattern
 - [Cancel registry for Step 3 + Step 5 long ops](project_cancel_registry.md) — cooperative checkpoint pattern; `step{N}_{date}` op_id; `/api/op/cancel`; partial results + `canceled` flag; don't switch to asyncio.Task.cancel
@@ -14,7 +16,7 @@
 - [EMR doctor canonicalization for main D col](project_emr_doctor_canonicalization.md) — matched_doctor=True → extract_visit_doctor → apply_emr_main_fixes patches D; FALLBACK visits refused
 - [Updater swap must use PowerShell, not cmd.bat](feedback_updater_swap_must_use_powershell.md) — Windows install path is Chinese. 3 brick attempts on 2026-05-20 before PS1+Get-Process+60s-timeout settled. Never tasklist|find, never .bat parsing Chinese paths.
 - [Diagnose common errors with actionable hints, not raw traces](feedback_diagnose_common_errors_not_raw_traces.md) — operational failures (DNS/403/404/SSL/quota…) MUST render a hint card via app/services/diagnose.py; raw stack-trace dumps drive false bug reports
-- [3-card app integration state](project_3card_app_state.md) — Phase 15 (2026-05-20): 10-issue field-bug batch (EMR doctor canon, FALLBACK 6→28, doctor_changed always ignored, Step 5 skip+date override, missing_after reason, ③ 性別/年齡, ② ↔ ③ 註記 sync, scroll-to-top, 資料檢查 to bottom, load-existing no jump). c47d357, 372 tests.
+- [3-card app integration state](project_3card_app_state.md) — Phase 18 (2026-05-20 evening): format alignment w/ daily-admission-list-public — SUB_HEADER 中文標準命名, H→R sync, sub_header_wrong 自動修正, N-V 9-col, 289 non-cathlab tests green. Phase 17 (2026-05-21): dead-code purge + 3-issue field batch. Phase 15 (2026-05-20 morning): 10-issue field-bug batch.
 - [Cathlab static decouple](project_cathlab_static_decouple.md) — 3 cathlab JSONs gitignored PHI; never in public CI release; runtime DATA_DIR/cathlab_static drop-in; spec bundles only on local Path-B build; skill `package-distribute`
 - [In-app 🐞 回報問題 feature](project_bug_report_feature.md) — log ring + bug_report scrub (PHI/creds) → prefilled public GitHub issue + local private file; never auto-submit/weaken scrub
 - [Delivery protocol = in-app 更新 + private drop-in](feedback_delivery_protocol_inapp_update.md) — existing install: push→CI release + recipient clicks 更新 (never re-ship zip); SA+3 cathlab JSON private, loose into one DATA_DIR folder; rename breaks update ONCE for pre-rename installs

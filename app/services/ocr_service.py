@@ -345,7 +345,7 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc) -> dict:
     if not real_subs:
         return {"updated": False, "reason": "no existing sub-tables"}
 
-    SUB_HEADER = ["姓名", "病歷號", "EMR", "summary", "入院序",
+    SUB_HEADER = ["姓名", "病歷號", "EMR", "EMR摘要", "手動設定入院序",
                   "術前診斷", "預計心導管", "註記"]
 
     # Build current per-doctor patient lists (preserve original order on sheet)

@@ -115,7 +115,8 @@ def test_issues_none_when_clean():
             "last_patient_row": 8, "actual_count": 1, "orphan": False,
         }],
     }
-    issues = fcs.check_issues(structure, GOOD_MAIN, GOOD_ORDER)
+    issues = fcs.check_issues(structure, GOOD_MAIN, GOOD_ORDER,
+                              sub_headers={7: fcs.EXPECTED_SUB_HEADER})
     assert issues == []
 
 
@@ -179,6 +180,27 @@ def test_issues_gap_ok_with_exactly_two():
     assert [i for i in issues if i["type"] == "gap_too_small"] == []
 
 
+def test_issues_sub_header_wrong_detected():
+    """Legacy SUB_HEADER labels (summary / 入院序) → sub_header_wrong issue."""
+    structure = {
+        "main_end": 3,
+        "subs": [{
+            "doctor": "李文煌", "declared": 1, "title_row": 6,
+            "subheader_row": 7, "first_patient_row": 8,
+            "last_patient_row": 8, "actual_count": 1, "orphan": False,
+        }],
+    }
+    legacy = ["姓名", "病歷號", "EMR", "summary", "入院序",
+              "術前診斷", "預計心導管", "註記"]
+    issues = fcs.check_issues(structure, GOOD_MAIN, GOOD_ORDER,
+                              sub_headers={7: legacy})
+    sub_issues = [i for i in issues if i["type"] == "sub_header_wrong"]
+    assert len(sub_issues) == 1
+    assert sub_issues[0]["row"] == 7
+    assert sub_issues[0]["doctor"] == "李文煌"
+    assert sub_issues[0]["fixable"] is True
+
+
 def test_issues_orphan_not_fixable():
     structure = {
         "main_end": 3,
@@ -200,10 +222,12 @@ class FakeWS:
     id = 42
 
 
-def _fake_read_range(col_a_values, main_header=None, order_header=None):
+def _fake_read_range(col_a_values, main_header=None, order_header=None,
+                     sub_header=None):
     """Build a read_range stub that returns values based on A1 notation."""
     main_header = main_header if main_header is not None else GOOD_MAIN
     order_header = order_header if order_header is not None else GOOD_ORDER
+    sub_header = sub_header if sub_header is not None else fcs.EXPECTED_SUB_HEADER
 
     def read_range(ws, a1):
         if a1 == "A1:A500":
@@ -212,6 +236,11 @@ def _fake_read_range(col_a_values, main_header=None, order_header=None):
             return [main_header]
         if a1 == "N1:V1":
             return [order_header]
+        # SUB_HEADER row read: "A{n}:H{n}"
+        import re as _re
+        m = _re.match(r"^A(\d+):H\1$", a1)
+        if m:
+            return [sub_header]
         return []
     return read_range
 

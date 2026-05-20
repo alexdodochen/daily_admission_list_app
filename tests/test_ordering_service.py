@@ -279,6 +279,71 @@ def test_sync_reflects_doctor_change(monkeypatch):
     assert body[0][1] == "新醫師"
 
 
+def test_integrate_syncs_subtable_note_to_R(monkeypatch):
+    """子表格 H 註記 非空 → R 備註 取代 existing R (align with reference repo H→R)."""
+    existing = [
+        ["1", "Z", "甲", "員工", "舊備註", "111", "old", "old", ""],
+    ]
+    sub_grid = [
+        _pad(["Z（1人）"]),
+        _pad(["姓名","病歷","EMR","","","術前診斷","預計心導管","註記"]),
+        _pad(["甲","111","","","","CAD","PCI","不排導管"]),
+        _pad([]),
+    ]
+    ws = _FakeWS()
+    monkeypatch.setattr(os_.sheet_service, "get_worksheet", lambda d: ws)
+    monkeypatch.setattr(os_.sheet_service, "read_range",
+                        lambda _ws, rng: existing if rng.startswith("N") else sub_grid)
+    monkeypatch.setattr(os_.sheet_service, "write_range",
+                        lambda _ws, rng, body, raw=False: ws.writes.append((rng, body)))
+    os_.integrate_ordering("20260501")
+    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    assert body[0][3] == "員工"        # Q (住服) preserved
+    assert body[0][4] == "不排導管"    # R ← 子表格 H 註記
+    assert body[0][8] == ""            # V preserved
+
+
+def test_integrate_preserves_R_when_subtable_note_empty(monkeypatch):
+    """子表格 H 註記 空 → R 保留 (preserve user-typed value)."""
+    existing = [
+        ["1", "Z", "甲", "", "用戶手填備註", "111", "", "", ""],
+    ]
+    sub_grid = [
+        _pad(["Z（1人）"]),
+        _pad(["姓名","病歷","EMR","","","術前診斷","預計心導管","註記"]),
+        _pad(["甲","111","","","","CAD","PCI",""]),
+        _pad([]),
+    ]
+    ws = _FakeWS()
+    monkeypatch.setattr(os_.sheet_service, "get_worksheet", lambda d: ws)
+    monkeypatch.setattr(os_.sheet_service, "read_range",
+                        lambda _ws, rng: existing if rng.startswith("N") else sub_grid)
+    monkeypatch.setattr(os_.sheet_service, "write_range",
+                        lambda _ws, rng, body, raw=False: ws.writes.append((rng, body)))
+    os_.integrate_ordering("20260501")
+    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    assert body[0][4] == "用戶手填備註"
+
+
+def test_sync_appends_new_patient_carries_note(monkeypatch):
+    """新增的子表格患者，註記 H → 新 N-V row 的 R 欄."""
+    existing = [
+        ["1", "Z", "甲", "", "", "111", "CAD", "PCI", ""],
+    ]
+    sub_grid = [
+        _pad(["Z（2人）"]),
+        _pad(["姓名","病歷","EMR","","","術前診斷","預計心導管","註記"]),
+        _pad(["甲","111","","","","CAD","PCI",""]),
+        _pad(["乙","222","","","","AS","TAVI","待會診"]),
+        _pad([]),
+    ]
+    ws, _ = _setup_sync(monkeypatch, existing, sub_grid)
+    os_.sync_ordering_after_diff("20260501")
+    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    assert body[1][5] == "222"
+    assert body[1][4] == "待會診"
+
+
 def test_sync_clears_trailing_rows_when_shorter(monkeypatch):
     """If new block is shorter than old, leftover N-V rows should be cleared."""
     existing = [
