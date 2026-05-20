@@ -1,98 +1,123 @@
 ============================================
-  HANDOFF — Last Updated: 2026-05-20 (Phase 15)
+  HANDOFF — Last Updated: 2026-05-21 (Phase 16)
 ============================================
 
 [What this session did]
-  Shipped a 10-issue field-bug batch from 麒翔's deployed install
-  (commit c47d357). All bugs surfaced from real day-to-day use:
-  1. ② EMR 註記 → ③ 入院序整合 not syncing — `renderSubtables` H-col
-     was a plain <td>; now a `noteInput()` editable input with the
-     existing fg-input bidirectional sync wiring.
-  2. 主治醫師 / 病人姓名 not canonicalised from EMR — added
-     `matched_doctor` flag to `fetch_raw_html`; `extract_visit_doctor`
-     parses "<date> <doc> 門診"; `apply_emr_main_fixes` patches main D
-     (only when matched_doctor=True, not on FALLBACK visits).
-     `_name_variants` strips OCR "?" so "李文煌?" matches.
-  3. 吳石秀 / 魏瑞泰 "查無 EMR" — `FALLBACK_DOCTORS` pool grown
-     6 → 28 via `_load_cv_doctor_pool()` reading doctor_codes.json.
-  4. Same-day re-upload moving patients between subs — `_apply_diff_to_subtables`
-     dropped the doctor_changed branch entirely; same chart_no rows
-     never touched.
-  5. Load-existing-date no longer auto-jumps to Step 4 tab.
-  6. 資料檢查 panel moved to bottom of /admission.
-  7. New floating ⬆ scroll-to-top button on every page (base.html).
-  8. ③ sub-table now shows 性別 + 年齡 (parsed from c_text prefix).
-  9. Step 5 per-patient overrides: 「排」 checkbox to skip + 「導管日期」
-     date input to shift one patient to a different day. Backend
-     `_apply_overrides` whitelist gains `skip` + `cath_date`.
-  10. Step 5 missing_after now shows 原因 column paired from Phase-1
-      `add_results` row — never bare "✗ 沒寫進去".
+  Shipped a 7-issue field-batch from 2026-05-21 麒翔 usage, in 3 commits:
+
+  c47fbbc — lottery + cathlab batch (5 fixes):
+  1. 5/26 劉嚴文 排到第一位 root cause: Sheet A col is 「星期三」 but
+     JS sends 「週三」 — exact-match failed, tickets={} → all non-時段
+     random shuffle. `_normalize_weekday_label()` now folds 星期X → 週X
+     + strips whitespace/punct. UI surfaces a yellow banner when
+     tickets came back empty + lists doctor_groups (🟦時段 / 🟧非時段).
+  2. 不排導管 still scheduled: SKIP_KEYWORDS expanded to
+     [不排, 不做, 取消, 檢查] + _SKIP_NEGATIVE=[不排除] guard.
+     UI placeholder already said 「不排導管」 — backend now matches.
+  3. 第二醫師 not auto-keyed (e.g. 詹世鴻 週三 → 許毓軨): ported source
+     `schedule_lookup.py` pattern → `read_schedule_overlay()` reads
+     admission Sheet 主治醫師導管時段表 A1:G15. Parses 詹世鴻(軨) /
+     黃鼎鈞(浩、晨) / EP(李柏增)(晨). Cache busts per Step 5 entry.
+  4. 詹世鴻 週五 rule 16: `FRIDAY_DROP_DOCTORS=("詹世鴻",)` auto-pops
+     詹 from tickets on 週五 so he lands in Group 2 regardless of sheet.
+  5. 第二主治 dropdown: `secondDoctorCombobox()` preset =
+     [蘇奕嘉, 葉建寬, 葉立浩, 許毓軨, 洪晨惠] — fg-cell pattern (▼ shows
+     all), free-text still allowed.
+
+  d5c8dd4 — EMR preserve + cancel buttons (2 fixes):
+  6. Step 3 EMR writeback preserves existing C/F/G: chart with ANY of
+     C/F/G non-empty → no patches for those three cells. Returns
+     `preserved: [chart_no]`; UI shows 「保留既有 N 位」.
+  7. Cancel buttons for long ops: new app/services/cancel_registry.py
+     (cooperative checkpoint pattern; module-global flag dict;
+     thread-safe). emr_service.extract_patients + cathlab_service.keyin
+     accept `op_id`, poll between iterations. Endpoints register
+     `step{3,5}_{date}`. New POST /api/op/cancel. admission.html gets
+     red ✕ buttons (hidden by default, shown while op runs).
+
+  b7073d1 — divUserSpec race fix (1 critical fix):
+  8. 石文明 vs 周素珍 (chart 00385733) root cause: `fetch_raw_html`
+     was stamping leftFrame+mainFrame before BTQuery but NOT
+     #divUserSpec. divUserSpec lives in a different frame and refreshes
+     async — read it without sentinel → got PREVIOUS chart's data
+     (off-by-one). EXACT same bug fixed in _verify_query_and_read on
+     5/12 (b3815f9) but never ported. Now: stamp divUserSpec across
+     all frames + poll for sentinel-gone + 姓名 marker + 400ms settling
+     delay + reject sentinel-echo on read.
+     Companion: write_results_to_subtables now ALWAYS patches 姓名 (A)
+     on EMR canonical-name difference, even when C/F/G preserved —
+     otherwise a stuck wrong name can't be auto-corrected.
 
 [Current state]
-  - Branch: main, clean, IN SYNC with origin/main @ c47d357
-  - Tests: 372 passed (2 ocr_service tests rewritten for new
-    doctor-unchanged rule, all others unchanged)
-  - CI release: c47d357 is the next deliverable. GitHub Actions
-    should be ~5-10 min into building the release zip when this
-    handoff is written.
-  - 麒翔's install will pick up all 10 fixes via 🔄 更新 button
-    once CI finishes.
+  - Branch: main, clean, IN SYNC with origin/main @ b7073d1
+  - Tests: 416 passed (372 → 403 → 415 → 416 across the 3 commits)
+  - CI release: b7073d1 is the latest deliverable. GitHub Actions
+    builds the ASCII admission-app.zip; 麒翔's install can pick up
+    all 8 fixes via 🔄 更新 button once the workflow finishes.
 
 [Next steps]
-  - Watch the CI build for c47d357 (release asset = ASCII
-    admission-app.zip). If it succeeds, tell 麒翔 to click 更新.
-  - Field-verify: ask 麒翔 to retry 吳石秀 / 魏瑞泰 EMR fetch
-    after updating — should now succeed via the 28-doctor pool.
-    If still "查無 EMR" → genuinely no 一年內門診 (any CV doc),
-    user fills 註記/F/G manually from inpatient notes.
-  - Field-verify: 主治醫師 OCR-typo cases — should now show up
-    in the "📝 EMR 自動更正主表" table with field=主治醫師.
-  - Carry-over: /sched real-month solve→手調→套用重算 manual
-    verify (still pending, low priority).
-  - Sub-table title rows (`<doc>（N人）`) NOT auto-renamed when
-    main D gets EMR-canonicalised — known limitation, no fix
-    queued. Workaround: editable 📋 查閱 viewer for manual rename.
+  - Field-verify 5/26 lottery: re-run ② 首次抽籤 after pulling. Should
+    show flash 「抽籤表 週三：詹世鴻、林佳凌、…」 + 醫師抽序 with
+    🟦/🟧 grouping. 劉嚴文 belongs to 🟧 非時段組, ranks LAST in RR.
+  - Field-verify chart 00385733: re-run Step 3 EMR. Race fix should
+    return 周素珍 (not 石文明). Sub-table A auto-corrects to 周素珍
+    even though row C/F/G are preserved.
+  - Field-verify 第二醫師 auto-fill: open Step 5 ① 預覽排程. If
+    主治醫師導管時段表 has 「詹世鴻(軨)」 in the 週三 cell, all
+    詹世鴻 patients on 5/27 should pre-fill 第二主治=許毓軨.
+  - Field-verify cancel buttons: trigger Step 3 EMR, click red
+    ✕ 取消擷取 — should stop after current patient finishes; flash
+    shows 「已取消，剩餘未跑」.
 
 [Known issues / blockers]
-  - Pre-0e3501b installs (a68c3da..4eae323) still need ONE manual
-    zip download (their updater is the buggy .bat that bricks).
-    All current installs should already be on PS1 updater.
-  - Public CI release has NO SA + NO 3 cathlab JSONs (PHI by
-    design; [[delivery-protocol-inapp-update]]).
-  - Sub-table title auto-rename on EMR doctor canon: deferred.
+  - Pre-fix sub-tables with wrong-name data (e.g. 石文明 stuck on
+    00385733): user must re-run Step 3 EMR ONCE; the 姓名 override
+    rule patches A on next run; C/F/G stay preserved (manually clear
+    them in 📋 查閱 viewer if user wants those re-fetched too).
+  - 主治醫師導管時段表 worksheet structure assumed: A1:G15 with
+    B=room / C=Mon..G=Fri / rows 2-7=AM / rows 8-12=PM. If user
+    changed the layout, overlay returns empty → 第二醫師 not auto-
+    filled. Not surfaced as an error currently; consider warning if
+    overlay yields zero matches.
+  - Sub-table title 「<doctor>（N人）」 still NOT auto-renamed when
+    main D gets EMR-canonicalised (carried from Phase 15). Deferred.
 
 [Don't repeat these mistakes]
-  - When user says "不要動" about same-chart_no rows, that means
-    EVERYTHING including doctor — don't silently re-apply
-    doctor_changed in sub-table sync. [[ocr-reupload-membership-only]]
-  - "Verify-after-write" results must pair STATUS with REASON in
-    the same row, sourced from the write phase. Don't make users
-    dig through detailed logs for a 2-line answer.
-    [[missing-after-must-show-reason]]
-  - Load / refresh buttons must NOT switch tabs. Hydrate data, leave
-    focus alone. [[load-existing-no-tab-jump]]
-  - Hardcoded fallback lists go stale as the team grows — union
-    with the live JSON (doctor_codes.json) but keep the hardcoded
-    floor for sanitised installs. [[emr-fallback-pool-from-doctor-codes]]
+  - When sheet has 「星期X」 vs JS sends 「週X」: handle via
+    `_normalize_weekday_label`; don't add a hardcoded fallback.
+    [[lottery-empty-tickets-warning]]
+  - When UI placeholder suggests a keyword (e.g. 「不排導管」), backend
+    MUST match it. Out-of-sync placeholder/backend = silent bug.
+    [[cathlab-skip-keyword-variants]]
+  - Reading #divUserSpec without a sentinel after BTQuery → off-by-one
+    every time. Stamp + poll, ALWAYS. [[emr-divuserspec-race-fix]]
+  - Preserve-existing must NOT lock the 姓名 (A) column — EMR is the
+    canonical source for the patient's real name. Only C/F/G are
+    preserved. [[emr-preserve-existing]]
 
 [Relevant files]
-  - app/services/ocr_service.py (doctor_changed branch removed)
-  - app/services/emr_service.py (matched_doctor 4-tuple,
-    extract_visit_doctor, _load_cv_doctor_pool, apply_emr_main_fixes D-col)
-  - app/services/cathlab_service.py (_apply_overrides skip + cath_date,
-    missing_after reason pairing)
-  - app/static/app.js (renderSubtables 性別/年齡 + noteInput,
-    renderPlan skip/cath_date columns, missing_after reason column,
-    scroll-to-top wiring, load-existing no jump)
-  - app/static/app.css (.scroll-to-top styling)
-  - app/templates/admission.html (資料檢查 → bottom)
-  - app/templates/base.html (#scroll-to-top button)
-  - tests/test_ocr_service.py (2 doctor_changed tests rewritten)
+  - app/services/lottery_service.py (FRIDAY_DROP_DOCTORS, normalize,
+    warning, doctor_groups)
+  - app/services/cathlab_service.py (SKIP_KEYWORDS expanded,
+    note_means_skip, read_schedule_overlay, lookup_schedule_doctors,
+    cancel hooks in keyin)
+  - app/services/emr_service.py (preserve-existing,
+    fetch_raw_html sentinel-stamping #divUserSpec, op_id polling)
+  - app/services/cancel_registry.py (NEW)
+  - app/static/app.js (yellow lottery banner, doctor_groups display,
+    secondDoctorCombobox, cancel button wiring, preserved count flash)
+  - app/templates/admission.html (#cancel3-btn + #cancel5-btn)
+  - app/main.py (/api/op/cancel, /api/op/list, op_id registration)
+  - tests/test_lottery_service.py (rule 16 + normalize tests, 22 total)
+  - tests/test_cathlab_service.py (note_means_skip + schedule overlay
+    tests, 55 total)
+  - tests/test_emr_service.py (5 writeback preserve + 1 name-override)
+  - tests/test_cancel_registry.py (NEW)
 
 [Important memory files]
-  - feedback_ocr_reupload_membership_only.md (UPDATED — 2026-05-20 rule)
-  - reference_emr_fallback_pool_from_doctor_codes.md (NEW)
-  - feedback_missing_after_must_show_reason.md (NEW)
-  - feedback_load_existing_no_tab_jump.md (NEW)
-  - project_emr_doctor_canonicalization.md (NEW)
-  - project_3card_app_state.md (UPDATED — Phase 15 prepended)
+  - feedback_emr_divuserspec_race_fix.md (NEW)
+  - feedback_emr_preserve_existing.md (NEW, refined twice)
+  - feedback_lottery_empty_tickets_warning.md (NEW)
+  - feedback_cathlab_skip_keyword_variants.md (NEW)
+  - project_cathlab_schedule_overlay.md (NEW)
+  - project_cancel_registry.md (NEW)
