@@ -451,3 +451,120 @@ def test_compare_demographics_no_birth_skips_age():
     out = es.compare_demographics(row, "王", None, "男", "20260601")
     cells = [p[0] for p in out["patches"]]
     assert "H5" not in cells
+
+
+# --------------------- write_results_to_subtables preserve-existing rule ---------------------
+
+class _FakeWS:
+    """Minimal sheet stub — accepts the calls the writeback function makes."""
+    def __init__(self):
+        self.batch_calls = []
+    def update_cell(self, *a, **kw): pass
+
+
+def _stub_writeback_io(monkeypatch, tables):
+    """Mock the I/O surfaces so write_results_to_subtables runs against `tables`."""
+    from app.services import sheet_service, ordering_service, subtable_service
+    ws = _FakeWS()
+    monkeypatch.setattr(sheet_service, "get_worksheet", lambda d: ws)
+    monkeypatch.setattr(sheet_service, "ensure_chart_text_format", lambda w: None)
+    monkeypatch.setattr(sheet_service, "set_fg_validation",
+                        lambda *a, **kw: None)
+    written: list = []
+    monkeypatch.setattr(sheet_service, "batch_write_cells",
+                        lambda w, patches: written.extend(patches))
+    monkeypatch.setattr(ordering_service, "read_doctor_subtables",
+                        lambda d: {doc: list(pts) for doc, pts in tables.items()})
+    monkeypatch.setattr(subtable_service, "build_subtables_from_main",
+                        lambda d: None)
+    return written
+
+
+def test_writeback_preserves_chart_with_existing_emr(monkeypatch):
+    """Row with non-empty C (emr text) — preserve all, no patches."""
+    tables = {"許志新": [{
+        "row": 5, "name": "張三", "chart_no": "12345",
+        "emr": "65 y/o 男\nS: chest pain", "diagnosis": "", "cathlab": "",
+    }]}
+    written = _stub_writeback_io(monkeypatch, tables)
+    results = [{"chart_no": "12345",
+                "c_text": "70 y/o 女\nNEW SOAP",
+                "f": "AS", "g": "TAVI", "emr_name": "張三",
+                "emr_gender": "女", "emr_birth_y": 1956}]
+    out = es.write_results_to_subtables("20260526", results)
+    assert out["written"] == 0
+    assert "12345" in out["preserved"]
+    assert written == []  # nothing got patched
+
+
+def test_writeback_preserves_chart_with_existing_diagnosis_only(monkeypatch):
+    """Row with C empty but F filled — still preserve (user typed F)."""
+    tables = {"許志新": [{
+        "row": 5, "name": "張三", "chart_no": "12345",
+        "emr": "", "diagnosis": "CAD", "cathlab": "",
+    }]}
+    written = _stub_writeback_io(monkeypatch, tables)
+    results = [{"chart_no": "12345",
+                "c_text": "70 y/o 女\nNEW",
+                "f": "AS", "g": "TAVI"}]
+    out = es.write_results_to_subtables("20260526", results)
+    assert out["written"] == 0
+    assert out["preserved"] == ["12345"]
+    assert written == []
+
+
+def test_writeback_writes_to_empty_row(monkeypatch):
+    """Fresh row with empty C/F/G — write everything normally."""
+    tables = {"許志新": [{
+        "row": 5, "name": "張三", "chart_no": "12345",
+        "emr": "", "diagnosis": "", "cathlab": "",
+    }]}
+    written = _stub_writeback_io(monkeypatch, tables)
+    results = [{"chart_no": "12345",
+                "c_text": "70 y/o 女\nNEW",
+                "f": "AS", "g": "TAVI"}]
+    out = es.write_results_to_subtables("20260526", results)
+    assert out["written"] == 1
+    assert out["preserved"] == []
+    cells = [p[0] for p in written]
+    assert "C5" in cells
+    assert "F5" in cells
+    assert "G5" in cells
+
+
+def test_writeback_skips_error_results(monkeypatch):
+    """Result with error field — skipped (not preserved, not written)."""
+    tables = {"許志新": [{
+        "row": 5, "name": "張三", "chart_no": "12345",
+        "emr": "", "diagnosis": "", "cathlab": "",
+    }]}
+    written = _stub_writeback_io(monkeypatch, tables)
+    results = [{"chart_no": "12345", "error": "fetch timeout",
+                "c_text": "", "f": "", "g": ""}]
+    out = es.write_results_to_subtables("20260526", results)
+    assert out["written"] == 0
+    assert out["preserved"] == []  # error path doesn't trigger preserve
+    assert written == []
+
+
+def test_writeback_mixed_batch_one_preserved_one_new(monkeypatch):
+    """Two charts: one already-EMR'd → preserved; one fresh → written."""
+    tables = {"許志新": [
+        {"row": 5, "name": "張三", "chart_no": "12345",
+         "emr": "65 y/o 男\nOLD", "diagnosis": "CAD", "cathlab": "LHC"},
+        {"row": 6, "name": "李四", "chart_no": "67890",
+         "emr": "", "diagnosis": "", "cathlab": ""},
+    ]}
+    written = _stub_writeback_io(monkeypatch, tables)
+    results = [
+        {"chart_no": "12345", "c_text": "NEW", "f": "AS", "g": "TAVI"},
+        {"chart_no": "67890", "c_text": "60 y/o 男\nfresh",
+         "f": "AS", "g": "TAVI"},
+    ]
+    out = es.write_results_to_subtables("20260526", results)
+    assert out["written"] == 1
+    assert out["preserved"] == ["12345"]
+    cells = [p[0] for p in written]
+    # Only row 6 (chart 67890) got writes
+    assert any(c.endswith("6") for c in cells)
+    assert not any(c.endswith("5") for c in cells)

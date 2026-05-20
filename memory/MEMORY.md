@@ -1,5 +1,7 @@
 # Memory index — daily_admission_list_app
 
+- [Cancel registry for Step 3 + Step 5 long ops](project_cancel_registry.md) — cooperative checkpoint pattern; `step{N}_{date}` op_id; `/api/op/cancel`; partial results + `canceled` flag; don't switch to asyncio.Task.cancel
+- [EMR writeback preserves existing C/F/G](feedback_emr_preserve_existing.md) — chart with ANY filled cell → skip ALL writes; clear cells manually to re-fetch
 - [Cathlab 第二醫師 from 主治醫師導管時段表 overlay](project_cathlab_schedule_overlay.md) — 詹世鴻(軨) → second=許毓軨 etc.; reads admission Sheet A1:G15 of 主治醫師導管時段表; busts cache per Step 5 entry
 - [Lottery must warn on empty tickets, not silently shuffle](feedback_lottery_empty_tickets_warning.md) — 5/26 劉嚴文 排到第一位 root cause: tickets={} → all 非時段; UI now shows yellow banner + 醫師抽序 grouping
 - [Cathlab skip keywords cover 不排導管 / 不做 variants](feedback_cathlab_skip_keyword_variants.md) — 不排程 alone wasn't catching 不排導管; use note_means_skip() with negative-list guard for 不排除

@@ -310,12 +310,18 @@ async def api_step3_run(session_url: str = Form(...),
                         date: str = Form("")):
     """Fetch EMR for each patient and (if `date` given) write C/F/G back to
     the doctor sub-tables on the YYYYMMDD sheet.
+
+    Registers op_id `step3_{date}` so the user can `POST /api/op/cancel`
+    mid-batch (see cancel_registry).
     """
+    from .services import cancel_registry
     import json as _json
+    op_id = f"step3_{(date or admission_date or 'no-date').strip()}"
+    cancel_registry.start(op_id, {"step": 3, "date": date or admission_date})
     try:
         patients = _json.loads(patients_json)
         results = await emr_service.extract_patients(
-            session_url, patients, admission_date=admission_date)
+            session_url, patients, admission_date=admission_date, op_id=op_id)
         write_info: dict = {"written": 0, "missing": [], "skipped": True}
         main_fixes: dict = {"patches_count": 0, "fixes": [], "skipped": True}
         target_date = (date or admission_date or "").strip()
@@ -350,10 +356,14 @@ async def api_step3_run(session_url: str = Form(...),
                         r["note"] = meta.get("note", "")  # H 註記
             except Exception:
                 pass  # row enrichment is optional UI sugar
+        canceled = any(r.get("canceled") for r in results)
         return {"ok": True, "results": results,
-                "writeback": write_info, "main_fixes": main_fixes}
+                "writeback": write_info, "main_fixes": main_fixes,
+                "canceled": canceled, "op_id": op_id}
     except Exception as e:
         raise HTTPException(500, str(e))
+    finally:
+        cancel_registry.finish(op_id)
 
 
 # ------------------------------ Step 4 Ordering ------------------------------
@@ -446,14 +456,40 @@ async def api_step5_verify(date: str = Form(...)):
 @app.post("/api/step5/keyin")
 async def api_step5_keyin(date: str = Form(...), dry_run: str = Form("no"),
                           overrides: str = Form("")):
+    from .services import cancel_registry
+    op_id = f"step5_{date.strip()}"
+    is_dry = (dry_run == "yes")
+    if not is_dry:
+        cancel_registry.start(op_id, {"step": 5, "date": date})
     try:
         import json as _json
         ov = _json.loads(overrides) if overrides.strip() else None
         result = await cathlab_service.keyin(
-            date, dry_run=(dry_run == "yes"), overrides=ov)
-        return {"ok": True, **result}
+            date, dry_run=is_dry, overrides=ov,
+            op_id=(op_id if not is_dry else ""))
+        return {"ok": True, "op_id": (op_id if not is_dry else ""), **result}
     except Exception as e:
         raise HTTPException(500, str(e))
+    finally:
+        if not is_dry:
+            cancel_registry.finish(op_id)
+
+
+@app.post("/api/op/cancel")
+async def api_op_cancel(op_id: str = Form(...)):
+    """Request cooperative cancellation of a running long-op (Step 3 / Step 5).
+    The op polls the flag and stops at its next safe checkpoint.
+    """
+    from .services import cancel_registry
+    canceled = cancel_registry.request_cancel(op_id)
+    return {"ok": True, "canceled": canceled, "op_id": op_id}
+
+
+@app.get("/api/op/list")
+async def api_op_list():
+    """Diagnostic: list currently-running long-ops."""
+    from .services import cancel_registry
+    return {"ok": True, "running": cancel_registry.list_running()}
 
 
 # ------------------------------ Reschedule (V flag + full move) ------------------------------

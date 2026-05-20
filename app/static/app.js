@@ -1321,6 +1321,26 @@ function setupStep3() {
     if (!patients || !patients.length)
       return flash($('#s3-msg'), '找不到病人清單 — 請先完成 ① 匯入名單（會自動建子表格）', 'err');
 
+    // Show cancel button while the long EMR batch runs.
+    const cancelBtn = $('#cancel3-btn');
+    const opId = `step3_${date || 'no-date'}`;
+    let currentOpId = opId;
+    if (cancelBtn) {
+      cancelBtn.style.display = '';
+      cancelBtn.onclick = async () => {
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = '取消中…';
+        try {
+          const fd = new FormData();
+          fd.append('op_id', currentOpId);
+          await api('/api/op/cancel', { method: 'POST', body: fd });
+          flash($('#s3-msg'), '已請求取消 — 等目前這位跑完後停止', 'ok');
+        } catch (e) {
+          cancelBtn.disabled = false;
+          cancelBtn.textContent = '✕ 取消擷取';
+        }
+      };
+    }
     await withBusy($('#run3-btn'), `EMR 擷取中… (${patients.length} 位)`, async () => {
       flash($('#s3-msg'), `擷取中… (${patients.length} 位)`, 'ok');
       const fd = new FormData();
@@ -1330,6 +1350,7 @@ function setupStep3() {
       fd.append('admission_date', date);
       try {
         const r = await api('/api/step3/run', { method: 'POST', body: fd });
+        currentOpId = r.op_id || currentOpId;
         await renderEmrResults(r.results, r.main_fixes || {});
         const wb = r.writeback || {};
         const missing = (wb.missing || []).length;
@@ -1342,7 +1363,10 @@ function setupStep3() {
           skippedNote = '（未寫回 — 缺日期）';
         } else {
           const autoBuilt = wb.auto_built ? '（已自動建立子表格）' : '';
-          skippedNote = `；寫回子表格 ${wb.written} 位${autoBuilt}` +
+          const preservedN = (wb.preserved || []).length;
+          const preservedNote = preservedN
+            ? `，保留既有 ${preservedN} 位（已有資料未覆寫）` : '';
+          skippedNote = `；寫回子表格 ${wb.written} 位${autoBuilt}${preservedNote}` +
             (missing ? `，${missing} 位查無子表格` : '');
         }
         // Append main A-L 修正 summary
@@ -1350,10 +1374,18 @@ function setupStep3() {
         if (mf.fixes && mf.fixes.length) {
           skippedNote += `；主表更正 ${mf.fixes.length} 處 (姓名/性別/年齡)`;
         }
+        const cancelNote = r.canceled ? '（已取消，剩餘未跑）' : '';
         flash($('#s3-msg'),
-          `✓ 完成 ${r.results.length} 位${skippedNote}`, level);
+          `✓ 完成 ${r.results.length} 位${cancelNote}${skippedNote}`,
+          r.canceled ? 'err' : level);
       } catch (err) {
         flash($('#s3-msg'), '✗ ' + err.message, 'err');
+      } finally {
+        if (cancelBtn) {
+          cancelBtn.style.display = 'none';
+          cancelBtn.disabled = false;
+          cancelBtn.textContent = '✕ 取消擷取';
+        }
       }
     });
   });
@@ -1776,6 +1808,27 @@ function setupStep5() {
       }
       (ov[c] = ov[c] || {})[f] = v;
     });
+    // Show cancel button while keyin runs. op_id is computed from date,
+    // matching the backend (`step5_{date}`).
+    const cancelBtn5 = $('#cancel5-btn');
+    const opId5 = `step5_${date}`;
+    if (cancelBtn5) {
+      cancelBtn5.style.display = '';
+      cancelBtn5.onclick = async () => {
+        if (!confirm('已寫入 WEBCVIS 的不會撤銷，只會停止後續這批沒跑到的。確定取消？')) return;
+        cancelBtn5.disabled = true;
+        cancelBtn5.textContent = '取消中…';
+        try {
+          const fd = new FormData();
+          fd.append('op_id', opId5);
+          await api('/api/op/cancel', { method: 'POST', body: fd });
+          flash($('#s5-msg'), '已請求取消 — 等目前這筆 ADD/UPT 跑完後停止', 'ok');
+        } catch (e) {
+          cancelBtn5.disabled = false;
+          cancelBtn5.textContent = '✕ 取消 key in';
+        }
+      };
+    }
     await withBusy($('#keyin5-btn'), 'Key in 中…', async () => {
     flash($('#s5-msg'), '寫入 WEBCVIS 中…（會開瀏覽器）', 'ok');
     const fd = new FormData(); fd.append('date', date); fd.append('dry_run', 'no');
@@ -1795,9 +1848,23 @@ function setupStep5() {
         <table class="data"><thead><tr><th>狀態</th><th>姓名</th><th>病歷</th><th>說明</th></tr></thead><tbody>${uptRows || '<tr><td colspan=4>無（沒有需要補診斷／術式的病人）</td></tr>'}</tbody></table>
         ${missRows ? `<h3>key in 後再查一次：有 ${(r.missing_after||[]).length} 位沒寫進排程</h3><table class="data"><thead><tr><th>狀態</th><th>姓名</th><th>病歷</th><th>導管日期</th><th>原因</th></tr></thead><tbody>${missRows}</tbody></table>` : '<p class="ok">key in 後再查一次：應排的病人全部都在排程裡 ✓</p>'}
         <details class="hint"><summary>詳細執行記錄（除錯用）</summary><pre class="test-output">${(r.log || []).join('\n')}</pre></details>`;
-      flash($('#s5-msg'), r.summary.error ? `⚠ 有 ${r.summary.error} 位寫入失敗，請看上方表格` : '✓ 排程已全部 key 進 WEBCVIS', r.summary.error ? 'err' : 'ok');
+      let baseMsg;
+      if (r.canceled) {
+        baseMsg = `⚠ 已取消（跑完 ${(r.add || []).length} 筆 ADD / ${(r.upt || []).length} 筆 UPT 後停止）`;
+      } else if (r.summary.error) {
+        baseMsg = `⚠ 有 ${r.summary.error} 位寫入失敗，請看上方表格`;
+      } else {
+        baseMsg = '✓ 排程已全部 key 進 WEBCVIS';
+      }
+      flash($('#s5-msg'), baseMsg, (r.canceled || r.summary.error) ? 'err' : 'ok');
     } catch (err) {
       flash($('#s5-msg'), '✗ ' + err.message, 'err');
+    } finally {
+      if (cancelBtn5) {
+        cancelBtn5.style.display = 'none';
+        cancelBtn5.disabled = false;
+        cancelBtn5.textContent = '✕ 取消 key in';
+      }
     }
     });
   });

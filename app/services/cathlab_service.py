@@ -980,12 +980,16 @@ def _apply_overrides(patients: list[dict], overrides: dict | None) -> None:
 
 
 async def keyin(admit_date: str, dry_run: bool = False,
-                overrides: dict | None = None) -> dict:
+                overrides: dict | None = None,
+                op_id: str = "") -> dict:
     """
     Real WEBCVIS ADD + UPT for all non-skipped patients.
     dry_run=True → returns the plan without launching a browser.
     overrides: {chart: {second_doctor, third_doctor, note_out, room, time,
     session}} — user's manual edits from the dry-run table, applied verbatim.
+    `op_id`: cooperative cancel checkpoint (see cancel_registry). Polled
+    between Phase 1 / Phase 2 / per-patient ADD / per-patient UPT. Mid-batch
+    cancel stops the next iteration and returns partial results.
     """
     cfg = appconfig.load()
     if not dry_run:
@@ -1009,10 +1013,20 @@ async def keyin(admit_date: str, dry_run: bool = False,
         }
 
     from playwright.async_api import async_playwright
+    from . import cancel_registry
 
     log: list[str] = []
     add_results: list[dict] = []
     upt_results: list[dict] = []
+    canceled = False
+
+    def _cancel_check() -> bool:
+        nonlocal canceled
+        if op_id and cancel_registry.is_canceled(op_id):
+            canceled = True
+            log.append("⚠ 使用者取消")
+            return True
+        return False
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=False, slow_mo=150)
@@ -1044,6 +1058,8 @@ async def keyin(admit_date: str, dry_run: bool = False,
             # Phase 1: ADD (skip if chart present on ANY day in the scan window)
             log.append("--- Phase 1: ADD ---")
             for i, p in enumerate(active):
+                if _cancel_check():
+                    break
                 d = p["cath_date"]
                 already = _existing_anywhere(p["chart"])
                 if already:
@@ -1057,19 +1073,23 @@ async def keyin(admit_date: str, dry_run: bool = False,
                 add_results.append(r)
 
             # Phase 2: UPT (pdijson / phcjson)
-            log.append("--- Phase 2: UPT ---")
-            for p in active:
-                if not (p["diag_id"] or p["proc_id"]):
-                    continue
-                await _set_date_and_query(page, cfg.cathlab_base_url, p["cath_date"])
-                r = await _upt_patient(page, p)
-                upt_results.append(r)
+            if not canceled:
+                log.append("--- Phase 2: UPT ---")
+                for p in active:
+                    if _cancel_check():
+                        break
+                    if not (p["diag_id"] or p["proc_id"]):
+                        continue
+                    await _set_date_and_query(page, cfg.cathlab_base_url, p["cath_date"])
+                    r = await _upt_patient(page, p)
+                    upt_results.append(r)
 
-            # Final verification
+            # Final verification (skipped on cancel — partial state isn't comparable)
             final: dict[str, set[str]] = {}
-            for d in unique_dates:
-                await _set_date_and_query(page, cfg.cathlab_base_url, d)
-                final[d] = await _get_existing_charts(page)
+            if not canceled:
+                for d in unique_dates:
+                    await _set_date_and_query(page, cfg.cathlab_base_url, d)
+                    final[d] = await _get_existing_charts(page)
         finally:
             await browser.close()
 
@@ -1115,6 +1135,7 @@ async def keyin(admit_date: str, dry_run: bool = False,
         "skipped": skipped,
         "log": log,
         "implemented": True,
+        "canceled": canceled,
     }
 
 

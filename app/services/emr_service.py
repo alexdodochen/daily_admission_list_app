@@ -636,8 +636,15 @@ def write_results_to_subtables(date: str, results: list[dict]) -> dict:
       F col (col 6) = f              (auto-detected 術前診斷)
       G col (col 7) = g              (auto-detected 預計心導管)
 
-    Returns {"written": int, "missing": [chart_no, ...]}. Errors-only
-    patients (where extract failed and c_text is empty) are skipped.
+    **Preserve-existing rule (2026-05-21):** If the sub-table row already has
+    ANY of C / F / G filled, the EMR data is NOT written for that chart — the
+    row's prior state (user-typed F, manually edited C, etc.) is preserved
+    verbatim. To re-fetch a previously-EMR'd chart, the user must first clear
+    its C / F / G cells in the sub-table. Errors-only patients (extract failed,
+    empty c_text) are skipped regardless.
+
+    Returns {"written", "missing", "preserved": [chart], "patches_count",
+    "auto_built"}.
     """
     from . import sheet_service, ordering_service, subtable_service
 
@@ -664,15 +671,22 @@ def write_results_to_subtables(date: str, results: list[dict]) -> dict:
 
     chart_to_row: dict[str, int] = {}
     chart_to_name: dict[str, str] = {}
+    chart_to_existing: dict[str, dict] = {}
     for _, pts in tables.items():
         for p in pts:
             ch = (p.get("chart_no") or "").strip()
             if ch:
                 chart_to_row[ch] = p["row"]
                 chart_to_name[ch] = (p.get("name") or "").strip()
+                chart_to_existing[ch] = {
+                    "emr":       (p.get("emr") or "").strip(),
+                    "diagnosis": (p.get("diagnosis") or "").strip(),
+                    "cathlab":   (p.get("cathlab") or "").strip(),
+                }
 
     patches: list[tuple[str, str]] = []
     missing: list[str] = []
+    preserved: list[str] = []
     written = 0
     for r in results:
         chart = (r.get("chart_no") or "").strip()
@@ -684,6 +698,13 @@ def write_results_to_subtables(date: str, results: list[dict]) -> dict:
         if r.get("error"):
             continue
         row = chart_to_row[chart]
+        existing = chart_to_existing.get(chart, {})
+        # Preserve-existing rule: if ANY of C / F / G already has user content,
+        # skip ALL writes for this chart (keep the row exactly as the user left
+        # it). 姓名 also preserved in this branch since the row is "claimed".
+        if existing.get("emr") or existing.get("diagnosis") or existing.get("cathlab"):
+            preserved.append(chart)
+            continue
         c_text = r.get("c_text") or ""
         f_val  = r.get("f") or ""
         g_val  = r.get("g") or ""
@@ -723,6 +744,7 @@ def write_results_to_subtables(date: str, results: list[dict]) -> dict:
         pass  # validation is cosmetic — never block writeback
 
     return {"written": written, "missing": missing,
+            "preserved": preserved,
             "patches_count": len(patches), "auto_built": auto_built}
 
 
@@ -1070,15 +1092,22 @@ async def fetch_raw_html(page, session_url: str, chart_no: str,
 
 async def extract_patients(session_url: str,
                            patients: list[dict],
-                           admission_date: str = "") -> list[dict]:
+                           admission_date: str = "",
+                           op_id: str = "") -> list[dict]:
     """
     For each {chart_no, name, doctor} fetch SOAP + divUserSpec, then auto-detect
     F/G + age/gender prefix. NO LLM summary.
 
+    `op_id`: if provided, `cancel_registry.is_canceled(op_id)` is polled
+    before each patient — set the flag (via `POST /api/op/cancel`) to stop the
+    loop mid-batch. Patients already fetched are returned; remaining are not.
+
     Returns per-patient: {chart_no, name, doctor, c_text, f, g,
-                          emr_name, age, gender, has_record, error}.
+                          emr_name, age, gender, has_record, error,
+                          canceled?: bool}.
     """
     from playwright.async_api import async_playwright
+    from . import cancel_registry
 
     results: list[dict] = []
     admit = admission_date or _date.today().strftime("%Y%m%d")
@@ -1088,6 +1117,14 @@ async def extract_patients(session_url: str,
         page = await ctx.new_page()
         try:
             for p in patients:
+                if op_id and cancel_registry.is_canceled(op_id):
+                    # User asked to abort — return what we have so far.
+                    results.append({**p, "c_text": "", "f": "", "g": "",
+                                    "emr_name": "", "emr_doctor": "",
+                                    "age": None, "gender": "",
+                                    "has_record": False, "matched_doctor": False,
+                                    "error": "已取消", "canceled": True})
+                    break
                 try:
                     soap, div_spec, visit, matched = await fetch_raw_html(
                         page, session_url, p["chart_no"], p.get("doctor", ""))

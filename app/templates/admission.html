@@ -79,6 +79,7 @@
   <textarea id="emr-patients" rows="6" placeholder='[{"chart_no":"123","name":"王小明","doctor":"李文煌"}]'></textarea>
   <div class="actions">
     <button id="run3-btn">開始擷取 + 自動偵測 F/G</button>
+    <button id="cancel3-btn" type="button" style="display:none;background:#dc2626;color:#fff" title="跑到一半要中止？">✕ 取消擷取</button>
     <span id="s3-msg" class="msg"></span>
   </div>
   <div id="emr-results"></div>
@@ -136,6 +137,7 @@
     <button id="plan5-btn">① 預覽排程（不寫入，可在表上修改）</button>
     <button id="verify5-btn">② 與現有排程對照（只查，不寫入）</button>
     <button id="keyin5-btn">③ 開始 key in 排程（寫入 WEBCVIS）</button>
+    <button id="cancel5-btn" type="button" style="display:none;background:#dc2626;color:#fff" title="跑到一半要中止？已寫入 WEBCVIS 的不會撤銷">✕ 取消 key in</button>
     <span id="s5-msg" class="msg"></span>
   </div>
   <div id="s5-output"></div>
