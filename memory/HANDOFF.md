@@ -1,123 +1,114 @@
 ============================================
-  HANDOFF — Last Updated: 2026-05-21 (Phase 16)
+  HANDOFF — Last Updated: 2026-05-21 (Phase 17)
 ============================================
 
 [What this session did]
-  Shipped a 7-issue field-batch from 2026-05-21 麒翔 usage, in 3 commits:
+  Two batches across 4 commits (e9a06f0 → 6f73d17 → b6b6b0a):
 
-  c47fbbc — lottery + cathlab batch (5 fixes):
-  1. 5/26 劉嚴文 排到第一位 root cause: Sheet A col is 「星期三」 but
-     JS sends 「週三」 — exact-match failed, tickets={} → all non-時段
-     random shuffle. `_normalize_weekday_label()` now folds 星期X → 週X
-     + strips whitespace/punct. UI surfaces a yellow banner when
-     tickets came back empty + lists doctor_groups (🟦時段 / 🟧非時段).
-  2. 不排導管 still scheduled: SKIP_KEYWORDS expanded to
-     [不排, 不做, 取消, 檢查] + _SKIP_NEGATIVE=[不排除] guard.
-     UI placeholder already said 「不排導管」 — backend now matches.
-  3. 第二醫師 not auto-keyed (e.g. 詹世鴻 週三 → 許毓軨): ported source
-     `schedule_lookup.py` pattern → `read_schedule_overlay()` reads
-     admission Sheet 主治醫師導管時段表 A1:G15. Parses 詹世鴻(軨) /
-     黃鼎鈞(浩、晨) / EP(李柏增)(晨). Cache busts per Step 5 entry.
-  4. 詹世鴻 週五 rule 16: `FRIDAY_DROP_DOCTORS=("詹世鴻",)` auto-pops
-     詹 from tickets on 週五 so he lands in Group 2 regardless of sheet.
-  5. 第二主治 dropdown: `secondDoctorCombobox()` preset =
-     [蘇奕嘉, 葉建寬, 葉立浩, 許毓軨, 洪晨惠] — fg-cell pattern (▼ shows
-     all), free-text still allowed.
+  6f73d17 — Release dead-code purge (~900 lines):
+    * external/ + 2 stale .gitignore lines
+    * CV_APP_INTEGRATION_HANDOFF.md (5/10 plan, integration done)
+    * Reschedule feature fully removed: 4 endpoints + service (195L)
+      + test (220L) + WEBCVIS DEL block in cathlab_service (112L)
+      + 4 DEL-related tests in test_cathlab_enrich_plan
+    * Multi-source upstream trim: sync_manifest.py (95L) + upstream.py
+      461 → 354 (_sync_upstream/_run_mirror/EXTERNAL_DIR gone)
+    * Kept (per memory directive): /api/step2/{run,write,context}
+      legacy lottery endpoints + their 4 service funcs
+    * Tests 416 → 396 (only deleted-feature tests removed)
 
-  d5c8dd4 — EMR preserve + cancel buttons (2 fixes):
-  6. Step 3 EMR writeback preserves existing C/F/G: chart with ANY of
-     C/F/G non-empty → no patches for those three cells. Returns
-     `preserved: [chart_no]`; UI shows 「保留既有 N 位」.
-  7. Cancel buttons for long ops: new app/services/cancel_registry.py
-     (cooperative checkpoint pattern; module-global flag dict;
-     thread-safe). emr_service.extract_patients + cathlab_service.keyin
-     accept `op_id`, poll between iterations. Endpoints register
-     `step{3,5}_{date}`. New POST /api/op/cancel. admission.html gets
-     red ✕ buttons (hidden by default, shown while op runs).
+  b6b6b0a — 3-issue field batch + skill enhancement:
+    1. UI step3→step2 字眼修正: stepper was renumbered ①-⑤ in Phase 13
+       but H2 headings / help text / settings legends still said
+       "Step 3/4/5/6". Fixed: admission.html 5 sections + comments,
+       base.html 操作說明 6-list + 3 hint lines + bug-modal placeholder,
+       settings.html EMR/cathlab/LINE legends + 跳過 note, app.js diff
+       confirm message.
+    2. Step 1 OCR → ② EMR auto-feed: new renderStep2AutofillPreview()
+       shows patient preview table (主治/姓名/病歷號) above EMR textarea
+       after step1Write success AND load-existing. JSON textarea moved
+       into foldable <details>. Falls back to /api/step4/subtables when
+       build_subtables returned empty (already-built case).
+    3. 鄭朝允 / 陳淑貞 (1555245) 無一年內門診紀錄 root cause: leftFrame
+       click loop did raw `t.includes(variant)`. NCKUH EMR anchor uses
+       fullwidth space 「鄭朝允　門診」 → raw substring miss → fall to
+       FALLBACK (also miss) → wrong flag. Fix: NFC + strip-all-whitespace
+       normalizer applied to BOTH anchor text and every variant/fallback.
+       Plus diagnostic: visit_label carries the 門診 anchor texts seen
+       when no match found (so future bugs of this shape show their data).
 
-  b7073d1 — divUserSpec race fix (1 critical fix):
-  8. 石文明 vs 周素珍 (chart 00385733) root cause: `fetch_raw_html`
-     was stamping leftFrame+mainFrame before BTQuery but NOT
-     #divUserSpec. divUserSpec lives in a different frame and refreshes
-     async — read it without sentinel → got PREVIOUS chart's data
-     (off-by-one). EXACT same bug fixed in _verify_query_and_read on
-     5/12 (b3815f9) but never ported. Now: stamp divUserSpec across
-     all frames + poll for sentinel-gone + 姓名 marker + 400ms settling
-     delay + reject sentinel-echo on read.
-     Companion: write_results_to_subtables now ALWAYS patches 姓名 (A)
-     on EMR canonical-name difference, even when C/F/G preserved —
-     otherwise a stuck wrong name can't be auto-corrected.
+  Skill: /check-previous-progress now auto-fetches open GitHub issues
+    every session start. New helper ~/.claude/skills/check-previous-
+    progress/github_issues.py reads cwd's git remote, calls
+    `repos/{slug}/issues?state=open`, prints one line per issue.
+    SKILL.md adds Step 2 (between git fetch + HANDOFF) wiring this
+    into the standard session-start summary. Skill lives ONLY on this
+    machine (~/.claude/skills is not git-tracked, and sync to
+    claude-skills repo is forbidden per the 2026-05-18 cutover).
 
 [Current state]
-  - Branch: main, clean, IN SYNC with origin/main @ b7073d1
-  - Tests: 416 passed (372 → 403 → 415 → 416 across the 3 commits)
-  - CI release: b7073d1 is the latest deliverable. GitHub Actions
-    builds the ASCII admission-app.zip; 麒翔's install can pick up
-    all 8 fixes via 🔄 更新 button once the workflow finishes.
+  - Branch: main, clean, IN SYNC with origin/main @ b6b6b0a
+  - Tests: 396 passed (was 416; -20 from removed reschedule + DEL
+    tests; no regressions)
+  - CI release: b6b6b0a is the latest deliverable. ASCII admission-app.zip
+    builds automatically; 麒翔's install picks it up via 🔄 更新.
 
 [Next steps]
-  - Field-verify 5/26 lottery: re-run ② 首次抽籤 after pulling. Should
-    show flash 「抽籤表 週三：詹世鴻、林佳凌、…」 + 醫師抽序 with
-    🟦/🟧 grouping. 劉嚴文 belongs to 🟧 非時段組, ranks LAST in RR.
-  - Field-verify chart 00385733: re-run Step 3 EMR. Race fix should
-    return 周素珍 (not 石文明). Sub-table A auto-corrects to 周素珍
-    even though row C/F/G are preserved.
-  - Field-verify 第二醫師 auto-fill: open Step 5 ① 預覽排程. If
-    主治醫師導管時段表 has 「詹世鴻(軨)」 in the 週三 cell, all
-    詹世鴻 patients on 5/27 should pre-fill 第二主治=許毓軨.
-  - Field-verify cancel buttons: trigger Step 3 EMR, click red
-    ✕ 取消擷取 — should stop after current patient finishes; flash
-    shows 「已取消，剩餘未跑」.
+  - Field-verify chart 1555245 (陳淑貞 / 鄭朝允) on 麒翔's install
+    after CI completes:
+      * Should now match the 鄭朝允 visit and write EMR data.
+      * If it STILL misses → look at the EMR card's visit_label,
+        which now prints "[查無匹配 — 看到 N 筆門診：t1｜t2｜…]" —
+        forward that string to me so we can add the missing
+        Unicode-sibling pair to NAME_ALIASES + normalizer.
+  - Field-verify ① OCR → ② auto-feed: green "✓ 已自動帶入 N 位病人"
+    banner + table preview should show above EMR textarea after Step
+    1 write. JSON textarea hidden inside foldable 進階.
+  - Field-verify UI step-numbering consistency: every section title
+    should match the top stepper (no more "Step 3" while in ②).
+  - Eyeball the GitHub Issues inbox: next time you /check-previous-
+    progress in any repo, the helper auto-prints open issues. Try it
+    on a repo that has open issues to confirm formatting.
 
 [Known issues / blockers]
-  - Pre-fix sub-tables with wrong-name data (e.g. 石文明 stuck on
-    00385733): user must re-run Step 3 EMR ONCE; the 姓名 override
-    rule patches A on next run; C/F/G stay preserved (manually clear
-    them in 📋 查閱 viewer if user wants those re-fetched too).
-  - 主治醫師導管時段表 worksheet structure assumed: A1:G15 with
-    B=room / C=Mon..G=Fri / rows 2-7=AM / rows 8-12=PM. If user
-    changed the layout, overlay returns empty → 第二醫師 not auto-
-    filled. Not surfaced as an error currently; consider warning if
-    overlay yields zero matches.
-  - Sub-table title 「<doctor>（N人）」 still NOT auto-renamed when
-    main D gets EMR-canonicalised (carried from Phase 15). Deferred.
+  - 鄭朝允 fix is heuristic (whitespace + NFC). If anchor uses an
+    actual Unicode sibling code-point we don't know about yet, the
+    diagnostic visit_label string will reveal it; add a NAME_ALIASES
+    entry then.
+  - ~/.claude/skills is not git-tracked. The github_issues.py helper
+    + SKILL.md update lives on THIS MACHINE only. To use on another
+    machine, copy ~/.claude/skills/check-previous-progress/ manually
+    (or wait for the user to formalize a skill-sync mechanism that
+    doesn't violate the 2026-05-18 cutover).
+  - Pre-fix sub-tables with wrong-name data still need ONE re-fetch
+    after麒翔 updates so 姓名 (col A) gets canonical EMR name via
+    the preserve-existing override branch.
 
 [Don't repeat these mistakes]
-  - When sheet has 「星期X」 vs JS sends 「週X」: handle via
-    `_normalize_weekday_label`; don't add a hardcoded fallback.
-    [[lottery-empty-tickets-warning]]
-  - When UI placeholder suggests a keyword (e.g. 「不排導管」), backend
-    MUST match it. Out-of-sync placeholder/backend = silent bug.
-    [[cathlab-skip-keyword-variants]]
-  - Reading #divUserSpec without a sentinel after BTQuery → off-by-one
-    every time. Stamp + poll, ALWAYS. [[emr-divuserspec-race-fix]]
-  - Preserve-existing must NOT lock the 姓名 (A) column — EMR is the
-    canonical source for the patient's real name. Only C/F/G are
-    preserved. [[emr-preserve-existing]]
+  - When the stepper gets renumbered, ALSO update every H2 heading,
+    help text, settings legend, and JS user-facing message — the
+    user sees the mismatch immediately and rightly calls it a bug.
+  - JS substring `t.includes(v)` is unsafe across EMR anchors because
+    NCKUH inserts fullwidth spaces. Always normalize via NFC + strip
+    all whitespace forms before comparing names. [[visit-match-norm-unicode]]
+  - When deleting "dead" code that memory says to KEEP as legacy
+    (e.g. /api/step2/{run,write,context}), respect the memory directive
+    — don't get aggressive just because the user said "you decide".
 
 [Relevant files]
-  - app/services/lottery_service.py (FRIDAY_DROP_DOCTORS, normalize,
-    warning, doctor_groups)
-  - app/services/cathlab_service.py (SKIP_KEYWORDS expanded,
-    note_means_skip, read_schedule_overlay, lookup_schedule_doctors,
-    cancel hooks in keyin)
-  - app/services/emr_service.py (preserve-existing,
-    fetch_raw_html sentinel-stamping #divUserSpec, op_id polling)
-  - app/services/cancel_registry.py (NEW)
-  - app/static/app.js (yellow lottery banner, doctor_groups display,
-    secondDoctorCombobox, cancel button wiring, preserved count flash)
-  - app/templates/admission.html (#cancel3-btn + #cancel5-btn)
-  - app/main.py (/api/op/cancel, /api/op/list, op_id registration)
-  - tests/test_lottery_service.py (rule 16 + normalize tests, 22 total)
-  - tests/test_cathlab_service.py (note_means_skip + schedule overlay
-    tests, 55 total)
-  - tests/test_emr_service.py (5 writeback preserve + 1 name-override)
-  - tests/test_cancel_registry.py (NEW)
+  - app/services/emr_service.py (fetch_raw_html click loop NFC norm
+    + diagnostic seen_visits)
+  - app/services/upstream.py (461 → 354 trim)
+  - app/services/cathlab_service.py (WEBCVIS DEL block removed)
+  - app/main.py (4 /api/reschedule/* endpoints removed, imports cleaned)
+  - app/static/app.js (renderStep2AutofillPreview, diff confirm copy,
+    load-existing autofeed wiring)
+  - app/templates/admission.html (H2 renumber + foldable JSON textarea
+    + emr-patients-preview div)
+  - app/templates/base.html (操作說明 renumber)
+  - app/templates/settings.html (legends renumber)
+  - ~/.claude/skills/check-previous-progress/SKILL.md
+  - ~/.claude/skills/check-previous-progress/github_issues.py (NEW)
 
 [Important memory files]
-  - feedback_emr_divuserspec_race_fix.md (NEW)
-  - feedback_emr_preserve_existing.md (NEW, refined twice)
-  - feedback_lottery_empty_tickets_warning.md (NEW)
-  - feedback_cathlab_skip_keyword_variants.md (NEW)
-  - project_cathlab_schedule_overlay.md (NEW)
-  - project_cancel_registry.md (NEW)
+  - feedback_visit_match_norm_unicode.md (NEW)
