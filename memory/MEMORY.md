@@ -1,5 +1,7 @@
 # Memory index — daily_admission_list_app
 
+- [Updater swap must use PowerShell, not cmd.bat](feedback_updater_swap_must_use_powershell.md) — Windows install path is Chinese. 3 brick attempts on 2026-05-20 before PS1+Get-Process+60s-timeout settled. Never tasklist|find, never .bat parsing Chinese paths.
+- [Diagnose common errors with actionable hints, not raw traces](feedback_diagnose_common_errors_not_raw_traces.md) — operational failures (DNS/403/404/SSL/quota…) MUST render a hint card via app/services/diagnose.py; raw stack-trace dumps drive false bug reports
 - [3-card app integration state](project_3card_app_state.md) — Phase 14 (2026-05-18→19): Card1 port+Step5, sync cutover, ② EMR autoload+name-fix+註記+collapse, ③ order on screen, SA decoupled from build. In sync @ acb012f, 330 tests.
 - [Cathlab static decouple](project_cathlab_static_decouple.md) — 3 cathlab JSONs gitignored PHI; never in public CI release; runtime DATA_DIR/cathlab_static drop-in; spec bundles only on local Path-B build; skill `package-distribute`
 - [In-app 🐞 回報問題 feature](project_bug_report_feature.md) — log ring + bug_report scrub (PHI/creds) → prefilled public GitHub issue + local private file; never auto-submit/weaken scrub
