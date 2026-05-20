@@ -24,6 +24,7 @@ from .services import reschedule_service, upstream
 from .services import keyin_routes
 from .services import draft_service
 from .services import bug_report
+from .services import diagnose as diagnose_service
 from . import log_buffer
 
 log_buffer.install()  # capture recent logs for the in-app bug reporter
@@ -167,6 +168,14 @@ async def test_settings():
             result["schedule_sheet"] = {"ok": ok, "msg": msg}
         except Exception as e:
             result["schedule_sheet"] = {"ok": False, "msg": str(e)}
+    # Attach an actionable hint to every failure so the UI can show
+    # self-service guidance instead of dumping the raw stack trace.
+    for scope, block in result.items():
+        if isinstance(block, dict) and block.get("ok") is False:
+            err = block.get("msg") or block.get("error") or ""
+            hint = diagnose_service.diagnose(err, scope=scope)
+            if hint:
+                block["hint"] = hint
     return result
 
 

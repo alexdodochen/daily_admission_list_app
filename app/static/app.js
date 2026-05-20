@@ -601,15 +601,49 @@ if (document.getElementById('settings-form')) {
 
   $('#test-btn').addEventListener('click', async () => {
     await withBusy($('#test-btn'), '測試中…', async () => {
-      $('#test-output').textContent = '測試中…';
+      const out = $('#test-output');
+      out.innerHTML = '<em>測試中…</em>';
       try {
         const r = await api('/api/settings/test');
-        $('#test-output').textContent = JSON.stringify(r, null, 2);
+        out.innerHTML = renderConnTest(r);
       } catch (err) {
-        $('#test-output').textContent = err.message;
+        out.textContent = err.message;
       }
     });
   });
+}
+
+function renderConnTest(r) {
+  const labels = { llm: 'LLM', sheet: '入院 Sheet', schedule_sheet: '排班 Sheet' };
+  const esc = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const blocks = [];
+  for (const [key, b] of Object.entries(r)) {
+    if (!b) continue;
+    const label = labels[key] || key;
+    if (b.ok) {
+      const detail = b.reply ? `（回應：${esc(b.reply)}）` : (b.msg ? '：' + esc(b.msg) : '');
+      blocks.push(`<div class="conn-block ok"><strong>✓ ${esc(label)} 連線正常</strong>${detail}</div>`);
+    } else {
+      const err = b.msg || b.error || '(未知錯誤)';
+      const h = b.hint;
+      let body = '';
+      if (h) {
+        const sugg = (h.suggestions || []).map(s => `<li>${esc(s)}</li>`).join('');
+        body = `
+          <div class="conn-hint-title">💡 ${esc(h.title)}</div>
+          <div class="conn-hint-cause">${esc(h.cause)}</div>
+          <div class="conn-hint-fix">建議處理方式：</div>
+          <ol class="conn-hint-list">${sugg}</ol>
+          <details class="conn-raw"><summary>原始錯誤訊息（給開發者看的）</summary><pre>${esc(err)}</pre></details>
+        `;
+      } else {
+        body = `<pre class="conn-raw-pre">${esc(err)}</pre>`;
+      }
+      blocks.push(`<div class="conn-block bad"><strong>✗ ${esc(label)} 連線失敗</strong>${body}</div>`);
+    }
+  }
+  return blocks.join('');
 }
 
 // ============================ workflow page ============================

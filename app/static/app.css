@@ -20,6 +20,20 @@ html, body { margin: 0; padding: 0; font-family: -apple-system, "Noto Sans TC", 
 .topbar .brand { font-weight: 700; font-size: 18px; }
 .topbar nav a { margin-right: 14px; color: var(--accent); text-decoration: none; }
 .topbar nav a:hover { text-decoration: underline; }
+.topbar nav a#bug-link {
+  color: #fff !important;
+  background: var(--bad);
+  padding: 5px 12px;
+  border: 2px solid #7f1d1d;
+  border-radius: 14px;
+  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(127, 29, 29, 0.4);
+}
+.topbar nav a#bug-link:hover {
+  background: #b91c1c;
+  border-color: #450a0a;
+  text-decoration: none;
+}
 .topbar .status { margin-left: auto; color: var(--muted); font-size: 13px; }
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; }
 .dot.ok { background: var(--ok); }
@@ -143,6 +157,23 @@ button.busy::before {
                      padding: 8px 12px; margin: 12px 0 8px; line-height: 1.55; }
 
 .test-output { background: #111; color: #d1fae5; padding: 12px; border-radius: 5px; white-space: pre-wrap; font-size: 12px; min-height: 20px; max-height: 300px; overflow: auto; }
+/* Settings 測試連線 — friendly per-service result cards (overrides .test-output dark-pre styling when populated by renderConnTest). */
+#test-output:has(.conn-block) { background: transparent; color: inherit; padding: 0; max-height: none; overflow: visible; font-size: 14px; }
+.conn-block { border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; margin-bottom: 10px; background: #fff; }
+.conn-block.ok  { border-left: 4px solid var(--ok);  background: #f0fdf4; }
+.conn-block.bad { border-left: 4px solid var(--bad); background: #fef2f2; }
+.conn-block strong { font-size: 15px; }
+.conn-block.ok  strong { color: #166534; }
+.conn-block.bad strong { color: #991b1b; }
+.conn-hint-title { margin-top: 10px; font-weight: 700; color: #7c2d12; font-size: 14px; }
+.conn-hint-cause { margin-top: 4px; color: #44403c; line-height: 1.55; }
+.conn-hint-fix   { margin-top: 10px; font-weight: 600; color: #44403c; }
+.conn-hint-list  { margin: 4px 0 6px 22px; padding: 0; }
+.conn-hint-list li { margin: 4px 0; line-height: 1.55; }
+.conn-raw { margin-top: 10px; font-size: 12px; color: var(--muted); }
+.conn-raw summary { cursor: pointer; }
+.conn-raw pre { background: #1f2937; color: #d1d5db; padding: 8px; border-radius: 4px; white-space: pre-wrap; word-break: break-all; margin-top: 6px; max-height: 180px; overflow: auto; }
+.conn-raw-pre { background: #1f2937; color: #fecaca; padding: 10px; border-radius: 4px; white-space: pre-wrap; word-break: break-all; font-size: 12px; }
 
 .stepper { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; padding: 0 4px; }
 .step { padding: 8px 12px; background: #fff; border: 1px solid var(--border); border-radius: 5px; cursor: pointer; font-size: 14px; }
