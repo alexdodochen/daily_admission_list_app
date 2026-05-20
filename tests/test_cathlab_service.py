@@ -173,6 +173,172 @@ def test_second_doctor_none():
     assert cs._pick_second_doctor("一般備註") == ("", "")
 
 
+# ---------------- note_means_skip (備註 skip rules) ----------------
+
+def test_note_skip_empty():
+    assert cs.note_means_skip("") is False
+    assert cs.note_means_skip("   ") is False
+
+
+def test_note_skip_legacy_buchaicheng():
+    """Original keyword 不排程 still works."""
+    assert cs.note_means_skip("不排程") is True
+
+
+def test_note_skip_buchaidaoguan():
+    """The exact phrase the UI placeholder suggests: 不排導管."""
+    assert cs.note_means_skip("不排導管") is True
+    assert cs.note_means_skip("家屬決定不排導管") is True
+
+
+def test_note_skip_buchai_with_cath():
+    """English-mixed: 不排 cath."""
+    assert cs.note_means_skip("不排 cath") is True
+    assert cs.note_means_skip("不排cath") is True
+
+
+def test_note_skip_buzuo_variants():
+    """不做導管 / 不做 cath should also skip."""
+    assert cs.note_means_skip("不做導管") is True
+    assert cs.note_means_skip("不做 cath") is True
+
+
+def test_note_skip_cancel_and_check():
+    assert cs.note_means_skip("取消導管") is True
+    assert cs.note_means_skip("檢查") is True
+    assert cs.note_means_skip("檢查腎功能") is True
+
+
+def test_note_skip_false_positive_buchaichu():
+    """不排除做導管 = won't rule out cath; must NOT skip."""
+    assert cs.note_means_skip("不排除做導管") is False
+    assert cs.note_means_skip("不排除 PCI") is False
+
+
+def test_note_skip_normal_text_does_not_skip():
+    assert cs.note_means_skip("待會診") is False
+    assert cs.note_means_skip("葉立浩 second") is False
+    assert cs.note_means_skip("已 consent") is False
+
+
+# ---------------- 主治醫師導管時段表 cell parser ----------------
+
+def test_parse_schedule_cell_empty():
+    assert cs._parse_schedule_cell("") is None
+    assert cs._parse_schedule_cell("   ") is None
+
+
+def test_parse_schedule_cell_plain_name():
+    out = cs._parse_schedule_cell("陳柏升")
+    assert out == {"name": "陳柏升", "tags": []}
+
+
+def test_parse_schedule_cell_single_tag():
+    out = cs._parse_schedule_cell("詹世鴻(軨)")
+    assert out == {"name": "詹世鴻", "tags": ["軨"]}
+
+
+def test_parse_schedule_cell_multi_tag():
+    out = cs._parse_schedule_cell("黃鼎鈞(浩、晨)")
+    assert out == {"name": "黃鼎鈞", "tags": ["浩", "晨"]}
+
+
+def test_parse_schedule_cell_multiple_paren_groups():
+    out = cs._parse_schedule_cell("EP(李柏增)(晨)")
+    assert out == {"name": "EP", "tags": ["李柏增", "晨"]}
+
+
+def test_parse_schedule_cell_continuation_no_primary():
+    """Cells like '(陳則瑋)' have no primary name — overlay ignores them."""
+    assert cs._parse_schedule_cell("(陳則瑋)") is None
+
+
+# ---------------- _build_schedule_overlay_from_grid ----------------
+
+def _make_grid(cells: dict) -> list[list[str]]:
+    """Build a 15×7 grid from {(row_idx, col_idx): "text"}."""
+    grid = [["" for _ in range(7)] for _ in range(15)]
+    for (r, c), v in cells.items():
+        grid[r][c] = v
+    return grid
+
+
+def test_overlay_zhan_shihong_wed_yu_lin(monkeypatch):
+    """The user's actual case: 詹世鴻 on 週三 (Wed) → second = 許毓軨.
+    Wed col idx = 4 (Mon=2, Tue=3, Wed=4, Thu=5, Fri=6).
+    AM H1 primary row idx = 1.
+    """
+    grid = _make_grid({(1, 4): "詹世鴻(軨)"})
+    overlay = cs._build_schedule_overlay_from_grid(grid)
+    assert overlay.get("詹世鴻", {}).get("2") == {"second": "許毓軨"}
+
+
+def test_overlay_huang_dingjun_with_two_tags():
+    """黃鼎鈞 週四 (Thu, idx=5) AM C1 (row idx 5) → second=葉立浩, third=洪晨惠."""
+    grid = _make_grid({(5, 5): "黃鼎鈞(浩、晨)"})
+    overlay = cs._build_schedule_overlay_from_grid(grid)
+    assert overlay.get("黃鼎鈞", {}).get("3") == {
+        "second": "葉立浩", "third": "洪晨惠",
+    }
+
+
+def test_overlay_plain_name_no_entry():
+    """Cells without tags don't add second/third (no point storing empty)."""
+    grid = _make_grid({(1, 2): "陳柏升"})  # Mon AM H1
+    overlay = cs._build_schedule_overlay_from_grid(grid)
+    assert "陳柏升" not in overlay
+
+
+def test_overlay_continuation_row_collected(monkeypatch):
+    """Cont row (idx 2, parent idx 1) on Mon picks up a doctor too.
+    Layout: cont rows 2,3 belong to primary idx 1 (H1 spans 2-4 in 1-indexed).
+    """
+    # Primary at idx 1 has "陳A", continuation at idx 2 has "陳B(浩)"
+    grid = _make_grid({
+        (1, 2): "陳A",
+        (2, 2): "陳B(浩)",
+    })
+    overlay = cs._build_schedule_overlay_from_grid(grid)
+    assert overlay.get("陳B", {}).get("0") == {"second": "葉立浩"}
+
+
+def test_lookup_schedule_doctors_empty_when_no_overlay(monkeypatch):
+    monkeypatch.setattr(cs, "_schedule_overlay", {})
+    assert cs.lookup_schedule_doctors("詹世鴻", "2026/05/27") == {"second": "", "third": ""}
+
+
+def test_lookup_schedule_doctors_returns_match(monkeypatch):
+    """End-to-end: overlay → lookup_schedule_doctors picks the right (doc, wd)."""
+    monkeypatch.setattr(cs, "_schedule_overlay", {
+        "詹世鴻": {"2": {"second": "許毓軨"}},
+    })
+    out = cs.lookup_schedule_doctors("詹世鴻", "2026/05/27")  # 2026-05-27 = Wed
+    assert out == {"second": "許毓軨", "third": ""}
+
+
+def test_lookup_schedule_doctors_invalid_date(monkeypatch):
+    assert cs.lookup_schedule_doctors("X", "bad-date") == {"second": "", "third": ""}
+
+
+def test_read_schedule_overlay_missing_worksheet(monkeypatch):
+    """No 主治醫師導管時段表 worksheet → empty overlay, no crash."""
+    from app.services import sheet_service
+    monkeypatch.setattr(cs, "_schedule_overlay", None)
+    monkeypatch.setattr(sheet_service, "get_worksheet", lambda name: None)
+    assert cs.read_schedule_overlay() == {}
+
+
+def test_read_schedule_overlay_reads_grid(monkeypatch):
+    """Worksheet present → grid parsed into overlay."""
+    from app.services import sheet_service
+    monkeypatch.setattr(cs, "_schedule_overlay", None)
+    monkeypatch.setattr(sheet_service, "get_worksheet", lambda name: object())  # truthy
+    monkeypatch.setattr(sheet_service, "read_range",
+                        lambda ws, rng: _make_grid({(1, 4): "詹世鴻(軨)"}))
+    out = cs.read_schedule_overlay()
+    assert out.get("詹世鴻", {}).get("2") == {"second": "許毓軨"}
+
+
 # ---------------- static data loads ----------------
 
 def test_static_data_loadable():

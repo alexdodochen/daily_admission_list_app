@@ -23,7 +23,22 @@ from . import sheet_service
 from . import emr_service
 
 
-SKIP_KEYWORDS = ["不排程", "檢查"]
+# 註記內含以下任一關鍵字 → 該病人從 Step 5 keyin 排程剔除。
+# 「不排」用前綴匹配（規避 false positive「不排除」見下方 _SKIP_NEGATIVE）。
+# UI placeholder 寫「不排導管 / 待會診…」所以這裡必須涵蓋 不排導管 / 不排程 / 不排 cath。
+SKIP_KEYWORDS = ["不排", "不做", "取消", "檢查"]
+# 帶有以下 substring 時，即使匹配上 SKIP_KEYWORDS 也視為 false positive，不剔除。
+# 例：「不排除做導管」≠「不排」。
+_SKIP_NEGATIVE = ["不排除"]
+
+
+def note_means_skip(note: str) -> bool:
+    """True iff 註記 contains a skip keyword AND no negating phrase."""
+    if not note:
+        return False
+    if any(neg in note for neg in _SKIP_NEGATIVE):
+        return False
+    return any(k in note for k in SKIP_KEYWORDS)
 ZHANG_BORROWED_BY = ["王思翰", "張倉惟"]  # 借用張獻元時段時的註記關鍵字
 
 # 第二主治醫師短碼 → 全名（用於從註記抽取 attendingdoctor2）
@@ -75,6 +90,7 @@ _static_dir: Optional[Path] = None
 _id_maps: Optional[dict] = None
 _doctor_codes: Optional[dict] = None
 _schedule: Optional[dict] = None
+_schedule_overlay: Optional[dict] = None  # 主治醫師導管時段表 → second/third overlay
 
 
 # ---------------------------------- static loaders ----------------------------------
@@ -162,11 +178,12 @@ def reset_cache() -> None:
     """Drop cached static-dir + parsed tables so the next access re-resolves.
     Call after the user drops the 3 JSONs without restarting (mirrors the
     service-account drop-in: files may appear AFTER first load)."""
-    global _static_dir, _id_maps, _doctor_codes, _schedule
+    global _static_dir, _id_maps, _doctor_codes, _schedule, _schedule_overlay
     _static_dir = None
     _id_maps = None
     _doctor_codes = None
     _schedule = None
+    _schedule_overlay = None
 
 
 def cathlab_static_status() -> dict:
@@ -200,6 +217,138 @@ def schedule() -> dict:
     if _schedule is None:
         _schedule = _load_json("cathlab_schedule.json")
     return _schedule
+
+
+# ---------------------------------- 主治醫師導管時段表 overlay ----------------------------------
+# Source-repo parity: read 主治醫師導管時段表 from the admission Sheet to derive
+# per-(doctor × weekday) default second / third attending doctors. Source ref:
+# `每日入院名單 Claude/schedule_lookup.py`.
+#
+# Sheet layout (matches source):
+#   Cols  B=room (H1/H2/C1/C2)  C=Mon  D=Tue  E=Wed  F=Thu  G=Fri
+#   Rows  2-7  = AM (H1 spans 2-4, H2 r5, C1 r6, C2 r7)
+#         8-12 = PM (H1 spans 8-9, H2 r10, C1 r11, C2 r12)
+#
+# Cell format examples:
+#   "陳柏升"          → primary=陳柏升, no second/third
+#   "詹世鴻(軨)"      → primary=詹世鴻, second=許毓軨
+#   "黃鼎鈞(浩、晨)"  → primary=黃鼎鈞, second=葉立浩, third=洪晨惠
+#   "EP(李柏增)(晨)"  → primary=EP, tags=[李柏增,晨]
+#   "(陳則瑋)"        → secondary listing, no primary (ignored for primary lookup)
+#
+# Abbreviations resolved via SECOND_DOCTORS (浩/寬/晨/嘉/軨); full names also accepted.
+
+_SCHEDULE_WS_NAME = "主治醫師導管時段表"
+_SCHEDULE_WEEKDAY_COL_OFFSET = {0: 2, 1: 3, 2: 4, 3: 5, 4: 6}  # 0-indexed column in A1:G15 grid (A=0..G=6); weekday 0=Mon → col C → idx 2
+_SCHEDULE_SLOT_ROWS = [
+    (1, "AM", "H1"), (4, "AM", "H2"), (5, "AM", "C1"), (6, "AM", "C2"),
+    (7, "PM", "H1"), (9, "PM", "H2"), (10, "PM", "C1"), (11, "PM", "C2"),
+]  # 0-indexed row in A1:G15 grid; rows 2-12 in 1-indexed → 1-11 in 0-indexed
+_SCHEDULE_CONT_ROWS = {2: 1, 3: 1, 8: 7}  # 0-indexed continuation rows belong to their primary slot row above
+_ABBREV_TO_FULL = dict(SECOND_DOCTORS)  # ("浩", "葉立浩") → {"浩": "葉立浩", ...}
+
+
+def _parse_schedule_cell(text: str) -> Optional[dict]:
+    """Parse a 主治醫師導管時段表 cell. Returns {name, tags: [str]} or None if empty/continuation."""
+    if not text or not text.strip():
+        return None
+    raw = text.strip()
+    # name = everything before the first '('
+    m = re.match(r"^([^()]+)?(.*)$", raw)
+    name = (m.group(1) or "").strip() if m else raw
+    rest = m.group(2) if m else ""
+    tags: list[str] = []
+    for grp in re.findall(r"\(([^()]+)\)", rest):
+        for sub in re.split(r"[、,，]", grp):
+            sub = sub.strip()
+            if sub:
+                tags.append(sub)
+    if not name:
+        return None  # continuation row like "(陳則瑋)" — no primary
+    return {"name": name, "tags": tags}
+
+
+def _resolve_tag_to_doctor(tag: str) -> str:
+    """Map abbreviation or full name to canonical doctor name. '' if unresolved."""
+    if not tag:
+        return ""
+    if tag in _ABBREV_TO_FULL:
+        return _ABBREV_TO_FULL[tag]
+    # Full name?
+    try:
+        codes = doctor_codes()
+        if tag in codes.get("DOCTOR_CODES", codes):  # support both raw {name:code} and {"DOCTOR_CODES":{...}}
+            return tag
+    except Exception:
+        pass
+    return ""
+
+
+def _build_schedule_overlay_from_grid(grid: list[list[str]]) -> dict:
+    """Pure helper — parse a 主治醫師導管時段表 grid into the overlay dict.
+
+    Returns: {doctor: {wd_str: {"second": str, "third": str}}}.
+    `wd_str` = "0".."4" to match cathlab_schedule.json convention.
+    """
+    overlay: dict[str, dict[str, dict[str, str]]] = {}
+    for wd_int, col_idx in _SCHEDULE_WEEKDAY_COL_OFFSET.items():
+        wd_str = str(wd_int)
+        for row_idx, _session, _room in _SCHEDULE_SLOT_ROWS:
+            cont_rows = [r for r, parent in _SCHEDULE_CONT_ROWS.items() if parent == row_idx]
+            for r in [row_idx] + cont_rows:
+                if r >= len(grid):
+                    continue
+                row = grid[r]
+                if col_idx >= len(row):
+                    continue
+                cell = _parse_schedule_cell(row[col_idx])
+                if not cell:
+                    continue
+                doctor = cell["name"]
+                resolved_tags = [_resolve_tag_to_doctor(t) for t in cell["tags"]]
+                resolved_tags = [d for d in resolved_tags if d]
+                if not resolved_tags:
+                    continue
+                slot_info = {"second": resolved_tags[0]}
+                if len(resolved_tags) >= 2:
+                    slot_info["third"] = resolved_tags[1]
+                # First match per (doctor, weekday) wins — multi-slot doctors get
+                # one default; note-based override still applies per-patient.
+                overlay.setdefault(doctor, {}).setdefault(wd_str, slot_info)
+    return overlay
+
+
+def read_schedule_overlay() -> dict:
+    """Cached read of 主治醫師導管時段表 → second/third overlay dict.
+
+    Lazy: skipped (returns {}) if worksheet is missing or any read fails. The
+    user maintains this sheet; if it isn't present, fall back to note-based
+    second-doctor extraction.
+    """
+    global _schedule_overlay
+    if _schedule_overlay is not None:
+        return _schedule_overlay
+    try:
+        from . import sheet_service  # local import — avoid hard dep at import time
+        ws = sheet_service.get_worksheet(_SCHEDULE_WS_NAME)
+        if ws is None:
+            _schedule_overlay = {}
+            return _schedule_overlay
+        grid = sheet_service.read_range(ws, "A1:G15")
+        _schedule_overlay = _build_schedule_overlay_from_grid(grid)
+    except Exception:
+        _schedule_overlay = {}
+    return _schedule_overlay
+
+
+def lookup_schedule_doctors(doctor: str, cath_date_str: str) -> dict:
+    """Return {"second": str, "third": str} for a (doctor, cath_date). Empty strings if missing."""
+    try:
+        wd = str(datetime.strptime(cath_date_str, "%Y/%m/%d").weekday())
+    except ValueError:
+        return {"second": "", "third": ""}
+    info = read_schedule_overlay().get(doctor, {}).get(wd, {})
+    return {"second": info.get("second", ""), "third": info.get("third", "")}
 
 
 # ---------------------------------- cath date rule ----------------------------------
@@ -399,7 +548,7 @@ def read_patients(date: str) -> list[dict]:
             diag = r[5].strip()
             cath = r[6].strip()
             v_mark = reschedules.get(chart, "")
-            should_skip = any(k in note for k in SKIP_KEYWORDS) or bool(v_mark)
+            should_skip = note_means_skip(note) or bool(v_mark)
             if v_mark:
                 note = (note + f" [改期→{v_mark}]").strip()
             patients.append({
@@ -572,15 +721,23 @@ def _enrich(patients: list[dict], admit_date: str) -> list[dict]:
             note_out = (note_out + " " + p["cath"]).strip()
 
         # --- second/third doctor resolution ---
+        # Priority (highest first):
+        #   1. 備註 (note) — explicit user typing wins.
+        #   2. 主治醫師導管時段表 overlay — per (doctor × weekday) default
+        #      (e.g. 詹世鴻 週三 → 許毓軨; 黃鼎鈞 週四 → 葉立浩 / 洪晨惠).
+        #   3. Other override rules below (陳則瑋 OPD, Mon+EP).
+        sched = lookup_schedule_doctors(p["doctor"], cath)
         second, _tag = _pick_second_doctor(p["note"])
-        third = ""
+        if not second:
+            second = sched["second"]
+        third = sched["third"] if second != sched["third"] else ""
 
         # 陳則瑋 OPD by 劉秉彥 → second=劉秉彥
         opd_second = _opd_doctor_in_emr(p["doctor"], p.get("emr", ""))
         if opd_second:
             second = opd_second
 
-        # Mon + EP-family → second forced to 洪晨惠
+        # Mon + EP-family → second forced to 洪晨惠, current second pushed to third
         if _is_monday_cath(cath) and _is_ep_procedure(p["cath"]):
             if second and second != "洪晨惠":
                 third = second
@@ -640,6 +797,9 @@ def plan(admit_date: str) -> dict:
     Dry-run: list what would be keyed in, grouped by cath_date.
     Safe to run anytime — reads sub-tables + static data only.
     """
+    # Bust the schedule overlay cache so mid-session edits to 主治醫師導管時段表 take effect.
+    global _schedule_overlay
+    _schedule_overlay = None
     patients = _enrich(read_patients(admit_date), admit_date)
     buckets: dict[str, list[dict]] = {}
     for p in patients:
@@ -832,6 +992,9 @@ async def keyin(admit_date: str, dry_run: bool = False,
         if not cfg.cathlab_base_url or not cfg.cathlab_user or not cfg.cathlab_pass:
             raise RuntimeError("請先在設定頁填入 WEBCVIS URL / 帳號 / 密碼")
 
+    # Bust the schedule overlay cache so mid-session edits to 主治醫師導管時段表 take effect.
+    global _schedule_overlay
+    _schedule_overlay = None
     patients = _enrich(read_patients(admit_date), admit_date)
     _apply_overrides(patients, overrides)
     active = [p for p in patients if not p["skip"]]

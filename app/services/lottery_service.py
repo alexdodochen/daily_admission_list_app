@@ -12,8 +12,10 @@ Within each group:
 The two groups NEVER mix; Group 2 starts only after Group 1 fully RR'd
 (per the user's repeated correction in `feedback_lottery_roundrobin.md`).
 
-The 詹世鴻 Friday exception (rule 16) is handled upstream: callers
-should drop 詹世鴻 from `tickets` on Friday so he falls into Group 2.
+The 詹世鴻 Friday exception (rule 16) is enforced inside
+`lottery_with_pins` via `FRIDAY_DROP_DOCTORS` — on 週五 his name is
+popped from the tickets dict so he falls into Group 2 regardless of
+whether the sheet's 週五 row lists him.
 """
 from __future__ import annotations
 
@@ -22,6 +24,12 @@ import re
 from typing import Optional
 
 from . import sheet_service
+
+
+# Rule 16: 詹世鴻 is exempt from the 時段 group on Fridays (週五) — he must
+# fall into Group 2 (非時段組) even if listed in the lottery sheet's 週五 row.
+# Enforced in `lottery_with_pins` (the only active caller of read_lottery_tickets).
+FRIDAY_DROP_DOCTORS: tuple[str, ...] = ("詹世鴻",)
 
 
 # ---------------------------- main / lottery readers ----------------------------
@@ -56,21 +64,42 @@ def parse_ticket_cell(raw: str) -> tuple[str, int]:
     return (s, 1)
 
 
+_WEEKDAY_NORMALIZE_TABLE = str.maketrans("", "", " \t　 ：:、，,")
+
+
+def _normalize_weekday_label(s: str) -> str:
+    """Strip whitespace/fullwidth-space/BOM/punctuation AND fold 星期X → 週X
+    so the JS-sent 『週三』 matches a sheet cell 『星期三』.
+
+    Examples that all compare equal:
+      『週三』 / 『週三 』 / 『週三:』 / 『 週三』 / 『星期三』 / 『星期 三』
+    """
+    out = (s or "").replace("﻿", "").translate(_WEEKDAY_NORMALIZE_TABLE).strip()
+    # Fold 星期X (sheet style, per user's 2026-05-21 5/26 case) to 週X (JS style).
+    if out.startswith("星期"):
+        out = "週" + out[2:]
+    return out
+
+
 def read_lottery_tickets(schedule_day: str) -> dict[str, int]:
     """
     Read 主治醫師抽籤表. Layout: first column = weekday label
     (週一/週二/...), subsequent columns = doctor names with `*N` ticket suffix.
     Returns {doctor: ticket_count}.
+
+    Weekday matching is whitespace-/punctuation-insensitive so the sheet
+    tolerates minor formatting variants (『週三 』 / 『週三：』 etc.).
     """
     ws = sheet_service.get_worksheet("主治醫師抽籤表")
     if ws is None:
         return {}
     rows = sheet_service.read_range(ws, "A1:Z50")
+    target = _normalize_weekday_label(schedule_day)
     tickets: dict[str, int] = {}
     for r in rows:
         if not r:
             continue
-        if r[0].strip() == schedule_day:
+        if _normalize_weekday_label(r[0]) == target:
             for cell in r[1:]:
                 name, count = parse_ticket_cell(cell)
                 if name and count > 0:
@@ -192,6 +221,23 @@ def lottery_with_pins(date: str,
     doctor_pins  = {k: int(v) for k, v in (doctor_pins  or {}).items() if v}
 
     tickets = read_lottery_tickets(weekday) if weekday else {}
+    # Rule 16: drop 詹世鴻 from tickets on 週五 so he falls into Group 2.
+    if weekday == "週五":
+        for _drop in FRIDAY_DROP_DOCTORS:
+            tickets.pop(_drop, None)
+    # Diagnostic: if user passed a weekday but no tickets were read, the
+    # 「主治醫師抽籤表」 worksheet is missing / malformed / has no row for that
+    # weekday. Without tickets, ALL doctors fall into 非時段組 → random shuffle.
+    # Surface this as a warning so the user can fix the sheet instead of
+    # silently getting a wrong order. See feedback_lottery_empty_tickets_warning.
+    tickets_warning = ""
+    if weekday and not tickets:
+        tickets_warning = (
+            f"讀不到「主治醫師抽籤表」工作表中【{weekday}】這一列。"
+            f"所有醫師都會被當成非時段組（隨機分配）。"
+            f"請確認 Sheet 是否有名為「主治醫師抽籤表」的工作表，"
+            f"且 A 欄星期文字（如「{weekday}」）寫法正確（無多餘空白／符號）。"
+        )
     tables = ordering_service.read_doctor_subtables(date)
     if not tables:
         raise ValueError("沒讀到任何子表格，請先跑 Step 2 生成 subtable")
@@ -327,15 +373,24 @@ def lottery_with_pins(date: str,
     old_end = 1 + old_rows
     if old_end > end_row:
         sheet_service.clear_range(ws, f"N{end_row + 1}:V{old_end}")
+    # Build doctor_groups so the UI can show which doctors landed in 時段組 vs
+    # 非時段組. This helps the user spot mis-grouping (e.g. 劉嚴文 wrongly in
+    # 時段組 because the wrong weekday was sent).
+    doctor_groups = {
+        d: ("時段組" if d in tickets else "非時段組")
+        for d in doctor_order if d
+    }
     return {
         "rows":             len(body),
         "range":            f"N2:V{end_row}",
         "pinned_patients":  len(pinned_patients),
         "pinned_doctors":   len(doctor_pins),
         "doctor_order":     list(doctor_order),
+        "doctor_groups":    doctor_groups,
         "ticket_doctors":   list(tickets.keys()),
         "weekday":          weekday,
         "cleared_trailing": max(0, old_end - end_row),
+        "warning":          tickets_warning,
     }
 
 

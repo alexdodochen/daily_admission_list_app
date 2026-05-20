@@ -127,3 +127,109 @@ def test_round_robin_skips_doctors_with_no_patients():
     tickets = {"A": 1, "D": 2}
     out = ls.round_robin(drawn, tickets, seed=0)
     assert [p["name"] for p in out] == ["a1"]
+
+
+# ---------------- rule 16: 詹世鴻 Friday exception ----------------
+
+def _stub_friday_env(monkeypatch, tickets, subtables):
+    """Stub out the I/O surfaces so lottery_with_pins runs against fixed data."""
+    from app.services import ordering_service
+
+    monkeypatch.setattr(ls, "read_lottery_tickets", lambda wd: dict(tickets))
+    monkeypatch.setattr(ordering_service, "read_doctor_subtables",
+                        lambda d: {doc: list(pts) for doc, pts in subtables.items()})
+    monkeypatch.setattr(ordering_service, "sort_by_manual_e", lambda lst: lst)
+
+    class _WS:
+        def update_cell(self, *a, **kw): pass
+
+    ws = _WS()
+    monkeypatch.setattr(ls.sheet_service, "get_worksheet", lambda d: ws)
+    monkeypatch.setattr(ls.sheet_service, "read_range", lambda *a, **kw: [])
+    monkeypatch.setattr(ls.sheet_service, "write_range", lambda *a, **kw: None)
+    monkeypatch.setattr(ls.sheet_service, "clear_range", lambda *a, **kw: None)
+    monkeypatch.setattr(ls.sheet_service, "ensure_chart_text_format", lambda ws: None)
+
+
+def test_zhan_friday_dropped_to_group2(monkeypatch):
+    """週五: 詹世鴻 in lottery sheet → forced into Group 2 (after 時段組)."""
+    tickets = {"詹世鴻": 1, "李柏增": 1}
+    subs = {
+        "詹世鴻": [{"name": "p1", "chart_no": "C1"}],
+        "李柏增": [{"name": "p2", "chart_no": "C2"}],
+    }
+    _stub_friday_env(monkeypatch, tickets, subs)
+    result = ls.lottery_with_pins("20260522", weekday="週五", seed=0)
+    order = result["doctor_order"]
+    assert order.index("李柏增") < order.index("詹世鴻"), \
+        f"詹世鴻 must come after 李柏增 on 週五, got {order}"
+    # tickets reported back should NOT include 詹世鴻 (already dropped)
+    assert "詹世鴻" not in result["ticket_doctors"]
+    assert "李柏增" in result["ticket_doctors"]
+
+
+def test_zhan_thursday_stays_in_group1(monkeypatch):
+    """週四: 詹世鴻 stays in 時段組 — rule 16 is Friday-only."""
+    tickets = {"詹世鴻": 1}
+    subs = {
+        "詹世鴻": [{"name": "p1", "chart_no": "C1"}],
+        "非時段醫師": [{"name": "p2", "chart_no": "C2"}],
+    }
+    _stub_friday_env(monkeypatch, tickets, subs)
+    result = ls.lottery_with_pins("20260521", weekday="週四", seed=0)
+    order = result["doctor_order"]
+    assert order.index("詹世鴻") < order.index("非時段醫師"), \
+        f"詹世鴻 should be Group 1 on 週四, got {order}"
+    assert "詹世鴻" in result["ticket_doctors"]
+
+
+def test_friday_drop_constant_is_a_collection():
+    """Sanity: FRIDAY_DROP_DOCTORS is iterable and contains 詹世鴻."""
+    assert "詹世鴻" in ls.FRIDAY_DROP_DOCTORS
+
+
+# ---------------- weekday normalization (5/26 root cause) ----------------
+
+def test_normalize_weekday_idempotent():
+    assert ls._normalize_weekday_label("週三") == "週三"
+
+
+def test_normalize_weekday_strips_whitespace():
+    assert ls._normalize_weekday_label("週三 ") == "週三"
+    assert ls._normalize_weekday_label(" 週三") == "週三"
+    assert ls._normalize_weekday_label("週三\t") == "週三"
+    assert ls._normalize_weekday_label("週三　") == "週三"  # fullwidth space
+
+
+def test_normalize_weekday_strips_punctuation():
+    assert ls._normalize_weekday_label("週三：") == "週三"
+    assert ls._normalize_weekday_label("週三、") == "週三"
+    assert ls._normalize_weekday_label("週三,") == "週三"
+
+
+def test_normalize_weekday_folds_xingqi_to_zhou():
+    """User's 5/26 sheet uses 『星期三』 but JS sends 『週三』 — these must match."""
+    assert ls._normalize_weekday_label("星期三") == "週三"
+    assert ls._normalize_weekday_label("星期 三") == "週三"
+    assert ls._normalize_weekday_label("星期日") == "週日"
+
+
+def test_read_lottery_tickets_matches_xingqi_row(monkeypatch):
+    """The 5/26 actual failure mode: sheet cell says 『星期三』, JS sends 『週三』.
+    Before this fix tickets came back empty → 劉嚴文 randomly排到第一位.
+    """
+    fake_grid = [
+        ["星期三", "詹世鴻*2", "", "林佳凌", "陳儒逸",
+         "張獻元*2", "黃睦翔", "廖瑀"],
+    ]
+
+    class _WS:
+        pass
+
+    monkeypatch.setattr(ls.sheet_service, "get_worksheet", lambda name: _WS())
+    monkeypatch.setattr(ls.sheet_service, "read_range", lambda ws, rng: fake_grid)
+    tickets = ls.read_lottery_tickets("週三")
+    assert tickets == {
+        "詹世鴻": 2, "林佳凌": 1, "陳儒逸": 1,
+        "張獻元": 2, "黃睦翔": 1, "廖瑀": 1,
+    }

@@ -1,5 +1,8 @@
 # Memory index — daily_admission_list_app
 
+- [Cathlab 第二醫師 from 主治醫師導管時段表 overlay](project_cathlab_schedule_overlay.md) — 詹世鴻(軨) → second=許毓軨 etc.; reads admission Sheet A1:G15 of 主治醫師導管時段表; busts cache per Step 5 entry
+- [Lottery must warn on empty tickets, not silently shuffle](feedback_lottery_empty_tickets_warning.md) — 5/26 劉嚴文 排到第一位 root cause: tickets={} → all 非時段; UI now shows yellow banner + 醫師抽序 grouping
+- [Cathlab skip keywords cover 不排導管 / 不做 variants](feedback_cathlab_skip_keyword_variants.md) — 不排程 alone wasn't catching 不排導管; use note_means_skip() with negative-list guard for 不排除
 - [Re-upload screenshot is MEMBERSHIP-only, never touches existing chart rows](feedback_ocr_reupload_membership_only.md) — 2026-05-20 strengthened: doctor_changed ALWAYS ignored, not just when no add/remove
 - [EMR FALLBACK_DOCTORS pool unions doctor_codes.json + hardcoded floor](reference_emr_fallback_pool_from_doctor_codes.md) — 6 → 28 names; closes "查無 EMR" gap for inpatient-only consult cases
 - [missing_after must show 原因, not just status](feedback_missing_after_must_show_reason.md) — Step 5 verify-after-write pairs status with reason from Phase-1 add_results

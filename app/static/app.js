@@ -1515,9 +1515,28 @@ function setupStep4() {
       try {
         const r = await api('/api/step4/lottery', { method: 'POST', body: fd });
         const tix = (r.ticket_doctors || []).join('、') || '（無）';
+        const groups = r.doctor_groups || {};
+        const order = (r.doctor_order || []).map((d, i) => {
+          const g = groups[d] === '時段組' ? '🟦 時段組' : '🟧 非時段組';
+          return `${i + 1}. ${d} ${g}`;
+        }).join(' / ');
         flash($('#s4-msg'),
-          `✓ ${r.range}（病人 pin ${r.pinned_patients} / 醫師 pin ${r.pinned_doctors}；抽籤表 ${weekday}：${tix}）`, 'ok');
+          `✓ ${r.range}（病人 pin ${r.pinned_patients} / 醫師 pin ${r.pinned_doctors}；抽籤表 ${weekday}：${tix}）` +
+          (order ? `\n醫師抽序：${order}` : ''), 'ok');
         await renderOrderResult(date);
+        // Prepend a prominent warning banner above the result table if the
+        // lottery couldn't read tickets for the given weekday. Done AFTER
+        // renderOrderResult so the table render doesn't wipe it.
+        if (r.warning) {
+          const box = $('#order-result');
+          if (box) {
+            const banner = document.createElement('div');
+            banner.style.cssText = 'background:#fef3c7;border:2px solid #f59e0b;' +
+              'color:#92400e;padding:12px;margin:8px 0;font-weight:bold;border-radius:6px';
+            banner.textContent = '⚠️ ' + r.warning;
+            box.prepend(banner);
+          }
+        }
       } catch (err) {
         flash($('#s4-msg'), '✗ ' + err.message, 'err');
       }
@@ -1576,7 +1595,7 @@ function setupStep5() {
         // 導管日期 — editable so user can shift a single patient to a different day
         const cathDateCell = `<input type="date" ${ov('cath_date')} value="${esc(toIsoDate(p.cath_date))}" style="width:140px" title="想把這位病人改到別天 key in (例如隔兩日)，直接改這裡">`;
         const sessionCell = `<select ${ov('session')} data-doctor="${esc(p.doctor)}">${opt('AM')}${opt('PM')}${opt('非時段')}</select>`;
-        const secondInput = `<input ${ov('second_doctor')} value="${esc(p.second_doctor || '')}" placeholder="第二主治" style="width:80px">`;
+        const secondInput = secondDoctorCombobox(p.chart, p.second_doctor || '');
         const curRoom = (p.room || '').trim();
         const roomList = ['H1', 'H2', 'C1', 'C2'];
         const roomOpts = (roomList.includes(curRoom) || !curRoom ? roomList : [curRoom, ...roomList])
@@ -1592,6 +1611,74 @@ function setupStep5() {
     const editHint = blocks ? `<p class="hint">✎ <b>排</b>欄取消勾選＝這位病人不 key in（例：本院醫師臨時要改日期）。<b>導管日期</b>可直接改成想 key 的那天（例：某位要排到隔兩日）。其他時段 / 房 / 時間 / 第二主治 / 註記 也都可改，改完按「③ 開始 key in 排程」會用修改後的值寫入 WEBCVIS（術前診斷／預計心導管請回「③ 入院序整合」那一步改）。改「時段」會自動帶入時間（AM 06xx / PM 18xx / 非時段 21xx，同醫師當日依序 +1 分），需要時再微調。</p>` : '';
     return editHint + blocks + skips;
   };
+
+  // 第二主治 combobox: input + ▼ + popup. Free-text typing still allowed
+  // (overlay from 主治醫師導管時段表 may pre-fill any doctor; user can override
+  // to a name not in the preset list). Preset = the 5 doctors who most often
+  // appear as second per the user's 2026-05-21 request.
+  const SECOND_DOCTOR_OPTIONS = ['蘇奕嘉', '葉建寬', '葉立浩', '許毓軨', '洪晨惠'];
+  function secondDoctorCombobox(chart, value) {
+    const esc = s => String(s || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    const optsAttr = esc(JSON.stringify(SECOND_DOCTOR_OPTIONS));
+    return `<span class="fg-cell second-doc-cell" data-options='${optsAttr}'>
+      <input type="text" class="plan-ov second-doc-input fg-input" autocomplete="off"
+             data-chart="${esc(chart)}" data-field="second_doctor"
+             value="${esc(value)}" placeholder="第二主治" style="width:88px">
+      <button type="button" class="fg-chev" tabindex="-1" title="展開選單">▼</button>
+      <ul class="fg-popup" hidden></ul>
+    </span>`;
+  }
+  function wireSecondDoctorCombos() {
+    const scope = out();
+    if (!scope) return;
+    const closeAll = () => scope.querySelectorAll('.second-doc-cell ul.fg-popup')
+      .forEach(p => { p.hidden = true; p.classList.remove('open'); });
+    scope.querySelectorAll('span.second-doc-cell').forEach(cell => {
+      const inp = cell.querySelector('input.second-doc-input');
+      const btn = cell.querySelector('button.fg-chev');
+      const popup = cell.querySelector('ul.fg-popup');
+      if (!inp || !btn || !popup) return;
+      let options = [];
+      try { options = JSON.parse(cell.getAttribute('data-options') || '[]'); }
+      catch (_) { options = []; }
+      const buildList = (filter) => {
+        const f = (filter || '').toLowerCase();
+        const items = options.filter(o => !f || o.toLowerCase().includes(f));
+        popup.innerHTML = items.map(o =>
+          `<li tabindex="-1" data-val="${o.replace(/"/g, '&quot;')}">${o.replace(/</g, '&lt;')}</li>`
+        ).join('') || '<li class="empty">（沒有符合的選項）</li>';
+      };
+      const open = (filterByValue) => {
+        buildList(filterByValue ? inp.value : '');
+        popup.hidden = false; popup.classList.add('open');
+      };
+      const close = () => { popup.hidden = true; popup.classList.remove('open'); };
+      btn.addEventListener('mousedown', e => {
+        e.preventDefault();
+        if (!popup.hidden) { close(); return; }
+        closeAll();
+        open(false);  // ▼ click = show ALL
+        inp.focus();
+      });
+      inp.addEventListener('input', () => {
+        if (popup.hidden) { closeAll(); open(true); }
+        else buildList(inp.value);
+      });
+      popup.addEventListener('mousedown', e => {
+        const li = e.target.closest('li[data-val]');
+        if (!li) return;
+        e.preventDefault();
+        inp.value = li.dataset.val;
+        close();
+        inp.dispatchEvent(new Event('change'));
+        inp.focus();
+      });
+    });
+    // Close on outside click (scoped to this widget only).
+    document.addEventListener('mousedown', e => {
+      if (!e.target.closest('.second-doc-cell')) closeAll();
+    });
+  }
 
   // Auto-fill 時間(+房) when the user changes a row's 時段, mirroring the
   // backend compute_time(): AM 0600+ / PM 1800+ / 非時段 2100+, +index where
@@ -1634,6 +1721,7 @@ function setupStep5() {
         const r = await api(`/api/step5/plan?date=${date}`);
         out().innerHTML = renderPlan(r.plan, r.skipped);
         wirePlanAuto();
+        wireSecondDoctorCombos();
         flash($('#s5-msg'), '✓ 計畫已產出（未寫入 WEBCVIS）', 'ok');
       } catch (err) {
         flash($('#s5-msg'), '✗ ' + err.message, 'err');
