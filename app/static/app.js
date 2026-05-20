@@ -512,7 +512,20 @@
         alert(`${friendly} 同步失敗：${resp.message || '未知錯誤'}`);
       }
     } catch (e) {
-      alert(`${friendly} 同步失敗：${e}`);
+      // For self-sync, the server kills itself right after sending the
+      // response. If fetch errors with "Failed to fetch" / "NetworkError",
+      // that typically means update succeeded but the socket was reset
+      // before the browser read the body. Treat as expected — offer reload.
+      const msg = String(e && e.message || e);
+      const isLikelyRestart = name === 'self' && /Failed to fetch|NetworkError|aborted|ERR_/i.test(msg);
+      if (isLikelyRestart) {
+        alert('本 App 更新流程已啟動，server 重啟中。\n' +
+              '按確定後刷新頁面以載入新版（若無變化代表更新沒成功，請看下方訊息）。\n\n' +
+              `原始錯誤：${msg}`);
+        setTimeout(() => location.reload(), 1500);
+      } else {
+        alert(`${friendly} 同步失敗：${e}`);
+      }
     } finally {
       btn.disabled = false;
       btn.textContent = orig;

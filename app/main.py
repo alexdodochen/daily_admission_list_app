@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -620,17 +620,24 @@ async def api_update_check_all():
 
 
 @app.post("/api/update/sync/{name}")
-async def api_update_sync(name: str, restart: str = Form("no")):
+async def api_update_sync(name: str, background_tasks: BackgroundTasks,
+                          restart: str = Form("no")):
     """同步指定 source。
       - name='self'       → git pull 本 App（同 /api/update/apply）
       - name='admission'  → clone/pull daily-admission-list-public + 跑 mirror
       - name='schedule'   → clone/pull Key-Schedule-APP + 跑 mirror
+
+    Self-restart is scheduled as a BackgroundTask so FastAPI flushes the
+    response BEFORE the process os._exit/os.execv's itself. Without this,
+    the daemon-thread's sleep(0.8s) used to race the response write and
+    the browser saw TypeError: Failed to fetch even when the update
+    succeeded (field bug 2026-05-20).
     """
     if name not in upstream.SOURCES:
         raise HTTPException(404, f"未知 source: {name}")
     result = await upstream.sync_source(name)
     if name == "self" and result.get("ok") and restart == "yes":
-        updater.schedule_restart()
+        background_tasks.add_task(updater.schedule_restart)
     return result
 
 

@@ -349,7 +349,7 @@ async def apply() -> dict:
     return await _apply_git()
 
 
-def schedule_restart(delay: float = 0.8) -> None:
+def schedule_restart(delay: float = 1.5) -> None:
     """Restart/quit the running process after a successful apply().
 
     Frozen (.exe): _apply_frozen() has already spawned a detached swap
