@@ -48,10 +48,10 @@
   - app/static/app.js — SUB_HEADER + ORDER_HEADER + ORDER_COLS
   - tests/test_ordering_service.py — +3 新測試
   - tests/test_format_check_service.py — +1 新測試 + _fake_read_range 更新
-  - CLAUDE.md — Phase 16 段落 + SUB_HEADER 真理來源句
+  - CLAUDE.md — Phase 18 段落 + SUB_HEADER 真理來源句
 
 【重要 memory 檔】
   - feedback_subtable_h_to_r_ordering.md (新)
   - reference_format_source_of_truth.md (新)
-  - project_3card_app_state.md (Phase 16 段落)
+  - project_3card_app_state.md (Phase 18 段落)
   - MEMORY.md (索引更新)
