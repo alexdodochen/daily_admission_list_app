@@ -727,12 +727,14 @@ def write_results_to_subtables(date: str, results: list[dict]) -> dict:
 
 
 def apply_emr_main_fixes(date: str, results: list[dict]) -> dict:
-    """Auto-correct main A-L (F=姓名, G=性別, H=年齡) from EMR results.
+    """Auto-correct main A-L (D=主治醫師, F=姓名, G=性別, H=年齡) from EMR.
 
     For each result whose chart_no matches a main row, write back any
-    differing 姓名 / 性別 / 年齡. Returns:
+    differing 主治醫師 / 姓名 / 性別 / 年齡. Returns:
       {"patches_count": N, "fixes": [{chart_no, field, old, new}, ...]}
 
+    主治醫師 is patched only when `matched_doctor` is True (canonical name
+    came from the patient's own visit, not a FALLBACK_DOCTORS fallback).
     Empty/zero values from EMR are NOT overwritten back (avoids clearing a
     correct sheet value with a failed parse).
     """
@@ -762,6 +764,7 @@ def apply_emr_main_fixes(date: str, results: list[dict]) -> dict:
             continue
         row = chart_to_main_row[ch]
         ex = main_by_row[row]
+        ex_doctor = (ex[3] or "").strip()  # D
         ex_name   = (ex[5] or "").strip()  # F
         ex_gender = (ex[6] or "").strip()  # G
         ex_age    = (ex[7] or "").strip()  # H
@@ -771,7 +774,16 @@ def apply_emr_main_fixes(date: str, results: list[dict]) -> dict:
         new_gender = (r.get("gender") or "").strip()
         age_val = r.get("age")
         new_age = str(age_val) if age_val is not None else ""
+        # Canonical 主治醫師 from EMR — only when matched_doctor=True so
+        # visit_label's doctor is the patient's real attending, not fallback.
+        new_doctor = ""
+        if r.get("matched_doctor"):
+            new_doctor = (r.get("emr_doctor") or "").strip()
 
+        if new_doctor and new_doctor != ex_doctor:
+            patches.append((f"D{row}", new_doctor))
+            fixes.append({"chart_no": ch, "field": "doctor",
+                          "old": ex_doctor, "new": new_doctor})
         if new_name and new_name != ex_name:
             patches.append((f"F{row}", new_name))
             fixes.append({"chart_no": ch, "field": "name",
@@ -792,9 +804,41 @@ def apply_emr_main_fixes(date: str, results: list[dict]) -> dict:
 
 # ---------------------------- Playwright orchestration ----------------------------
 
-# Fallback doctors used when the assigned 主治醫師 has no 一年內門診紀錄 —
-# port of FALLBACK_DOCTORS from daily-admission-list-public/fetch_emr.py.
-FALLBACK_DOCTORS = ["劉秉彥", "趙庭興", "蔡惟全", "許志新", "陳柏升", "李貽恒"]
+# Consult doctors who often see CV inpatients without being the cath-lab
+# attending (renal / general internal etc). Kept as a hardcoded floor so
+# the fallback still works if `doctor_codes.json` is absent (sanitised CI
+# release ships without it — see [[cathlab-static-decouple]]).
+_HARDCODED_FALLBACK = ["劉秉彥", "趙庭興", "蔡惟全", "許志新", "陳柏升", "李貽恒"]
+
+
+def _load_cv_doctor_pool() -> list[str]:
+    """Read every doctor name listed in `app/data/static/doctor_codes.json`
+    (the cath-lab static data, populated per-install). Returns the list
+    plus the hardcoded consult fallbacks, deduped, hardcoded-first.
+    Returns just the hardcoded list if the JSON is missing/malformed
+    (public CI install case).
+    """
+    import json as _json
+    from pathlib import Path
+    here = Path(__file__).resolve().parent.parent / "data" / "static" / "doctor_codes.json"
+    extra: list[str] = []
+    try:
+        data = _json.loads(here.read_text(encoding="utf-8"))
+        extra = [k.strip() for k in (data.get("doctors") or {}).keys() if k.strip()]
+    except Exception:
+        extra = []
+    seen: set[str] = set()
+    pool: list[str] = []
+    for name in _HARDCODED_FALLBACK + extra:
+        if name and name not in seen:
+            seen.add(name)
+            pool.append(name)
+    return pool
+
+
+# Module-level cache — pool is small and changes only when doctor_codes.json
+# is hand-edited (rare). Re-read on next import is fine.
+FALLBACK_DOCTORS = _load_cv_doctor_pool()
 
 # Same-name characters that surface as Unicode siblings — fetch_emr.py treats
 # them as equivalent so a query for one variant still hits anchors carrying
@@ -806,11 +850,32 @@ NAME_ALIASES = {
 
 
 def _name_variants(name: str) -> list[str]:
-    return NAME_ALIASES.get(name, [name])
+    # OCR may append "?" / "？" to uncertain names (per OCR_PROMPT). Strip it
+    # so the EMR substring match still succeeds when the underlying chars
+    # are correct — otherwise we silently fall to FALLBACK_DOCTORS and lose
+    # the chance to canonicalize the doctor.
+    cleaned = re.sub(r"[?？]+\s*$", "", (name or "").strip()).strip()
+    return NAME_ALIASES.get(cleaned, [cleaned] if cleaned else [])
+
+
+# Visit label format: "<date> <doctor> 門診" (e.g. "2026/04/12 詹世鴻 門診").
+# Used to extract the canonical doctor name AFTER a successful match — only
+# meaningful when matched_doctor=True (otherwise visit doctor != patient's
+# real attending, it's a FALLBACK_DOCTORS pick).
+_VISIT_LABEL_RE = re.compile(r"\d{4}[/\-]\d{1,2}[/\-]\d{1,2}\s+(\S+)\s*門診")
+
+
+def extract_visit_doctor(visit_label: str) -> str:
+    """Parse the doctor name out of a visit anchor label. Returns "" if the
+    label doesn't fit the canonical `<date> <doctor> 門診` shape."""
+    if not visit_label:
+        return ""
+    m = _VISIT_LABEL_RE.search(visit_label)
+    return m.group(1).strip() if m else ""
 
 
 async def fetch_raw_html(page, session_url: str, chart_no: str,
-                         doctor: str = "") -> tuple[str, str, str]:
+                         doctor: str = "") -> tuple[str, str, str, bool]:
     """
     NCKU-EMR frameset query. Returns (soap_text, divUserSpec_raw, visit_label).
 
@@ -833,9 +898,12 @@ async def fetch_raw_html(page, session_url: str, chart_no: str,
       8. Read `#divUserSpec` from any frame as patient header.
 
     `visit_label` is the chosen clinic visit's anchor text.
+    `matched_doctor` is True when the visit anchor matched the OCR `doctor`
+    name (so visit_label's doctor IS canonical); False when a FALLBACK_DOCTORS
+    pick was used (visit_label's doctor != patient's real attending).
 
-    Returns ("", "", "") if no 門診 record found for this chart (e.g. inpatient-
-    only patient with no 一年內門診紀錄 in any allowed doctor).
+    Returns ("", "", "", False) if no 門診 record found for this chart
+    (e.g. inpatient-only patient with no 一年內門診紀錄 in any allowed doctor).
     """
     import json as _json
     import time as _time
@@ -884,7 +952,7 @@ async def fetch_raw_html(page, session_url: str, chart_no: str,
         return {{ok: false, reason: 'no_query_form'}};
     }}""")
     if not submit.get("ok"):
-        return "", "", ""
+        return "", "", "", False
 
     # 2. poll leftFrame for visit-tree readiness.
     left_ready = False
@@ -916,7 +984,7 @@ async def fetch_raw_html(page, session_url: str, chart_no: str,
     }""") or ""
 
     if not left_ready:
-        return "", div_spec, ""
+        return "", div_spec, "", False
 
     # 3. click the 門診 anchor for `doctor` (and its alias variants), or
     # any FALLBACK_DOCTORS in priority order.
@@ -956,9 +1024,10 @@ async def fetch_raw_html(page, session_url: str, chart_no: str,
     }}""")
 
     if not click.get("ok"):
-        return "", div_spec, ""
+        return "", div_spec, "", False
 
     visit_label = click.get("visit", "")
+    matched_doctor = bool(click.get("matched_doctor", False))
 
     # 4. poll mainFrame readiness.
     main_ready = False
@@ -978,7 +1047,7 @@ async def fetch_raw_html(page, session_url: str, chart_no: str,
             break
 
     if not main_ready:
-        return "", div_spec, visit_label
+        return "", div_spec, visit_label, matched_doctor
 
     # 5. extract SOAP from mainFrame only — filter out the iportlet-content
     # wrapper div that appears at every page level.
@@ -996,7 +1065,7 @@ async def fetch_raw_html(page, session_url: str, chart_no: str,
         } catch(e) { return ''; }
     }""") or ""
 
-    return soap, div_spec, visit_label
+    return soap, div_spec, visit_label, matched_doctor
 
 
 async def extract_patients(session_url: str,
@@ -1020,27 +1089,35 @@ async def extract_patients(session_url: str,
         try:
             for p in patients:
                 try:
-                    soap, div_spec, visit = await fetch_raw_html(
+                    soap, div_spec, visit, matched = await fetch_raw_html(
                         page, session_url, p["chart_no"], p.get("doctor", ""))
                     info = process_patient(soap, div_spec, admit)
+                    # Canonical 主治醫師 — only trust visit_label when EMR
+                    # actually matched the OCR doctor (otherwise it's a
+                    # FALLBACK_DOCTORS pick, not the patient's real attending).
+                    emr_doctor = extract_visit_doctor(visit) if matched else ""
                     results.append({
                         **p,
                         "c_text": info["c_text"],
                         "f": info["f"],
                         "g": info["g"],
                         "emr_name": info["name"],
+                        "emr_doctor": emr_doctor,
                         "age": info["age"],
                         "gender": info["gender"],
                         "has_record": info["has_record"],
                         "visit_label": visit,
+                        "matched_doctor": matched,
                         "error": "",
                     })
                 except Exception as e:
                     results.append({
                         **p,
                         "c_text": "", "f": "", "g": "",
-                        "emr_name": "", "age": None, "gender": "",
+                        "emr_name": "", "emr_doctor": "",
+                        "age": None, "gender": "",
                         "has_record": False,
+                        "matched_doctor": False,
                         "error": str(e),
                     })
         finally:

@@ -129,6 +129,21 @@
 })();
 
 
+// ---------- Scroll-to-top button (runs on every page) ----------
+(function () {
+  const btn = document.getElementById('scroll-to-top');
+  if (!btn) return;
+  const update = () => {
+    btn.classList.toggle('visible', window.scrollY > 240);
+  };
+  window.addEventListener('scroll', update, { passive: true });
+  btn.addEventListener('click', () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+  update();
+})();
+
+
 // ---------- Sheet viewer modal (runs on every page) ----------
 (function () {
   const link    = document.getElementById('viewer-link');
@@ -803,18 +818,12 @@ function setupLoadExisting() {
           }
         }
 
-        // 4) Step 4: trigger sub-table read so F/G editor populates.
-        //    Click works regardless of panel visibility; the rendered HTML
-        //    lands inside #subtables-wrap which is in the hidden Step 4 panel.
+        // 4) Trigger sub-table read so the F/G editor populates the (possibly
+        //    hidden) Step 4 panel. We do NOT switch tabs — per user request,
+        //    loading should leave them on whichever step is currently active.
         if ($('#load4-btn')) {
           $('#load4-btn').click();
         }
-
-        // 5) Auto-jump to Step 4 tab so user immediately sees sub-tables +
-        //    F/G editor (the rendered results are otherwise hidden behind
-        //    the Step 1 active panel).
-        const step4Tab = document.querySelector('.step[data-step="4"]');
-        if (step4Tab) step4Tab.click();
 
         const subCount = (r.subs || []).length;
         const ordCount = (r.ordering || []).filter(row =>
@@ -822,8 +831,7 @@ function setupLoadExisting() {
         const withEmr = emrResults.filter(p => p.c_text).length;
         flash(msg,
           `✓ 載入 ${date}：主表 ${ocrRows.length} 位、子表格 ${subCount} 位醫師、` +
-          `EMR ${renderedEmr}/${withEmr} 位（已渲染/有資料）、入院序 ${ordCount} 列。` +
-          `已切到 Step 4 顯示子表格；點 Step 3 看 EMR。`,
+          `EMR ${renderedEmr}/${withEmr} 位（已渲染/有資料）、入院序 ${ordCount} 列。`,
           'ok');
       } catch (err) {
         flash(msg, '✗ ' + err.message, 'err');
@@ -1357,11 +1365,12 @@ async function renderEmrResults(results, mainFixes) {
   // One shared datalist per page; render once at the top of the Step 3 area.
   const datalists = fgDatalist('fg-f-list', opts.f) + fgDatalist('fg-g-list', opts.g);
 
-  // Main A-L 修正摘要區（EMR → 姓名/性別/年齡 autofix）
+  // Main A-L 修正摘要區（EMR → 主治醫師/姓名/性別/年齡 autofix）
+  const FIELD_LABELS = {doctor: '主治醫師', name: '姓名', gender: '性別', age: '年齡'};
   let fixesHtml = '';
   if (mainFixes && Array.isArray(mainFixes.fixes) && mainFixes.fixes.length) {
     const rows = mainFixes.fixes.map(f =>
-      `<tr><td>${escape(f.chart_no)}</td><td>${escape(f.field)}</td>` +
+      `<tr><td>${escape(f.chart_no)}</td><td>${escape(FIELD_LABELS[f.field] || f.field)}</td>` +
       `<td class="old">${escape(f.old) || '(空)'}</td>` +
       `<td>→</td><td class="new">${escape(f.new)}</td></tr>`).join('');
     fixesHtml = `<div class="emr-fix-list">
@@ -1369,7 +1378,7 @@ async function renderEmrResults(results, mainFixes) {
       <table class="data"><thead><tr><th>病歷號</th><th>欄位</th><th>原</th><th></th><th>新</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`;
   } else if (mainFixes && mainFixes.skipped === false) {
-    fixesHtml = `<p class="hint">📝 主表姓名/性別/年齡均符合 EMR，無需更正。</p>`;
+    fixesHtml = `<p class="hint">📝 主表主治醫師/姓名/性別/年齡均符合 EMR，無需更正。</p>`;
   }
 
   const cards = results.map(r => {
@@ -1548,6 +1557,11 @@ function setupStep5() {
     .replace(/[?？�⁇‽]+\s*$/u, '').trim();
   const escName = s => esc(cleanName(s));
 
+  // Convert "YYYY/MM/DD" → "YYYY-MM-DD" for <input type="date">
+  const toIsoDate = s => {
+    const m = String(s || '').match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+    return m ? `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}` : '';
+  };
   const renderPlan = (plan, skipped) => {
     const blocks = Object.entries(plan).map(([d, pts]) => {
       const body = pts.map(p => {
@@ -1557,6 +1571,10 @@ function setupStep5() {
         const curSess = isOff ? '非時段' : (p.session || '');
         const ov = f => `data-chart="${esc(p.chart)}" data-field="${f}" class="plan-ov"`;
         const opt = v => `<option${curSess === v ? ' selected' : ''}>${v}</option>`;
+        // 排 checkbox — default checked (will key in). User unchecks to skip.
+        const skipCell = `<label class="skip-cell" title="取消勾選＝這位病人不 key in 排程"><input type="checkbox" ${ov('skip_inverted')} checked> 排</label>`;
+        // 導管日期 — editable so user can shift a single patient to a different day
+        const cathDateCell = `<input type="date" ${ov('cath_date')} value="${esc(toIsoDate(p.cath_date))}" style="width:140px" title="想把這位病人改到別天 key in (例如隔兩日)，直接改這裡">`;
         const sessionCell = `<select ${ov('session')} data-doctor="${esc(p.doctor)}">${opt('AM')}${opt('PM')}${opt('非時段')}</select>`;
         const secondInput = `<input ${ov('second_doctor')} value="${esc(p.second_doctor || '')}" placeholder="第二主治" style="width:80px">`;
         const curRoom = (p.room || '').trim();
@@ -1566,12 +1584,12 @@ function setupStep5() {
         const roomCell = `<select ${ov('room')}>${roomOpts}</select>`;
         const timeCell = `<input ${ov('time')} value="${esc(p.time || '')}" style="width:54px">`;
         const noteCell = `<input ${ov('note_out')} value="${esc(p.note_out || '')}" style="width:100%;min-width:140px">`;
-        return `<tr><td>${p.seq}</td><td>${esc(p.doctor)}<br>${secondInput}</td><td>${escName(p.name)}</td><td>${esc(p.chart)}</td><td>${sessionCell}</td><td>${roomCell}</td><td>${timeCell}</td><td>${diagCell}</td><td>${procCell}</td><td>${noteCell}</td></tr>`;
+        return `<tr><td>${p.seq}</td><td>${skipCell}</td><td>${cathDateCell}</td><td>${esc(p.doctor)}<br>${secondInput}</td><td>${escName(p.name)}</td><td>${esc(p.chart)}</td><td>${sessionCell}</td><td>${roomCell}</td><td>${timeCell}</td><td>${diagCell}</td><td>${procCell}</td><td>${noteCell}</td></tr>`;
       }).join('');
-      return `<h3>${d} — ${pts.length} 位</h3><table class="data plan-table"><thead><tr><th>#</th><th>主治 / 第二主治</th><th>姓名</th><th>病歷</th><th>時段</th><th>房</th><th>時間</th><th>術前診斷</th><th>預計心導管</th><th>註記</th></tr></thead><tbody>${body}</tbody></table>`;
+      return `<h3>${d} — ${pts.length} 位</h3><table class="data plan-table"><thead><tr><th>#</th><th>排</th><th>導管日期</th><th>主治 / 第二主治</th><th>姓名</th><th>病歷</th><th>時段</th><th>房</th><th>時間</th><th>術前診斷</th><th>預計心導管</th><th>註記</th></tr></thead><tbody>${body}</tbody></table>`;
     }).join('');
     const skips = skipped.length ? `<h3>不排（跳過）${skipped.length} 位</h3><ul>${skipped.map(p => `<li>${esc(p.doctor)} ${escName(p.name)} (${esc(p.chart)}) — ${esc(p.note)}</li>`).join('')}</ul>` : '';
-    const editHint = blocks ? `<p class="hint">✎ 時段 / 房 / 時間 / 第二主治 / 註記 可直接在表格上手動修改，改完按「③ 開始 key in 排程」會用修改後的值寫入 WEBCVIS（術前診斷／預計心導管請回「③ 入院序整合」那一步改）。改「時段」會自動帶入時間（AM 06xx / PM 18xx / 非時段 21xx，同醫師當日依序 +1 分），需要時再微調。</p>` : '';
+    const editHint = blocks ? `<p class="hint">✎ <b>排</b>欄取消勾選＝這位病人不 key in（例：本院醫師臨時要改日期）。<b>導管日期</b>可直接改成想 key 的那天（例：某位要排到隔兩日）。其他時段 / 房 / 時間 / 第二主治 / 註記 也都可改，改完按「③ 開始 key in 排程」會用修改後的值寫入 WEBCVIS（術前診斷／預計心導管請回「③ 入院序整合」那一步改）。改「時段」會自動帶入時間（AM 06xx / PM 18xx / 非時段 21xx，同醫師當日依序 +1 分），需要時再微調。</p>` : '';
     return editHint + blocks + skips;
   };
 
@@ -1650,11 +1668,25 @@ function setupStep5() {
     if (!date) return flash($('#s5-msg'), '請填日期', 'err');
     if (!confirm('這會開啟瀏覽器，實際把導管排程「寫進」WEBCVIS（先建立排程，再補上術前診斷與術式）。確定繼續？')) return;
     // Collect manual edits from the dry-run table (if a plan is on screen).
+    // Special handling for the 排 checkbox (data-field=skip_inverted → skip=!checked)
+    // and the 導管日期 input (input[type=date] returns YYYY-MM-DD → backend wants
+    // YYYY/MM/DD for cath_date).
     const ov = {};
+    const isoToSlash = s => String(s || '').replace(/-/g, '/');
     out().querySelectorAll('.plan-ov').forEach(el => {
       const c = el.dataset.chart, f = el.dataset.field;
       if (!c || !f) return;
-      (ov[c] = ov[c] || {})[f] = el.value;
+      let v;
+      if (f === 'skip_inverted') {
+        // Checkbox checked = include in keyin = skip=false
+        (ov[c] = ov[c] || {}).skip = !el.checked;
+        return;
+      } else if (f === 'cath_date') {
+        v = isoToSlash(el.value);
+      } else {
+        v = el.value;
+      }
+      (ov[c] = ov[c] || {})[f] = v;
     });
     await withBusy($('#keyin5-btn'), 'Key in 中…', async () => {
     flash($('#s5-msg'), '寫入 WEBCVIS 中…（會開瀏覽器）', 'ok');
@@ -1667,13 +1699,13 @@ function setupStep5() {
       const rTxt = x => rMap[x] || x;
       const addRows = (r.add || []).map(x => `<tr class="${rCls(x.result)}"><td>${rTxt(x.result)}</td><td>${escName(x.name)}</td><td>${x.chart}</td><td>${x.reason || ''}</td></tr>`).join('');
       const uptRows = (r.upt || []).map(x => `<tr class="${rCls(x.result)}"><td>${rTxt(x.result)}</td><td>${escName(x.name)}</td><td>${x.chart}</td><td>${x.reason || ''}</td></tr>`).join('');
-      const missRows = (r.missing_after || []).map(x => `<tr class="bad"><td>✗ 沒寫進去</td><td>${escName(x.name)}</td><td>${x.chart}</td><td>${x.cath_date}</td></tr>`).join('');
+      const missRows = (r.missing_after || []).map(x => `<tr class="bad"><td>✗ 沒寫進去</td><td>${escName(x.name)}</td><td>${x.chart}</td><td>${x.cath_date}</td><td>${esc(x.reason || '原因不明（請看詳細執行記錄）')}</td></tr>`).join('');
       out().innerHTML = `
         <h3>第一階段 — 建立排程（成功 ${r.summary.ok} / 已存在略過 ${r.summary.skip} / 失敗 ${r.summary.error}）</h3>
         <table class="data"><thead><tr><th>狀態</th><th>姓名</th><th>病歷</th><th>說明</th></tr></thead><tbody>${addRows}</tbody></table>
         <h3>第二階段 — 補上術前診斷與預計術式（${(r.upt || []).length} 筆）</h3>
         <table class="data"><thead><tr><th>狀態</th><th>姓名</th><th>病歷</th><th>說明</th></tr></thead><tbody>${uptRows || '<tr><td colspan=4>無（沒有需要補診斷／術式的病人）</td></tr>'}</tbody></table>
-        ${missRows ? `<h3>key in 後再查一次：有 ${(r.missing_after||[]).length} 位沒寫進排程</h3><table class="data"><thead><tr><th>狀態</th><th>姓名</th><th>病歷</th><th>導管日期</th></tr></thead><tbody>${missRows}</tbody></table>` : '<p class="ok">key in 後再查一次：應排的病人全部都在排程裡 ✓</p>'}
+        ${missRows ? `<h3>key in 後再查一次：有 ${(r.missing_after||[]).length} 位沒寫進排程</h3><table class="data"><thead><tr><th>狀態</th><th>姓名</th><th>病歷</th><th>導管日期</th><th>原因</th></tr></thead><tbody>${missRows}</tbody></table>` : '<p class="ok">key in 後再查一次：應排的病人全部都在排程裡 ✓</p>'}
         <details class="hint"><summary>詳細執行記錄（除錯用）</summary><pre class="test-output">${(r.log || []).join('\n')}</pre></details>`;
       flash($('#s5-msg'), r.summary.error ? `⚠ 有 ${r.summary.error} 位寫入失敗，請看上方表格` : '✓ 排程已全部 key 進 WEBCVIS', r.summary.error ? 'err' : 'ok');
     } catch (err) {
@@ -1852,19 +1884,29 @@ function fgDatalist(id, options) {
 async function renderSubtables(tables) {
   const opts = await ensureFgOptions();
   const esc = s => String(s || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  // Parse "<age> y/o <gender>\n..." prefix from c_text (col C). EMR writeback
+  // puts this prefix on every patient with non-empty divUserSpec.
+  const parseDemog = (cText) => {
+    const m = String(cText || '').match(/^(\d+)\s+y\/o\s+([男女])\s*\n/);
+    return m ? { age: m[1], gender: m[2] } : { age: '', gender: '' };
+  };
   // Datalists are shared across all rows; render once at the top
   const datalists = fgDatalist('fg-f-list', opts.f) + fgDatalist('fg-g-list', opts.g);
   const html = Object.entries(tables).map(([doc, pts]) => {
-    const body = pts.map(p => `
+    const body = pts.map(p => {
+      const d = parseDemog(p.emr);
+      return `
       <tr>
         <td>${esc(p.name)}</td><td>${esc(p.chart_no)}</td>
+        <td>${esc(d.gender)}</td><td>${esc(d.age)}</td>
         <td class="editable editable-pin" data-row="${p.row}" data-col="5" contenteditable="true" title="填數字 = 同醫師內排序（1/2/3）">${esc(p.manual)}</td>
         <td>${fgInput(6, p.diagnosis, p.row, opts.f, 'fg-f-list')}</td>
         <td>${fgInput(7, p.cathlab,   p.row, opts.g, 'fg-g-list')}</td>
-        <td>${esc(p.note)}</td>
-      </tr>`).join('');
+        <td>${noteInput(p.note, p.row)}</td>
+      </tr>`;
+    }).join('');
     return `<div class="doctor-block"><h3>${doc}（${pts.length}人）</h3>
-      <table class="data"><thead><tr><th>姓名</th><th>病歷號</th><th>同醫師內排序(E)</th><th>術前診斷(F)</th><th>預計心導管(G)</th><th>註記</th></tr></thead>
+      <table class="data"><thead><tr><th>姓名</th><th>病歷號</th><th>性別</th><th>年齡</th><th>同醫師內排序(E)</th><th>術前診斷(F)</th><th>預計心導管(G)</th><th>註記</th></tr></thead>
       <tbody>${body}</tbody></table></div>`;
   }).join('');
   $('#subtables-wrap').innerHTML = datalists + html || '<p class="hint">沒找到子表格</p>';

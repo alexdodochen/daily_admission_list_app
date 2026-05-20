@@ -40,24 +40,6 @@
   </div>
 </section>
 
-<section class="card checks-card">
-  <h2>資料檢查 <span class="optional-tag">選用</span></h2>
-  <p class="hint"><strong>需要整理 Google Sheet 格式問題時再使用即可，平常可略過。</strong>用上方日期分頁。格式檢查找表頭 / 子表格 / 病歷號文字格式問題，可一鍵修正；定案檢查確認 D/F/I + 子表格 F/G + N 列數，達成才能進 Step 5/6。</p>
-  <div class="checks-row">
-    <div class="format-check-wrap">
-      <button id="fmt-check-btn" type="button">檢查格式</button>
-      <button id="fmt-fix-btn" type="button" class="primary" disabled>自動修正</button>
-      <span id="fmt-msg" class="msg"></span>
-    </div>
-    <div class="format-check-wrap">
-      <button id="final-check-btn" type="button">定案檢查</button>
-      <span id="final-msg" class="msg"></span>
-    </div>
-  </div>
-  <div id="fmt-output"></div>
-  <div id="final-output"></div>
-</section>
-
 <!-- Step 1 -->
 <section class="card panel" data-panel="1">
   <h2>Step 1 — 住院名單截圖 OCR</h2>
@@ -171,5 +153,23 @@
     <span id="s6-msg" class="msg"></span>
   </div>
   <pre id="line-preview" class="test-output"></pre>
+</section>
+
+<section class="card checks-card">
+  <h2>資料檢查 <span class="optional-tag">選用</span></h2>
+  <p class="hint"><strong>需要整理 Google Sheet 格式問題時再使用即可，平常可略過。</strong>用上方日期分頁。格式檢查找表頭 / 子表格 / 病歷號文字格式問題，可一鍵修正；定案檢查確認 D/F/I + 子表格 F/G + N 列數，達成才能進 Step 5/6。</p>
+  <div class="checks-row">
+    <div class="format-check-wrap">
+      <button id="fmt-check-btn" type="button">檢查格式</button>
+      <button id="fmt-fix-btn" type="button" class="primary" disabled>自動修正</button>
+      <span id="fmt-msg" class="msg"></span>
+    </div>
+    <div class="format-check-wrap">
+      <button id="final-check-btn" type="button">定案檢查</button>
+      <span id="final-msg" class="msg"></span>
+    </div>
+  </div>
+  <div id="fmt-output"></div>
+  <div id="final-output"></div>
 </section>
 {% endblock %}

@@ -396,6 +396,18 @@ button.viewer-src-tab.active { background: var(--accent); color: #fff; }
   font-style: italic; z-index: 1; letter-spacing: 0.02em; }
 @media print { .watermark { display: none; } }
 
+/* Scroll-to-top floating button (every page via base.html) */
+.scroll-to-top { position: fixed; bottom: 28px; right: 28px;
+  width: 44px; height: 44px; border-radius: 50%; border: none;
+  background: var(--accent, #1e40af); color: #fff; font-size: 20px;
+  cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+  opacity: 0; transform: translateY(20px); pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease, background 0.15s;
+  z-index: 50; line-height: 1; }
+.scroll-to-top.visible { opacity: 0.92; transform: translateY(0); pointer-events: auto; }
+.scroll-to-top:hover { background: #1d4ed8; opacity: 1; }
+@media print { .scroll-to-top { display: none; } }
+
 /* Step 3 EMR card F/G inline editor */
 .emr-card .emr-fg-edit { display: inline-flex; align-items: center; gap: 12px;
   flex-wrap: wrap; font-weight: 600; color: var(--accent); }

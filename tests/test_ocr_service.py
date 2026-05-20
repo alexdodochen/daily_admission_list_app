@@ -388,11 +388,17 @@ def test_subtable_sync_appends_added_patient_to_its_doctor(monkeypatch):
     assert new_rows[0][0] == "丙"
 
 
-def test_subtable_sync_moves_doctor_changed_patient(monkeypatch):
+def test_subtable_sync_doctor_changed_is_ignored_2026_05_20(monkeypatch):
+    """Per user rule 2026-05-20: same chart_no rows are NEVER touched on a
+    re-upload, even when the new screenshot shows a different doctor.
+    `doctor_changed` is now informational only; `_apply_diff_to_subtables`
+    leaves both sub-tables intact, but still runs because `added` is present.
+    """
     grid = _build_grid(
         main_rows=[
             ["2026-05-01","","CV","李文煌","CAD","甲","","",],
             ["2026-05-01","","CV","劉秉彥","AS", "乙","","",],
+            ["2026-05-01","","CV","劉秉彥","CAD","丙","","",],
         ],
         subs=[
             ("李文煌", [["甲","111","","","2","CAD","PCI",""]]),
@@ -406,26 +412,29 @@ def test_subtable_sync_moves_doctor_changed_patient(monkeypatch):
                         lambda ws, a1: None)
 
     diff = {
-        "added": [],
+        "added": [{"chart_no": "333", "name": "丙", "doctor": "劉秉彥"}],
         "removed": [],
         "doctor_changed": [
             {"chart_no": "111", "name": "甲", "old": "李文煌", "new": "劉秉彥"},
         ],
     }
     result = ocr_service._apply_diff_to_subtables(
-        _FakeWS(), grid, diff, new_patients=[_new("111", "甲", "劉秉彥")],
+        _FakeWS(), grid, diff,
+        new_patients=[_new("111", "甲", "劉秉彥"), _new("333", "丙", "劉秉彥")],
         fmt_svc=_fcs,
     )
     assert result["updated"] is True
-    assert len(result["moved"]) == 1
+    # doctor_changed is NOT applied — both subs keep their patients put
+    assert result["moved"] == []
+    assert result["unattached_changed"] == []
     a1, body = writes[-1]
     titles = [row[0] for row in body if "人）" in (row[0] or "")]
-    assert "李文煌（0人）" in titles
+    # 甲 stays under 李文煌 (count unchanged), 丙 lands under 劉秉彥 (count +1)
+    assert "李文煌（1人）" in titles
     assert "劉秉彥（2人）" in titles
-    # E (入院序) should be cleared on move so it doesn't pollute new doctor
-    moved_rows = [row for row in body if row[1] == "111"]
-    assert len(moved_rows) == 1
-    assert moved_rows[0][4] == ""   # was "2" before, cleared on move
+    chart_111_rows = [row for row in body if row[1] == "111"]
+    assert len(chart_111_rows) == 1
+    assert chart_111_rows[0][4] == "2"   # E preserved (never cleared, never moved)
 
 
 def test_subtable_sync_autocreates_block_for_unknown_doctor(monkeypatch):
@@ -463,11 +472,13 @@ def test_subtable_sync_autocreates_block_for_unknown_doctor(monkeypatch):
     assert new_rows[0][0] == "戊"
 
 
-def test_subtable_sync_autocreates_block_for_doctor_change_target(monkeypatch):
-    """doctor_changed where the new doctor doesn't yet have a sub-table should
-    also auto-create one (Item 3 / 2026-05-15)."""
+def test_subtable_sync_doctor_change_target_also_untouched_2026_05_20(monkeypatch):
+    """Even when the target doctor doesn't yet have a sub-table, a pure
+    doctor_changed (no add/remove) leaves both subs unchanged AND does NOT
+    auto-create the target's block — same chart_no row stays put."""
     grid = _build_grid(
-        main_rows=[["2026-05-01","","CV","李文煌","CAD","甲","","",]],
+        main_rows=[["2026-05-01","","CV","李文煌","CAD","甲","","",],
+                   ["2026-05-01","","CV","新醫師","CAD","新","","",]],
         subs=[("李文煌", [["甲","111","","","2","CAD","PCI",""]])],
     )
     writes: list = []
@@ -476,8 +487,9 @@ def test_subtable_sync_autocreates_block_for_doctor_change_target(monkeypatch):
     monkeypatch.setattr(ocr_service.sheet_service, "clear_range",
                         lambda ws, a1: None)
 
+    # added present so _apply_diff_to_subtables actually runs (else early-return)
     diff = {
-        "added": [],
+        "added": [{"chart_no": "888", "name": "新", "doctor": "新醫師"}],
         "removed": [],
         "doctor_changed": [
             {"chart_no": "111", "name": "甲", "old": "李文煌", "new": "新醫師"},
@@ -485,15 +497,20 @@ def test_subtable_sync_autocreates_block_for_doctor_change_target(monkeypatch):
     }
     result = ocr_service._apply_diff_to_subtables(
         _FakeWS(), grid, diff,
-        new_patients=[_new("111", "甲", "新醫師")], fmt_svc=_fcs,
+        new_patients=[_new("111", "甲", "新醫師"), _new("888", "新", "新醫師")],
+        fmt_svc=_fcs,
     )
+    # Only the genuine add is applied; doctor_changed is ignored
+    assert result["moved"] == []
     assert result["unattached_changed"] == []
-    assert [m["chart_no"] for m in result["moved"]] == ["111"]
-    assert result["auto_created_doctors"] == ["新醫師"]
+    assert [a["chart_no"] for a in result["added"]] == ["888"]
     a1, body = writes[-1]
     titles = [row[0] for row in body if "人）" in (row[0] or "")]
-    assert "李文煌（0人）" in titles
+    # 甲 still under 李文煌; 新醫師 block auto-created for added 新 only
+    assert "李文煌（1人）" in titles
     assert "新醫師（1人）" in titles
+    rows_111 = [row for row in body if row[1] == "111"]
+    assert rows_111 and rows_111[0][4] == "2"   # E preserved
 
 
 # --------------------- ordering sync on write_to_sheet ---------------------

@@ -323,15 +323,20 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc) -> dict:
     Re-render the sub-table area (below main data) so that:
       - patients in `diff.removed` are dropped from whichever sub-table
         currently holds them
-      - patients in `diff.doctor_changed` are moved from old → new doctor's
-        sub-table (if new doctor has an existing sub-table)
       - patients in `diff.added` are appended to their A-L doctor's
         sub-table (if that doctor has an existing sub-table)
 
+    `diff.doctor_changed` is INTENTIONALLY IGNORED per user rule
+    (2026-05-20): re-uploading a same-day screenshot must NEVER touch rows
+    that share an existing chart_no, even if the new screenshot shows a
+    different 主治醫師 for that chart. Same chart = same row, full stop.
+    Doctor moves remain a manual edit; the UI surfaces `doctor_changed` for
+    information only.
+
     Preserves existing C/D/E/F/G/H cells for kept patients. New rows start
-    blank apart from name + chart_no. If an add/change targets a doctor
-    without an existing sub-table, the patient is reported in
-    `unattached_added` / `unattached_changed` and left for the user.
+    blank apart from name + chart_no. If an add targets a doctor without
+    an existing sub-table, the patient is reported in `unattached_added`
+    and left for the user.
     """
     col_a = [(row[0] if row else "") for row in grid]
     structure = fmt_svc.parse_structure(col_a)
@@ -371,8 +376,6 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc) -> dict:
             new_by_chart[ch] = p
 
     removed_done: list[str] = []
-    moved_done: list[dict] = []
-    unattached_changed: list[dict] = []
     added_done: list[dict] = []
     unattached_added: list[dict] = []
     auto_created_doctors: list[str] = []
@@ -398,33 +401,9 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc) -> dict:
         chart_loc.pop(ch, None)
         removed_done.append(ch)
 
-    # 2) Doctor changed: move row between sub-tables (clear E on move so the
-    # new doctor's sub-table E-sort isn't polluted by an unrelated number)
-    for ch_info in diff.get("doctor_changed", []):
-        ch = ch_info["chart_no"]
-        new_doc = ch_info["new"]
-        old_doc = chart_loc.get(ch) or ch_info.get("old", "")
-        moved_row = None
-        if old_doc in subs_by_doctor:
-            kept = []
-            for row in subs_by_doctor[old_doc]:
-                if (row[1] or "").strip() == ch:
-                    moved_row = list(row)
-                else:
-                    kept.append(row)
-            subs_by_doctor[old_doc] = kept
-        if moved_row is None:
-            moved_row = [ch_info.get("name", ""), ch, "", "", "", "", "", ""]
-        # Reset E (manual order) for the new sub-table
-        moved_row[4] = ""
-        if new_doc:
-            _ensure_doctor(new_doc)
-            subs_by_doctor[new_doc].append(moved_row)
-            chart_loc[ch] = new_doc
-            moved_done.append({"chart_no": ch, "old": old_doc, "new": new_doc})
-        else:
-            unattached_changed.append({"chart_no": ch, "name": ch_info.get("name", ""),
-                                       "old": old_doc, "new": new_doc})
+    # 2) Doctor changed: intentionally skipped — same chart_no rows are
+    #    NEVER touched on a re-upload (2026-05-20 rule). The diff is still
+    #    surfaced to the UI for information, but sub-table state stays put.
 
     # 3) Added: append to their A-L doctor's sub-table (auto-create if missing)
     for a in diff.get("added", []):
@@ -474,9 +453,9 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc) -> dict:
         "updated": True,
         "range": f"A{start_row}:H{new_end}",
         "removed": removed_done,
-        "moved":   moved_done,
+        "moved":   [],            # doctor_changed intentionally not applied
         "added":   added_done,
         "unattached_added":   unattached_added,
-        "unattached_changed": unattached_changed,
+        "unattached_changed": [],
         "auto_created_doctors": auto_created_doctors,
     }

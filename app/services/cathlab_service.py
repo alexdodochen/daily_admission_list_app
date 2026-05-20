@@ -788,11 +788,15 @@ def _apply_overrides(patients: list[dict], overrides: dict | None) -> None:
     """Apply user's manual dry-run edits (keyed by chart no) onto the enriched
     plan, in place. Only whitelisted fields — diag/proc IDs stay computed.
     session='非時段'/'OFF' → in_schedule False (cosmetic; ADD uses room/time/note).
+    skip=True / 'true' → patient flipped to skipped (no WEBCVIS write).
+    cath_date='YYYY/MM/DD' → manual reschedule of which day this patient
+    lands on (e.g. user wants 病人 X delayed two days).
     """
     if not overrides:
         return
     allowed = ("second_doctor", "third_doctor", "note_out",
-               "room", "time", "session")
+               "room", "time", "session", "cath_date")
+    truthy = {"1", "true", "True", "yes", "on"}
     for p in patients:
         ov = overrides.get(p.get("chart", ""))
         if not ov:
@@ -806,6 +810,13 @@ def _apply_overrides(patients: list[dict], overrides: dict | None) -> None:
             p["in_schedule"] = False
         elif sess in ("AM", "PM"):
             p["in_schedule"] = True
+        # Skip toggle — when the user unchecks 「排」 in the dry-run table.
+        if "skip" in ov:
+            v = ov["skip"]
+            if isinstance(v, bool):
+                p["skip"] = v
+            else:
+                p["skip"] = str(v).strip() in truthy
 
 
 async def keyin(admit_date: str, dry_run: bool = False,
@@ -904,10 +915,33 @@ async def keyin(admit_date: str, dry_run: bool = False,
         "skip": sum(1 for r in add_results if r["result"] == "skip"),
         "error": sum(1 for r in add_results if r["result"] == "error"),
     }
-    missing_after = [
-        {"chart": p["chart"], "name": p["name"], "cath_date": p["cath_date"]}
-        for p in active if p["chart"] not in final.get(p["cath_date"], set())
-    ]
+    # Pair each missing patient with the matching Phase-1 add_results row so
+    # the UI can show WHY they aren't in the schedule, not just "沒寫進去".
+    add_by_chart = {r["chart"]: r for r in add_results}
+    missing_after: list[dict] = []
+    for p in active:
+        if p["chart"] in final.get(p["cath_date"], set()):
+            continue
+        add = add_by_chart.get(p["chart"], {})
+        result = add.get("result") or ""
+        reason = (add.get("reason") or "").strip()
+        if result == "error":
+            explanation = reason or "建立排程時失敗（請看詳細執行記錄）"
+        elif result == "skip":
+            # "already exists on YYYY-MM-DD" — patient is on a different day
+            explanation = (f"WEBCVIS 已有這位（{reason}），未在 {p['cath_date']} 新增"
+                           if reason else "WEBCVIS 已有這位，未在目標日新增")
+        elif result == "ok":
+            explanation = "Phase 1 顯示新增成功，但複查時找不到 → 可能 WEBCVIS 介面回退 / 同分鐘衝堂；建議手動核對"
+        else:
+            # Patient was in `active` but never reached Phase 1 (defensive)
+            explanation = "未進入建立排程流程（請看詳細執行記錄）"
+        missing_after.append({
+            "chart": p["chart"], "name": p["name"],
+            "cath_date": p["cath_date"],
+            "phase1_result": result or "unknown",
+            "reason": explanation,
+        })
 
     return {
         "admit_date": admit_date,
