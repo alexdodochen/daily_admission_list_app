@@ -9,8 +9,32 @@
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">🏥 心臟內科總醫師</div>
-  <nav>
+  <div class="topbar-row topbar-row-1">
+    <div class="brand">🏥 心臟內科總醫師</div>
+    <div id="upstream-bar" class="upstream-bar">
+      <button id="upstream-toggle" class="upstream-toggle" type="button" hidden>
+        <span class="dot upd"></span>
+        <span id="upstream-count">0</span> 個來源有更新
+      </button>
+      <div id="upstream-panel" class="upstream-panel" hidden>
+        <!-- 2026-05-18 sync-source cutover: only the project repo is checked
+             now (daily-admission-list-public / Key-Schedule-APP rows removed). -->
+        <div class="upstream-row" data-source="self">
+          <span class="upstream-label">本 App</span>
+          <span class="upstream-status">…</span>
+          <button class="upstream-sync mini" data-source="self" hidden>同步</button>
+        </div>
+      </div>
+    </div>
+    <div class="status">
+      {% if ready %}
+        <span class="dot ok"></span> {{ cfg.llm_provider }} / {{ cfg.sheet_id[:8] }}…
+      {% else %}
+        <span class="dot bad"></span> 尚未設定
+      {% endif %}
+    </div>
+  </div>
+  <nav class="topbar-row topbar-row-2">
     <a href="/">主畫面</a>
     <a href="/sched">排班</a>
     <a href="/keyin">Key 班</a>
@@ -26,28 +50,6 @@
     <a href="#" id="help-link">說明</a>
     <a href="#" id="bug-link" title="把這次的問題＋診斷回報給開發者">🐞 回報問題</a>
   </nav>
-  <div id="upstream-bar" class="upstream-bar">
-    <button id="upstream-toggle" class="upstream-toggle" type="button" hidden>
-      <span class="dot upd"></span>
-      <span id="upstream-count">0</span> 個來源有更新
-    </button>
-    <div id="upstream-panel" class="upstream-panel" hidden>
-      <!-- 2026-05-18 sync-source cutover: only the project repo is checked
-           now (daily-admission-list-public / Key-Schedule-APP rows removed). -->
-      <div class="upstream-row" data-source="self">
-        <span class="upstream-label">本 App</span>
-        <span class="upstream-status">…</span>
-        <button class="upstream-sync mini" data-source="self" hidden>同步</button>
-      </div>
-    </div>
-  </div>
-  <div class="status">
-    {% if ready %}
-      <span class="dot ok"></span> {{ cfg.llm_provider }} / {{ cfg.sheet_id[:8] }}…
-    {% else %}
-      <span class="dot bad"></span> 尚未設定
-    {% endif %}
-  </div>
 </header>
 <main>
 {% block body %}{% endblock %}

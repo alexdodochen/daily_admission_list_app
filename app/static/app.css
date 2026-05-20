@@ -13,14 +13,22 @@
 html, body { margin: 0; padding: 0; font-family: -apple-system, "Noto Sans TC", sans-serif; background: var(--bg); color: #111; }
 
 .topbar {
-  display: flex; align-items: center; gap: 20px; padding: 10px 20px;
   background: var(--panel); border-bottom: 1px solid var(--border);
   position: sticky; top: 0; z-index: 10;
 }
+.topbar-row {
+  display: flex; align-items: center; gap: 16px;
+  padding: 6px 20px;
+}
+.topbar-row-1 { padding-top: 10px; }
+.topbar-row-2 {
+  padding-bottom: 10px; flex-wrap: wrap; row-gap: 6px;
+  border-top: 1px dashed var(--border); padding-top: 8px;
+}
 .topbar .brand { font-weight: 700; font-size: 18px; }
-.topbar nav a { margin-right: 14px; color: var(--accent); text-decoration: none; }
-.topbar nav a:hover { text-decoration: underline; }
-.topbar nav a#bug-link {
+.topbar nav a, .topbar-row-2 a { color: var(--accent); text-decoration: none; padding: 2px 4px; }
+.topbar nav a:hover, .topbar-row-2 a:hover { text-decoration: underline; }
+.topbar-row-2 a#bug-link {
   color: #fff !important;
   background: var(--bad);
   padding: 5px 12px;
@@ -28,8 +36,9 @@ html, body { margin: 0; padding: 0; font-family: -apple-system, "Noto Sans TC", 
   border-radius: 14px;
   font-weight: 700;
   box-shadow: 0 1px 3px rgba(127, 29, 29, 0.4);
+  margin-left: auto;  /* push the red 🐞 to the right of the nav row */
 }
-.topbar nav a#bug-link:hover {
+.topbar-row-2 a#bug-link:hover {
   background: #b91c1c;
   border-color: #450a0a;
   text-decoration: none;
