@@ -176,6 +176,12 @@
       <label class="bug-field">畫面上的錯誤訊息（會自動帶入最近一次紅色錯誤）
         <textarea id="bug-error" rows="2"></textarea>
       </label>
+      <label class="bug-field">截圖（選填，最多 10 張）
+        <input id="bug-images" type="file" accept="image/*" multiple>
+        <span class="bug-img-note">⚠ 截圖只會放進「② 存成檔案，私下傳給開發者」的 zip，
+          不會上傳到公開 GitHub（截圖可能含病人姓名／病歷號，無法自動隱藏）。</span>
+      </label>
+      <div id="bug-image-list" class="bug-image-list"></div>
       <div class="bug-actions">
         <button id="bug-preview-btn" type="button">產生回報內容（預覽）</button>
         <button id="bug-issue-btn" type="button" hidden>① 開 GitHub 回報（公開・送出前請確認沒有病人資料）</button>

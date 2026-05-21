@@ -26,8 +26,15 @@ import platform
 import re
 import sys
 import urllib.parse
+import zipfile
 from datetime import datetime
 from pathlib import Path
+
+# Screenshot attachments: bundled ONLY into the private .zip report — never
+# the public GitHub path (a screenshot renders patient name / 病歷號 into the
+# pixels and cannot be auto-scrubbed). Capped so a report stays small.
+MAX_IMAGES = 10
+_IMG_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
 from .. import config as appconfig
 from .. import log_buffer
@@ -207,4 +214,39 @@ def write_report_file(diag: dict) -> Path:
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     path = d / f"bug_report_{ts}.txt"
     path.write_text(render_markdown(diag), encoding="utf-8")
+    return path
+
+
+def _safe_img_ext(fname: str) -> str:
+    """Whitelisted image extension from a user filename; default .png."""
+    ext = Path(fname or "").suffix.lower()
+    return ext if ext in _IMG_EXTS else ".png"
+
+
+def write_report_bundle(diag: dict,
+                        images: list[tuple[str, bytes]] | None = None) -> Path:
+    """Write the scrubbed report for the user to send privately.
+
+    No images → a plain `bug_report_<ts>.txt` (same as write_report_file).
+    With images → a `bug_report_<ts>.zip` holding `report.txt` + the
+    screenshots (`screenshot_01.png` …), capped at MAX_IMAGES.
+
+    Screenshots are NEVER routed to the public GitHub issue path — PHI is
+    rendered into the pixels and cannot be auto-scrubbed. This private
+    bundle is the only place they go.
+    """
+    d = appconfig.DATA_DIR / "bug_reports"
+    d.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    report_md = render_markdown(diag)
+    images = [im for im in (images or []) if im and im[1]][:MAX_IMAGES]
+    if not images:
+        path = d / f"bug_report_{ts}.txt"
+        path.write_text(report_md, encoding="utf-8")
+        return path
+    path = d / f"bug_report_{ts}.zip"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("report.txt", report_md)
+        for i, (fname, data) in enumerate(images, start=1):
+            zf.writestr(f"screenshot_{i:02d}{_safe_img_ext(fname)}", data)
     return path

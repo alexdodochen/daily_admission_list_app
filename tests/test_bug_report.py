@@ -64,6 +64,41 @@ def test_write_report_file(tmp_path, monkeypatch):
     assert "環境" in p.read_text(encoding="utf-8")
 
 
+def test_write_report_bundle_no_images_is_plain_txt(tmp_path, monkeypatch):
+    monkeypatch.setattr(appconfig, "DATA_DIR", tmp_path)
+    diag = bug_report.collect({"note": "n", "step": "s", "error": "e"})
+    p = bug_report.write_report_bundle(diag, [])
+    assert p.suffix == ".txt"
+    assert "環境" in p.read_text(encoding="utf-8")
+
+
+def test_write_report_bundle_with_images_makes_zip(tmp_path, monkeypatch):
+    import zipfile
+    monkeypatch.setattr(appconfig, "DATA_DIR", tmp_path)
+    diag = bug_report.collect({"note": "n"})
+    images = [("shot.png", b"\x89PNG_fake"), ("evil.exe", b"data2")]
+    p = bug_report.write_report_bundle(diag, images)
+    assert p.suffix == ".zip"
+    with zipfile.ZipFile(p) as zf:
+        names = zf.namelist()
+        assert "report.txt" in names
+        # 2 screenshots; the non-image extension is forced back to .png
+        assert "screenshot_01.png" in names
+        assert "screenshot_02.png" in names
+        assert "環境" in zf.read("report.txt").decode("utf-8")
+
+
+def test_write_report_bundle_caps_at_max_images(tmp_path, monkeypatch):
+    import zipfile
+    monkeypatch.setattr(appconfig, "DATA_DIR", tmp_path)
+    diag = bug_report.collect({"note": "n"})
+    images = [(f"s{i}.png", b"x") for i in range(bug_report.MAX_IMAGES + 5)]
+    p = bug_report.write_report_bundle(diag, images)
+    with zipfile.ZipFile(p) as zf:
+        shots = [n for n in zf.namelist() if n.startswith("screenshot_")]
+    assert len(shots) == bug_report.MAX_IMAGES
+
+
 def test_long_logs_trimmed_under_url_cap():
     for i in range(2000):
         log_buffer.record(f"line {i} aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")

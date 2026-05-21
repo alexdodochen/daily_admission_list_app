@@ -645,12 +645,23 @@ async def api_bug_report_preview(note: str = Form(""), step: str = Form(""),
 
 @app.post("/api/bug-report/save")
 async def api_bug_report_save(note: str = Form(""), step: str = Form(""),
-                              error: str = Form("")):
+                              error: str = Form(""),
+                              images: list[UploadFile] = File(default=[])):
     """Write the scrubbed report to DATA_DIR/bug_reports for the user to
-    send privately."""
+    send privately. When screenshots are attached, the report + images are
+    bundled into one .zip — screenshots NEVER go to the public GitHub path
+    (PHI can be rendered into the pixels and cannot be auto-scrubbed)."""
     diag = bug_report.collect({"note": note, "step": step, "error": error})
-    path = bug_report.write_report_file(diag)
-    return {"ok": True, "path": str(path)}
+    imgs: list[tuple[str, bytes]] = []
+    for f in (images or [])[:bug_report.MAX_IMAGES]:
+        try:
+            data = await f.read()
+        except Exception:
+            continue
+        if data:
+            imgs.append((f.filename or "screenshot", data))
+    path = bug_report.write_report_bundle(diag, imgs)
+    return {"ok": True, "path": str(path), "images": len(imgs)}
 
 
 @app.on_event("startup")

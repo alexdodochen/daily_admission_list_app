@@ -14,3 +14,6 @@ app/bundled/service_account.json
 build/
 dist/
 *.spec.bak
+
+# Embedded standalone repo — not part of this project
+成大EMR爬蟲/

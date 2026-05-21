@@ -523,6 +523,27 @@ table.data td select.plan-ov:focus,
 .bug-actions button:hover:not(:disabled) { background: #1e293b; border-color: #1e293b; }
 #bug-issue-btn { border-color: #b91c1c; background: #dc2626; color: #fff; }
 #bug-issue-btn:hover:not(:disabled) { background: #b91c1c; border-color: #991b1b; }
+.bug-img-note {
+  display: block; margin-top: 4px; font-size: 11px; font-weight: 400;
+  color: #b45309; line-height: 1.5;
+}
+.bug-image-list { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0 2px; }
+.bug-thumb { position: relative; width: 86px; }
+.bug-thumb img {
+  width: 86px; height: 86px; object-fit: cover;
+  border: 1px solid #cbd5e1; border-radius: 6px; display: block;
+}
+.bug-thumb button {
+  position: absolute; top: -7px; right: -7px; width: 21px; height: 21px;
+  padding: 0; border-radius: 50%; background: #dc2626; color: #fff;
+  border: 2px solid #fff; font-size: 11px; line-height: 1; cursor: pointer;
+}
+.bug-thumb button:hover:not(:disabled) { background: #b91c1c; }
+.bug-thumb span {
+  display: block; margin-top: 2px; font-size: 10px; color: #64748b;
+  word-break: break-all; line-height: 1.3;
+}
+.bug-img-count { width: 100%; margin: 2px 0 0; font-size: 11px; color: #64748b; }
 .bug-preview {
   max-height: 320px; overflow: auto; background: #0f172a; color: #e2e8f0;
   padding: 12px; border-radius: 6px; font-size: 12px; white-space: pre-wrap;

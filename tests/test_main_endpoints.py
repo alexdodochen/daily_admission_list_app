@@ -111,6 +111,36 @@ def test_save_settings_trims_whitespace(client):
 
 # ---------------- /api/update/check ----------------
 
+def test_bug_report_save_bundles_images_into_zip(client, tmp_path, monkeypatch):
+    """POST /api/bug-report/save with screenshots → a .zip under bug_reports."""
+    import zipfile
+    from app.services import bug_report
+    monkeypatch.setattr(appconfig, "DATA_DIR", tmp_path)
+    r = client.post("/api/bug-report/save",
+                     data={"note": "n", "step": "s", "error": "e"},
+                     files=[("images", ("a.png", b"img1", "image/png")),
+                            ("images", ("b.jpg", b"img2", "image/jpeg"))])
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["images"] == 2
+    p = tmp_path / "bug_reports"
+    zips = list(p.glob("*.zip"))
+    assert len(zips) == 1
+    with zipfile.ZipFile(zips[0]) as zf:
+        assert "report.txt" in zf.namelist()
+        assert sum(n.startswith("screenshot_") for n in zf.namelist()) == 2
+
+
+def test_bug_report_save_without_images_is_plain_txt(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(appconfig, "DATA_DIR", tmp_path)
+    r = client.post("/api/bug-report/save",
+                     data={"note": "n", "step": "s", "error": "e"})
+    assert r.status_code == 200
+    assert r.json()["images"] == 0
+    assert list((tmp_path / "bug_reports").glob("*.txt"))
+
+
 def test_update_check_routes_through_updater(client, monkeypatch):
     async def fake_check():
         return {"available": True, "current": {"short": "aaa"},

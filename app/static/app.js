@@ -61,7 +61,12 @@
     hideActions();
     modal.hidden = false;
   };
-  const dismiss = () => { modal.hidden = true; };
+  const dismiss = () => {
+    modal.hidden = true;
+    selectedImages = [];
+    const ii = $$('bug-images'); if (ii) ii.value = '';
+    renderImages();
+  };
 
   link.addEventListener('click', (e) => { e.preventDefault(); open(); });
   if (close) close.addEventListener('click', dismiss);
@@ -76,6 +81,52 @@
     fd.append('note',  ($$('bug-note')  || {}).value || '');
     fd.append('error', ($$('bug-error') || {}).value || '');
     return fd;
+  }
+
+  // --- screenshot attachments (private .zip only — never the public issue) ---
+  const MAX_IMAGES = 10;
+  const MAX_IMG_BYTES = 10 * 1024 * 1024;  // 10 MB / image
+  let selectedImages = [];
+
+  function renderImages() {
+    const list = $$('bug-image-list');
+    if (!list) return;
+    list.innerHTML = selectedImages.map((f, i) => {
+      const nm = f.name.length > 18 ? f.name.slice(0, 16) + '…' : f.name;
+      return `<div class="bug-thumb"><img src="${URL.createObjectURL(f)}" alt="">` +
+             `<button type="button" data-i="${i}" title="移除這張">✕</button>` +
+             `<span>${nm}</span></div>`;
+    }).join('') + (selectedImages.length
+      ? `<p class="bug-img-count">已選 ${selectedImages.length} / ${MAX_IMAGES} 張</p>` : '');
+    list.querySelectorAll('button[data-i]').forEach(b => {
+      b.addEventListener('click', () => {
+        selectedImages.splice(parseInt(b.dataset.i, 10), 1);
+        renderImages();
+      });
+    });
+  }
+
+  const imgInput = $$('bug-images');
+  if (imgInput) {
+    imgInput.addEventListener('change', () => {
+      for (const f of Array.from(imgInput.files || [])) {
+        if (selectedImages.length >= MAX_IMAGES) {
+          if (msg) { msg.className = 'msg err';
+            msg.textContent = `✗ 最多 ${MAX_IMAGES} 張，多出來的已略過。`; }
+          break;
+        }
+        if (!f.type.startsWith('image/')) continue;
+        if (f.size > MAX_IMG_BYTES) {
+          if (msg) { msg.className = 'msg err';
+            msg.textContent = `✗ ${f.name} 超過 10MB，已略過。`; }
+          continue;
+        }
+        if (selectedImages.some(x => x.name === f.name && x.size === f.size)) continue;
+        selectedImages.push(f);
+      }
+      imgInput.value = '';  // let the user re-pick the same file later
+      renderImages();
+    });
   }
 
   $$('bug-preview-btn').addEventListener('click', async () => {
@@ -107,11 +158,15 @@
   $$('bug-save-btn').addEventListener('click', async () => {
     if (msg) { msg.className = 'hint'; msg.textContent = '存檔中…'; }
     try {
-      const r = await fetch('/api/bug-report/save', { method: 'POST', body: form() })
+      const fd = form();
+      selectedImages.forEach(f => fd.append('images', f, f.name));
+      const r = await fetch('/api/bug-report/save', { method: 'POST', body: fd })
         .then(x => x.json());
       if (!r.ok) throw new Error(r.error || '存檔失敗');
+      const imgNote = r.images ? `（含 ${r.images} 張截圖，已打包成 zip）` : '';
       if (msg) { msg.className = 'msg ok';
-        msg.textContent = '✓ 已存到：' + r.path + '　把這個檔私下傳（LINE/email）給陳常胤醫師即可。'; }
+        msg.textContent = '✓ 已存到：' + r.path + imgNote +
+          '　把這個檔私下傳（LINE/email）給陳常胤醫師即可。'; }
     } catch (err) {
       if (msg) { msg.className = 'msg err'; msg.textContent = '✗ ' + err.message; }
     }
