@@ -155,6 +155,16 @@ Headers are the source of truth — `format_check_service.EXPECTED_MAIN_HEADER` 
 
 ## Status & pending direction
 
+**Delivered (Phase 19 — 2026-05-21 — 6-issue field-bug batch, GitHub #2-#7, `d7b3450`):**
+- **入院序少一位** — `/api/sheet/read` sliced the N-V ordering block by `main_end` (main A-L's last row). When N-V is longer than main A-L the trailing 序號 row was cut. N-V extent is now walked independently (col N/P until blank).
+- **`integrate_ordering` appends missing** — it used to only patch existing N-V rows; a sub-table patient absent from N-V is now appended (returns `appended`).
+- **lottery H→R** — `首次抽籤` (`lottery_with_pins`) now carries sub-table H 註記 into N-V R 備註 (previously only ③ integrate did).
+- **name cleanup** — `parse_subtables_grid` strips OCR `?` marks via `clean_name`; `integrate_ordering` refreshes P 姓名 from the (EMR-corrected) sub-table instead of keeping the stale N-V name.
+- **入院序結果 備註(住服) editable** — `renderOrderResult` Q-col cell is inline-editable, synced to the Sheet on blur via `/api/step4/cell`.
+- **bug-report buttons** — `.bug-actions button` inherited the global `color:#fff` on a near-white background → invisible; now solid dark.
+- **cathlab verify honours 不排** — `cathlab_service.verify()` accepts `overrides` like `keyin()`; un-checking 不排 in 預覽排程 now affects 與現有排程對照.
+- **main↔sub-table chart_no reconcile** — `_apply_diff_to_subtables` reconciles sub-tables against the FULL new main list by 病歷號 only: a chart already in a sub-table is never duplicated; a main chart missing from every sub-table is appended (self-heal). See [[ocr-reupload-membership-only]].
+
 **Done (2026-05-14):** Phase 1–10 shipped. Phases 1–8 = 3-card home + Phase A/B/C admission rule backport + Phase 8 packaged distribution. Phase 9 (2026-05-13) = UI usability pass. Phase 10 (2026-05-14) = workflow re-architecture + EMR/UI overhaul.
 
 Phase 9 highlights (`92c8458`):
