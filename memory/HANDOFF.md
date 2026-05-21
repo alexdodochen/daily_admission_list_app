@@ -20,11 +20,19 @@
     publishes the release.
 
 [Next steps]
-  - Close GitHub issues #2-#7 — BLOCKED: `gh` not installed locally and
-    credential extraction is sandbox-blocked. User must close them
-    manually (fix text was provided in chat) OR install `gh`
-    (winget install --id GitHub.cli) + `gh auth login` so a future
-    session can run `gh issue close`.
+  - TODO (deferred to a `gh`-equipped machine, per user 2026-05-21):
+    close GitHub issues #2-#7. All fixed by d7b3450. `gh` is NOT
+    installed on the current machine and credential extraction is
+    sandbox-blocked, so this was deferred. On a machine with `gh`
+    (gh auth login done), run these 6 commands verbatim:
+
+      gh issue close 2 --repo alexdodochen/daily_admission_list_app --comment "已修 d7b3450 (Phase 19)：(1) 首次抽籤會把子表 H 註記帶入入院序 R 欄；(2) 入院序姓名去除 OCR「?」並用 EMR 校正後的子表名字；(3) 入院序結果「備註(住服)」可點擊編輯並同步回 Sheet；(4) 回報問題按鈕改深色實心（原白字白底看不到）。"
+      gh issue close 3 --repo alexdodochen/daily_admission_list_app --comment "已查證目前 5/24 Sheet，子表格解析正確（許春芳在許志新底下），無法重現，研判為當時編輯中途的暫態。相關「主表/子表/入院序數量不符」已隨 d7b3450 修正：重新上傳截圖時主表↔子表會以病歷號自動對帳並補齊。"
+      gh issue close 4 --repo alexdodochen/daily_admission_list_app --comment "已修 d7b3450 (Phase 19)：/api/sheet/read 把入院序 N-V 區塊長度誤綁在主表最後一列，N-V 比主表長時尾列(序號10)被切。改成獨立計算 N-V 範圍；③ 整合也會把子表有、入院序卻沒有的病人補進。"
+      gh issue close 5 --repo alexdodochen/daily_admission_list_app --comment "與 #4 重複，已於 d7b3450 一併修正，關閉。"
+      gh issue close 6 --repo alexdodochen/daily_admission_list_app --comment "已修 d7b3450 (Phase 19)：「與現有排程對照」之前完全不讀預覽表的「排」勾選。verify 現在跟 key in 一樣接收 override，取消勾選的病人不再進入對照與排程。"
+      gh issue close 7 --repo alexdodochen/daily_admission_list_app --comment "與 #6 重複，已於 d7b3450 一併修正，關閉。"
+
   - User's own 5/24 sheet is still desynced (main A-L 9 / sub-table 10,
     許春芳 missing from main). Fix: re-upload the 5/24 screenshot — the
     new reconcile logic repairs it (adds 許春芳 to main, no sub-table dup).
