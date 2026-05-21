@@ -514,14 +514,25 @@ table.data td select.plan-ov:focus,
   box-sizing: border-box;
 }
 .bug-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 6px; }
+/* Solid dark buttons — the global `button { color:#fff }` made these invisible
+   on the old near-white background (field bug 2026-05-21 #2). */
 .bug-actions button {
-  padding: 7px 12px; font-size: 13px; border-radius: 6px;
-  border: 1px solid #cbd5e1; background: #f1f5f9; cursor: pointer;
+  padding: 8px 14px; font-size: 13px; font-weight: 600; border-radius: 6px;
+  border: 1px solid #334155; background: #334155; color: #fff; cursor: pointer;
 }
-.bug-actions button:hover { background: #e2e8f0; }
-#bug-issue-btn { border-color: #fca5a5; background: #fef2f2; }
+.bug-actions button:hover:not(:disabled) { background: #1e293b; border-color: #1e293b; }
+#bug-issue-btn { border-color: #b91c1c; background: #dc2626; color: #fff; }
+#bug-issue-btn:hover:not(:disabled) { background: #b91c1c; border-color: #991b1b; }
 .bug-preview {
   max-height: 320px; overflow: auto; background: #0f172a; color: #e2e8f0;
   padding: 12px; border-radius: 6px; font-size: 12px; white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* 入院序結果 — editable 備註(住服) cell (synced to Sheet on blur) */
+td.ord-q-edit { background: #fffbeb; cursor: text; outline: none; min-width: 84px; }
+td.ord-q-edit:hover { background: #fef3c7; }
+td.ord-q-edit:focus { background: #eef2ff; box-shadow: inset 0 0 0 2px #6366f1; }
+td.ord-q-edit.saving { background: #dbeafe; }
+td.ord-q-edit.saved { background: #dcfce7; }
+td.ord-q-edit.save-err { background: #fee2e2; }

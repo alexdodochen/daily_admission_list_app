@@ -388,6 +388,70 @@ def test_subtable_sync_appends_added_patient_to_its_doctor(monkeypatch):
     assert new_rows[0][0] == "丙"
 
 
+def test_subtable_sync_does_not_duplicate_existing_chart(monkeypatch):
+    """Re-upload of a sheet whose main lost a patient still present in the
+    sub-table: the chart is appended back to main but must NOT be duplicated
+    in the sub-table (field bug 2026-05-21: main 9 / sub-table 10)."""
+    # main has 甲 only; sub-table already has 甲 + 乙 (乙 = the desynced extra)
+    grid = _build_grid(
+        main_rows=[["2026-05-01","","CV","李文煌","CAD","甲","","",]],
+        subs=[("李文煌", [["甲","111","","","","CAD","PCI",""],
+                          ["乙","222","","","","AS","TAVI","待會診"]])],
+    )
+    writes: list = []
+    monkeypatch.setattr(ocr_service.sheet_service, "write_range",
+                        lambda ws, a1, body, raw=False: writes.append((a1, body)))
+    monkeypatch.setattr(ocr_service.sheet_service, "clear_range",
+                        lambda ws, a1: None)
+    # Screenshot shows BOTH 甲 + 乙 → 乙 flagged added (missing from main)
+    diff = {
+        "added": [{"chart_no": "222", "name": "乙", "doctor": "李文煌"}],
+        "removed": [],
+        "doctor_changed": [],
+    }
+    new_patients = [_new("111", "甲", "李文煌"), _new("222", "乙", "李文煌")]
+    result = ocr_service._apply_diff_to_subtables(
+        _FakeWS(), grid, diff, new_patients=new_patients, fmt_svc=_fcs,
+    )
+    assert result["updated"] is True
+    a1, body = writes[-1]
+    rows_222 = [row for row in body if row[1] == "222"]
+    assert len(rows_222) == 1               # NOT duplicated
+    assert rows_222[0][7] == "待會診"        # existing 註記 preserved verbatim
+    titles = [row[0] for row in body if "人）" in (row[0] or "")]
+    assert "李文煌（2人）" in titles
+
+
+def test_subtable_sync_selfheals_main_patient_missing_from_subtable(monkeypatch):
+    """A chart present in main but missing from every sub-table is appended
+    on the next re-upload (main ↔ sub-table self-heal, by 病歷號)."""
+    grid = _build_grid(
+        main_rows=[["2026-05-01","","CV","李文煌","CAD","甲","","",]],
+        subs=[("李文煌", [["甲","111","","","","CAD","PCI",""]])],
+    )
+    writes: list = []
+    monkeypatch.setattr(ocr_service.sheet_service, "write_range",
+                        lambda ws, a1, body, raw=False: writes.append((a1, body)))
+    monkeypatch.setattr(ocr_service.sheet_service, "clear_range",
+                        lambda ws, a1: None)
+    diff = {
+        "added": [{"chart_no": "333", "name": "丙", "doctor": "李文煌"}],
+        "removed": [], "doctor_changed": [],
+    }
+    # 乙(222) is in main but in NO sub-table — must be self-healed in
+    new_patients = [_new("111", "甲", "李文煌"),
+                    _new("222", "乙", "李文煌"),
+                    _new("333", "丙", "李文煌")]
+    ocr_service._apply_diff_to_subtables(
+        _FakeWS(), grid, diff, new_patients=new_patients, fmt_svc=_fcs,
+    )
+    a1, body = writes[-1]
+    charts = {row[1] for row in body if row[1] in ("111", "222", "333")}
+    assert charts == {"111", "222", "333"}
+    titles = [row[0] for row in body if "人）" in (row[0] or "")]
+    assert "李文煌（3人）" in titles
+
+
 def test_subtable_sync_doctor_changed_is_ignored_2026_05_20(monkeypatch):
     """Per user rule 2026-05-20: same chart_no rows are NEVER touched on a
     re-upload, even when the new screenshot shows a different doctor.

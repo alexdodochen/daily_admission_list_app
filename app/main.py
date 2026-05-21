@@ -445,9 +445,11 @@ async def api_step5_plan(date: str):
 
 
 @app.post("/api/step5/verify")
-async def api_step5_verify(date: str = Form(...)):
+async def api_step5_verify(date: str = Form(...), overrides: str = Form("")):
     try:
-        report = await cathlab_service.verify(date)
+        import json as _json
+        ov = _json.loads(overrides) if overrides.strip() else None
+        report = await cathlab_service.verify(date, overrides=ov)
         return {"ok": True, **report}
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -802,7 +804,22 @@ async def api_sheet_read(date: str):
             return out
 
         main_block = slice_block(1, main_end, 1, 12) if main_end >= 1 else []
-        order_block = slice_block(1, main_end, 14, 23) if main_end >= 1 else []
+
+        # N-V ordering block extent is INDEPENDENT of main_end — the ordered
+        # list can be longer (or shorter) than main A-L (e.g. a patient lives
+        # in the sub-tables / N-V but was dropped from main, or vice versa).
+        # Walk col N (序號, idx 13) + col P (姓名, idx 15) until both blank so
+        # the last 序號 row is never silently truncated. (Field bug 2026-05-21
+        # #4/#5: main had 9, N-V had 10 → 序號 10 vanished from 入院序結果.)
+        order_end = 1
+        for r in range(2, len(rows) + 1):
+            row = rows[r - 1] if r - 1 < len(rows) else []
+            n_val = str(row[13]).strip() if len(row) > 13 else ""
+            p_val = str(row[15]).strip() if len(row) > 15 else ""
+            if not (n_val or p_val):
+                break
+            order_end = r
+        order_block = slice_block(1, max(order_end, main_end), 14, 23)
 
         sub_blocks = []
         for s in structure["subs"]:

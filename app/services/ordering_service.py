@@ -22,7 +22,20 @@ Sub-table layout (8 cols, D = placeholder since EMR summary retired 5/10):
 """
 from __future__ import annotations
 
+import re
+
 from . import sheet_service
+
+
+# OCR uncertainty marks ("張三?") leak from Step 1 into sub-table 姓名. Strip the
+# trailing mark so 入院序結果 / lottery / cathlab all show the clean name (same
+# rule as cathlab_service.read_patients). Field bug 2026-05-21 #2.
+_NAME_UNCERTAIN_RE = re.compile(r"[?？�⁇‽]+\s*$")
+
+
+def clean_name(name: str) -> str:
+    """Strip a trailing OCR uncertainty mark from a patient name."""
+    return _NAME_UNCERTAIN_RE.sub("", (name or "").strip()).strip()
 
 
 ORDERING_HEADERS = [
@@ -55,7 +68,7 @@ def parse_subtables_grid(grid: list[list[str]]) -> dict[str, list[dict]]:
                     break
                 patients.append({
                     "row":       i + 1,
-                    "name":      r[0].strip(),
+                    "name":      clean_name(r[0]),
                     "chart_no":  r[1].strip(),
                     "emr":       r[2].strip(),
                     "summary":   r[3].strip(),  # D — placeholder, ignored
@@ -135,11 +148,9 @@ def integrate_ordering(date: str) -> dict:
     rows: list[list[str]] = []
     for r in existing:
         r = (r + [""] * 9)[:9]
-        if not r[2].strip():
+        if not r[2].strip() and not r[5].strip():
             break
         rows.append(r)
-    if not rows:
-        return {"rows": 0}
 
     # Apply per-doctor E-sort by reordering rows that match each doctor's chart list
     by_doctor_positions: dict[str, list[int]] = {}
@@ -164,6 +175,29 @@ def integrate_ordering(date: str) -> dict:
         for slot_idx, p in enumerate(positions):
             reordered[p] = new_rows[slot_idx]
 
+    # Append sub-table patients that never made it into the N-V block.
+    # integrate previously ONLY patched existing rows, so a patient added to a
+    # sub-table after the last lottery silently vanished from 入院序結果.
+    # (Field bug 2026-05-21 #4/#5.) Append them in doctor × within-doctor order.
+    existing_charts = {(r[5] or "").strip()
+                       for r in reordered if (r[5] or "").strip()}
+    appended: list[dict] = []
+    for doc, charts in doctor_chart_order.items():
+        for ch in charts:
+            if ch in existing_charts:
+                continue
+            info = lookup.get(ch, {})
+            reordered.append([
+                "", doc, info.get("name", ""), "", "",
+                ch, info.get("diagnosis", ""), info.get("cathlab", ""), "",
+            ])
+            existing_charts.add(ch)
+            appended.append({"chart_no": ch, "doctor": doc,
+                             "name": info.get("name", "")})
+
+    if not reordered:
+        return {"rows": 0, "appended": []}
+
     # Renumber 序號 + patch T/U + R from sub-tables; preserve Q (住服) + V (改期)
     # R (備註) <- sub-table H (註記) when H non-empty; else preserve existing R.
     # Mirrors daily-admission-list-public mapping H → R (feedback_subtable_H_to_R_ordering).
@@ -172,10 +206,13 @@ def integrate_ordering(date: str) -> dict:
         chart = r[5].strip()
         info = lookup.get(chart, {})
         sub_note = (info.get("note") or "").strip()
+        # P 姓名 ← sub-table (EMR-corrected + OCR-"?"-stripped) when available;
+        # the existing N-V name can be stale (field bug 2026-05-21 #2).
+        sub_name = (info.get("name") or "").strip()
         out.append([
             str(seq),                                # N 序號
             r[1],                                    # O 主治醫師
-            r[2],                                    # P 姓名
+            sub_name if sub_name else r[2],          # P 姓名 ← 子表格
             r[3],                                    # Q 備註(住服) — preserve
             sub_note if sub_note else r[4],          # R 備註 ← 子表格 H 註記
             r[5],                                    # S 病歷號
@@ -188,7 +225,7 @@ def integrate_ordering(date: str) -> dict:
     sheet_service.write_range(ws, "N1:V1", [ORDERING_HEADERS], raw=False)
     end_row = 1 + len(out)
     sheet_service.write_range(ws, f"N2:V{end_row}", out, raw=False)
-    return {"rows": len(out), "range": f"N2:V{end_row}"}
+    return {"rows": len(out), "range": f"N2:V{end_row}", "appended": appended}
 
 
 # ---------------------------- sync after OCR diff ----------------------------

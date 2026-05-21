@@ -191,6 +191,33 @@ def test_plan_empty_patients(monkeypatch):
     assert result["skipped"] == []
 
 
+# ---------------- verify() honours preview 不排 toggles ----------------
+
+def test_verify_honours_skip_override(monkeypatch):
+    """預覽排程取消勾選『排』的病人 → verify 對照不再把他算進待排
+    (field bug 2026-05-21 #6/#7)."""
+    patients = [
+        _mk_patient(doctor="詹世鴻", chart="1", name="A"),
+        _mk_patient(doctor="詹世鴻", chart="2", name="B"),
+    ]
+    monkeypatch.setattr(cs, "read_patients", lambda d: list(patients))
+
+    async def fake_query(dates):
+        return {d: set() for d in dates}
+    monkeypatch.setattr(cs, "_login_and_query", fake_query)
+
+    # No override → both patients cross-checked, none skipped
+    base = asyncio.run(cs.verify("20260410"))
+    assert base["totals"]["missing"] == 2
+    assert base["totals"]["skip"] == 0
+
+    # User un-checked chart "2" in 預覽排程 → skip:true → only chart "1" checked
+    rep = asyncio.run(cs.verify("20260410", overrides={"2": {"skip": True}}))
+    assert rep["totals"]["missing"] == 1
+    assert rep["totals"]["skip"] == 1
+    assert {p["chart"] for p in rep["skipped"]} == {"2"}
+
+
 # ---------------- keyin(dry_run=True) ----------------
 
 def test_keyin_dry_run_skips_browser(monkeypatch):

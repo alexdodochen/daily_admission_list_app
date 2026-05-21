@@ -256,6 +256,7 @@ def lottery_with_pins(date: str,
                 "chart_no":  p.get("chart_no", ""),
                 "diagnosis": p.get("diagnosis", ""),
                 "cathlab":   p.get("cathlab", ""),
+                "note":      (p.get("note") or "").strip(),
                 "manual":    (p.get("manual") or "").strip(),
             })
         by_doctor[doctor] = ordering_service.sort_by_manual_e(flat)
@@ -354,8 +355,8 @@ def lottery_with_pins(date: str,
             str(i),
             p["doctor"],
             p["name"],
-            "",                     # Q 備註(住服)
-            "",                     # R 備註
+            "",                     # Q 備註(住服) — user marks manually
+            p.get("note", ""),      # R 備註 ← 子表格 H 註記 (field bug 2026-05-21 #2)
             p["chart_no"],
             p["diagnosis"],
             p["cathlab"],

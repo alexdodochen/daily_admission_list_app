@@ -344,6 +344,82 @@ def test_sync_appends_new_patient_carries_note(monkeypatch):
     assert body[1][4] == "待會診"
 
 
+def test_parse_strips_ocr_uncertainty_mark():
+    """子表格 姓名 帶 OCR '?' 不確定標記 → parse 後去除 (field bug 2026-05-21 #2)."""
+    grid = [
+        _pad(["柯呈諭（2人）"]),
+        _pad(["姓名", "病歷"]),
+        _pad(["王小明?", "111"]),
+        _pad(["李大華？", "222"]),
+        _pad([]),
+    ]
+    pts = os_.parse_subtables_grid(grid)["柯呈諭"]
+    assert [p["name"] for p in pts] == ["王小明", "李大華"]
+
+
+def test_clean_name_helper():
+    assert os_.clean_name("王小明?") == "王小明"
+    assert os_.clean_name("李大華？ ") == "李大華"
+    assert os_.clean_name("  陳常胤  ") == "陳常胤"
+    assert os_.clean_name("") == ""
+
+
+def test_integrate_appends_subtable_patient_missing_from_nv(monkeypatch):
+    """子表格有病人但 N-V 沒有 → integrate 補進結尾 (field bug 2026-05-21 #4/#5)."""
+    existing = [
+        ["1", "Z", "甲", "", "", "111", "CAD", "PCI", ""],
+    ]
+    sub_grid = [
+        _pad(["Z（1人）"]),
+        _pad(["姓名", "病歷", "EMR", "", "", "術前診斷", "預計心導管", "註記"]),
+        _pad(["甲", "111", "", "", "", "CAD", "PCI", ""]),
+        _pad([]),
+        _pad([]),
+        _pad(["許志新（1人）"]),
+        _pad(["姓名", "病歷", "EMR", "", "", "術前診斷", "預計心導管", "註記"]),
+        _pad(["許春芳", "999", "", "", "", "Pulmonary HTN", "Right heart cath.", "待會診"]),
+        _pad([]),
+    ]
+    ws = _FakeWS()
+    monkeypatch.setattr(os_.sheet_service, "get_worksheet", lambda d: ws)
+    monkeypatch.setattr(os_.sheet_service, "read_range",
+                        lambda _ws, rng: existing if rng.startswith("N") else sub_grid)
+    monkeypatch.setattr(os_.sheet_service, "write_range",
+                        lambda _ws, rng, body, raw=False: ws.writes.append((rng, body)))
+    r = os_.integrate_ordering("20260524")
+    assert r["rows"] == 2
+    assert [a["chart_no"] for a in r["appended"]] == ["999"]
+    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    assert body[1][5] == "999"
+    assert body[1][1] == "許志新"
+    assert body[1][2] == "許春芳"
+    assert body[1][6] == "Pulmonary HTN"   # T from sub-table
+    assert body[1][4] == "待會診"          # R from sub-table H 註記
+    assert body[1][0] == "2"               # renumbered
+
+
+def test_integrate_refreshes_name_from_subtable(monkeypatch):
+    """existing N-V 名字過時 (帶 '?') → integrate 用子表格 EMR 校正後的名字."""
+    existing = [
+        ["1", "Z", "王小明?", "", "", "111", "", "", ""],
+    ]
+    sub_grid = [
+        _pad(["Z（1人）"]),
+        _pad(["姓名", "病歷", "EMR", "", "", "術前診斷", "預計心導管", "註記"]),
+        _pad(["王小銘", "111", "", "", "", "CAD", "PCI", ""]),
+        _pad([]),
+    ]
+    ws = _FakeWS()
+    monkeypatch.setattr(os_.sheet_service, "get_worksheet", lambda d: ws)
+    monkeypatch.setattr(os_.sheet_service, "read_range",
+                        lambda _ws, rng: existing if rng.startswith("N") else sub_grid)
+    monkeypatch.setattr(os_.sheet_service, "write_range",
+                        lambda _ws, rng, body, raw=False: ws.writes.append((rng, body)))
+    os_.integrate_ordering("20260524")
+    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    assert body[0][2] == "王小銘"
+
+
 def test_sync_clears_trailing_rows_when_shorter(monkeypatch):
     """If new block is shorter than old, leftover N-V rows should be cleared."""
     existing = [

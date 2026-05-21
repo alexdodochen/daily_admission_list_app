@@ -759,9 +759,17 @@ def _enrich(patients: list[dict], admit_date: str) -> list[dict]:
 
 # --------------------------------- high-level ---------------------------------
 
-async def verify(admit_date: str) -> dict:
-    """Returns a report: per-patient OK / MISSING / SKIP."""
+async def verify(admit_date: str, overrides: dict | None = None) -> dict:
+    """Returns a report: per-patient OK / MISSING / SKIP.
+
+    `overrides`: the user's manual edits from the dry-run (預覽排程) table —
+    same shape as `keyin()` takes. Critically this carries the 「不排」 toggle
+    so a patient the user un-checked in the preview is NOT cross-checked /
+    counted as missing. (Field bug 2026-05-21 #6/#7: un-checking 不排 in step 1
+    had no effect on step 2 對照.)
+    """
     patients = _enrich(read_patients(admit_date), admit_date)
+    _apply_overrides(patients, overrides)
     to_check = [p for p in patients if not p["skip"]]
     skipped  = [p for p in patients if p["skip"]]
 

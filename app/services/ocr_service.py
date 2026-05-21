@@ -369,12 +369,6 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc) -> dict:
             if ch:
                 chart_loc[ch] = doc
 
-    new_by_chart: dict[str, dict] = {}
-    for p in new_patients:
-        ch = (p.get("chart_no") or "").strip()
-        if ch:
-            new_by_chart[ch] = p
-
     removed_done: list[str] = []
     added_done: list[dict] = []
     unattached_added: list[dict] = []
@@ -405,11 +399,26 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc) -> dict:
     #    NEVER touched on a re-upload (2026-05-20 rule). The diff is still
     #    surfaced to the UI for information, but sub-table state stays put.
 
-    # 3) Added: append to their A-L doctor's sub-table (auto-create if missing)
-    for a in diff.get("added", []):
-        ch = a["chart_no"]
-        doc = a.get("doctor") or (new_by_chart.get(ch) or {}).get("doctor", "")
-        name = a.get("name") or (new_by_chart.get(ch) or {}).get("name", "")
+    # 3) Reconcile sub-tables against the FULL new main patient list.
+    #    Rule (user, 2026-05-21): membership is decided by 病歷號 ONLY — never
+    #    by 姓名/年齡 (OCR misreads those). For every chart in the new main:
+    #      * already in a sub-table  → leave it untouched (no duplicate, no
+    #        re-write — "病歷號相同就不用更動").
+    #      * missing from every sub-table → append it to its doctor's block.
+    #    Iterating the whole main list (not just diff.added) means a sheet
+    #    whose main / sub-table drifted apart self-heals on the next re-upload
+    #    — and re-uploading a screenshot can never duplicate an existing
+    #    sub-table row. (Field bug 2026-05-21: main 9 / sub-table 10.)
+    seen_charts: set[str] = set()
+    for p in new_patients:
+        ch = (p.get("chart_no") or "").strip()
+        if not ch or ch in seen_charts:
+            continue
+        seen_charts.add(ch)
+        if ch in chart_loc:
+            continue  # already in a sub-table — same 病歷號, don't touch
+        name = (p.get("name") or "").strip()
+        doc = (p.get("doctor") or "").strip()
         if doc:
             _ensure_doctor(doc)
             subs_by_doctor[doc].append([name, ch, "", "", "", "", "", ""])

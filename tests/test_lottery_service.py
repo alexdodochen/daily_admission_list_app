@@ -214,6 +214,36 @@ def test_normalize_weekday_folds_xingqi_to_zhou():
     assert ls._normalize_weekday_label("星期日") == "週日"
 
 
+def test_lottery_carries_subtable_note_to_R(monkeypatch):
+    """子表格 H 註記 → 首次抽籤寫入 N-V R 欄 (field bug 2026-05-21 #2)."""
+    from app.services import ordering_service
+
+    subs = {
+        "Z": [{"name": "甲", "chart_no": "111", "diagnosis": "CAD",
+               "cathlab": "PCI", "note": "不排導管", "manual": ""}],
+    }
+    monkeypatch.setattr(ls, "read_lottery_tickets", lambda wd: {})
+    monkeypatch.setattr(ordering_service, "read_doctor_subtables",
+                        lambda d: {doc: list(pts) for doc, pts in subs.items()})
+
+    writes: list = []
+
+    class _WS:
+        def update_cell(self, *a, **kw): pass
+
+    monkeypatch.setattr(ls.sheet_service, "get_worksheet", lambda d: _WS())
+    monkeypatch.setattr(ls.sheet_service, "read_range", lambda *a, **kw: [])
+    monkeypatch.setattr(ls.sheet_service, "write_range",
+                        lambda _ws, rng, body, raw=False: writes.append((rng, body)))
+    monkeypatch.setattr(ls.sheet_service, "clear_range", lambda *a, **kw: None)
+    monkeypatch.setattr(ls.sheet_service, "ensure_chart_text_format", lambda ws: None)
+
+    ls.lottery_with_pins("20260524", weekday="", seed=0)
+    body = next(w for w in writes if w[0].startswith("N2:V"))[1]
+    assert body[0][4] == "不排導管"   # R ← 子表格 H 註記
+    assert body[0][3] == ""           # Q (備註住服) stays empty
+
+
 def test_read_lottery_tickets_matches_xingqi_row(monkeypatch):
     """The 5/26 actual failure mode: sheet cell says 『星期三』, JS sends 『週三』.
     Before this fix tickets came back empty → 劉嚴文 randomly排到第一位.

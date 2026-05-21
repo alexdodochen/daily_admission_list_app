@@ -1576,19 +1576,58 @@ function setupStep4() {
     box.innerHTML = '<p class="hint">讀取入院序…</p>';
     try {
       const r = await api(`/api/sheet/read?date=${encodeURIComponent(date)}`);
-      const rows = (r.ordering || []).slice(1)
-        .filter(row => (row || []).some(c => (c || '').toString().trim()));
+      // r.ordering[i] = sheet row i+1 (row 1 = header). Keep the absolute sheet
+      // row so the editable 備註(住服) cell can write straight back.
+      const rows = (r.ordering || [])
+        .map((row, i) => ({ cells: row || [], sheetRow: i + 1 }))
+        .slice(1)
+        .filter(o => o.cells.some(c => (c || '').toString().trim()));
       if (!rows.length) { box.innerHTML = '<p class="hint">（入院序無資料）</p>'; return; }
       const esc = s => String(s == null ? '' : s)
         .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
       const thead = '<tr>' + ORDER_COLS.map(h => `<th>${esc(h)}</th>`).join('') + '</tr>';
-      const tbody = rows.map(row =>
-        '<tr>' + ORDER_COLS.map((_, c) => `<td>${esc(row[c] || '')}</td>`).join('') + '</tr>'
-      ).join('');
+      // 備註(住服) = ORDER_COLS index 3 → Sheet col Q (col 17). Editable + synced.
+      const tbody = rows.map(o => '<tr>' + ORDER_COLS.map((_, c) => {
+        const v = esc(o.cells[c] || '');
+        if (c === 3) {
+          return `<td class="ord-q-edit" contenteditable="true" data-row="${o.sheetRow}" `
+               + `data-col="17" title="點一下可編輯，離開欄位自動存回 Google Sheet">${v}</td>`;
+        }
+        return `<td>${v}</td>`;
+      }).join('') + '</tr>').join('');
       box.innerHTML =
-        `<h3 style="margin:14px 0 6px">入院序結果（${rows.length} 位）</h3>` +
+        `<h3 style="margin:14px 0 6px">入院序結果（${rows.length} 位）` +
+        `<span class="hint" style="font-weight:400;font-size:12px">　• 備註(住服) 可直接點擊修改，離開欄位即存回 Sheet</span></h3>` +
         `<div style="overflow-x:auto"><table class="data order-result-table">` +
         `<thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`;
+      // Wire the editable 備註(住服) cells → /api/step4/cell on blur / Enter.
+      box.querySelectorAll('td.ord-q-edit').forEach(td => {
+        let orig = td.textContent;
+        const save = async () => {
+          const val = td.textContent.trim();
+          if (val === orig.trim()) return;
+          td.classList.remove('saved', 'save-err');
+          td.classList.add('saving');
+          try {
+            const fd = new FormData();
+            fd.append('date', date);
+            fd.append('row', td.dataset.row);
+            fd.append('col', td.dataset.col);
+            fd.append('value', val);
+            await api('/api/step4/cell', { method: 'POST', body: fd });
+            orig = val;
+            td.classList.remove('saving'); td.classList.add('saved');
+            setTimeout(() => td.classList.remove('saved'), 1500);
+          } catch (err) {
+            td.classList.remove('saving'); td.classList.add('save-err');
+            flash($('#s4-msg'), '✗ 備註(住服) 存回失敗：' + err.message, 'err');
+          }
+        };
+        td.addEventListener('blur', save);
+        td.addEventListener('keydown', e => {
+          if (e.key === 'Enter') { e.preventDefault(); td.blur(); }
+        });
+      });
     } catch (err) {
       box.innerHTML = `<p class="msg err">讀取入院序失敗：${err.message}</p>`;
     }
@@ -1649,7 +1688,12 @@ function setupStep4() {
       flash($('#s4-msg'), '整合 N-W 中…', 'ok');
       try {
         const r = await api('/api/step4/integrate', { method: 'POST', body: fd });
-        flash($('#s4-msg'), `✓ 已整合 ${r.rows} 筆到 ${r.range}`, 'ok');
+        const appended = (r.appended || []);
+        const addNote = appended.length
+          ? `（補進 ${appended.length} 位原本不在入院序的病人：` +
+            appended.map(a => `${a.doctor} ${a.name}`).join('、') + '）'
+          : '';
+        flash($('#s4-msg'), `✓ 已整合 ${r.rows} 筆到 ${r.range}${addNote}`, 'ok');
         await renderOrderResult(date);
       } catch (err) {
         flash($('#s4-msg'), '✗ ' + err.message, 'err');
@@ -1810,6 +1854,25 @@ function setupStep5() {
     });
   };
 
+  // Collect the user's manual edits from the dry-run (預覽排程) table — the
+  // 排 checkbox, 導管日期, second doctor, etc. Shared by 對照 (verify) and
+  // key in so un-checking 不排 in step 1 is honoured by BOTH later steps.
+  const collectPlanOverrides = () => {
+    const ov = {};
+    const isoToSlash = s => String(s || '').replace(/-/g, '/');
+    out().querySelectorAll('.plan-ov').forEach(el => {
+      const c = el.dataset.chart, f = el.dataset.field;
+      if (!c || !f) return;
+      if (f === 'skip_inverted') {
+        // checkbox checked = include = skip:false
+        (ov[c] = ov[c] || {}).skip = !el.checked;
+        return;
+      }
+      (ov[c] = ov[c] || {})[f] = (f === 'cath_date') ? isoToSlash(el.value) : el.value;
+    });
+    return ov;
+  };
+
   $('#plan5-btn').addEventListener('click', async () => {
     const date = $('#date-input').value.trim();
     if (!date) return flash($('#s5-msg'), '請填日期', 'err');
@@ -1834,6 +1897,9 @@ function setupStep5() {
     await withBusy($('#verify5-btn'), '比對中…', async () => {
     flash($('#s5-msg'), '登入 WEBCVIS 查詢中…', 'ok');
     const fd = new FormData(); fd.append('date', date);
+    // Pass the preview table's 不排 toggles so 對照 honours them too.
+    const ovV = collectPlanOverrides();
+    if (Object.keys(ovV).length) fd.append('overrides', JSON.stringify(ovV));
     try {
       const r = await api('/api/step5/verify', { method: 'POST', body: fd });
       const ok  = r.found.map(p => `<tr class="ok"><td>✓ 已在排程</td><td>${p.cath_date}</td><td>${p.doctor}</td><td>${escName(p.name)}</td><td>${p.chart}</td></tr>`).join('');
@@ -1857,23 +1923,7 @@ function setupStep5() {
     // Special handling for the 排 checkbox (data-field=skip_inverted → skip=!checked)
     // and the 導管日期 input (input[type=date] returns YYYY-MM-DD → backend wants
     // YYYY/MM/DD for cath_date).
-    const ov = {};
-    const isoToSlash = s => String(s || '').replace(/-/g, '/');
-    out().querySelectorAll('.plan-ov').forEach(el => {
-      const c = el.dataset.chart, f = el.dataset.field;
-      if (!c || !f) return;
-      let v;
-      if (f === 'skip_inverted') {
-        // Checkbox checked = include in keyin = skip=false
-        (ov[c] = ov[c] || {}).skip = !el.checked;
-        return;
-      } else if (f === 'cath_date') {
-        v = isoToSlash(el.value);
-      } else {
-        v = el.value;
-      }
-      (ov[c] = ov[c] || {})[f] = v;
-    });
+    const ov = collectPlanOverrides();
     // Show cancel button while keyin runs. op_id is computed from date,
     // matching the backend (`step5_{date}`).
     const cancelBtn5 = $('#cancel5-btn');
