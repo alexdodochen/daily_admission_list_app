@@ -206,6 +206,7 @@
   const close   = document.getElementById('viewer-close');
   const select  = document.getElementById('viewer-date-select');
   const refresh = document.getElementById('viewer-refresh');
+  const delBtn  = document.getElementById('viewer-delete-btn');
   const msg     = document.getElementById('viewer-msg');
   const body    = document.getElementById('viewer-body');
   if (!link || !modal) return;
@@ -321,12 +322,27 @@
       fd.append('row', row);
       fd.append('col', col);
       fd.append('value', next);
-      const r = await fetch('/api/sheet/write_cell', { method: 'POST', body: fd });
-      if (!r.ok) throw new Error(await r.text());
+      const resp = await fetch('/api/sheet/write_cell', { method: 'POST', body: fd });
+      if (!resp.ok) throw new Error(await resp.text());
+      const r = await resp.json().catch(() => ({}));
       td.setAttribute('data-orig', next);
       td.classList.remove('viewer-cell-saving');
       td.classList.add('viewer-cell-saved');
       setTimeout(() => td.classList.remove('viewer-cell-saved'), 1200);
+      // Live-mirror: 備註↔註記 / 術前診斷 / 預計心導管 — if the server
+      // copied this edit to its twin cell, reflect it in the open viewer too.
+      const mr = r && r.mirror;
+      if (mr && mr.mirrored && mr.target_row && mr.target_col) {
+        const twin = body.querySelector(
+          `td[data-row="${mr.target_row}"][data-col="${mr.target_col}"]`);
+        if (twin) {
+          twin.innerText = next;
+          twin.setAttribute('data-orig', next);
+          twin.classList.add('viewer-cell-saved');
+          setTimeout(() => twin.classList.remove('viewer-cell-saved'), 1200);
+        }
+        setMsg('✓ 已儲存，並同步到' + (mr.target || '對應欄位'), 'ok');
+      }
     } catch (err) {
       td.classList.remove('viewer-cell-saving');
       td.classList.add('viewer-cell-error');
@@ -427,6 +443,8 @@
         b.classList.toggle('active', b === btn));
       body.innerHTML = `<p class="hint">已切換到 ${src === 'schedule' ? '📅 排班' : '📥 每日入院清單'}，請選分頁。</p>`;
       currentSheet = '';
+      // 批次刪除只支援入院 Sheet 的日期分頁
+      if (delBtn) delBtn.style.display = (src === 'admission') ? '' : 'none';
       if (_sheetListCache) populateSelectForSource(src);
       else loadSheets();
     });
@@ -469,6 +487,79 @@
   });
   select.addEventListener('change', () => loadSheet(select.value));
   refresh.addEventListener('click', () => loadSheets());
+
+  // ---- batch-delete date worksheets (admission YYYYMMDD only) ----
+  function renderDeletePanel() {
+    const adm = (_sheetListCache &&
+      (_sheetListCache.admission || _sheetListCache.sheets)) || [];
+    const dates = adm.filter(isYmd).sort((a, b) => b.localeCompare(a));
+    if (!dates.length) {
+      body.innerHTML = '<p class="viewer-empty">入院 Sheet 目前沒有可刪除的日期分頁。</p>';
+      return;
+    }
+    const today = todayYmd();
+    const rows = dates.map(d =>
+      `<label class="del-row"><input type="checkbox" class="del-chk" value="${d}">` +
+      `<span>${d}${d === today ? '　← 今天' : ''}</span></label>`).join('');
+    body.innerHTML = `
+      <div class="viewer-section del-panel">
+        <h3>🗑 批次刪除日期分頁（入院 Sheet）</h3>
+        <p class="del-warn">⚠ 刪除後<b>無法復原</b> — 整個日期分頁的入院名單、入院序、子表格都會一起消失。
+          這裡只列出 YYYYMMDD 日期分頁；設定類分頁（抽籤表 / 下拉選單 / 值班總數統計…）與排班 Sheet 不會被刪。</p>
+        <div class="del-tools">
+          <button type="button" id="del-all">全選</button>
+          <button type="button" id="del-none">全不選</button>
+          <button type="button" id="del-go" class="btn-warn">🗑 刪除勾選的分頁</button>
+        </div>
+        <div class="del-list">${rows}</div>
+      </div>`;
+    const chks = () => Array.from(body.querySelectorAll('.del-chk'));
+    body.querySelector('#del-all').addEventListener('click',
+      () => chks().forEach(c => { c.checked = true; }));
+    body.querySelector('#del-none').addEventListener('click',
+      () => chks().forEach(c => { c.checked = false; }));
+    body.querySelector('#del-go').addEventListener('click', async () => {
+      const chosen = chks().filter(c => c.checked).map(c => c.value);
+      if (!chosen.length) { setMsg('沒有勾選任何分頁', 'err'); return; }
+      const preview = chosen.length > 12
+        ? chosen.slice(0, 12).join('、') + ` …（共 ${chosen.length} 個）`
+        : chosen.join('、');
+      if (!confirm(`確定刪除這 ${chosen.length} 個日期分頁嗎？此動作無法復原：\n\n${preview}`)) return;
+      if (chosen.includes(todayYmd()) &&
+          !confirm('⚠ 你勾選的分頁包含「今天」，確定要連今天一起刪掉？')) return;
+      setMsg('刪除中…', 'ok');
+      try {
+        const fd = new FormData();
+        fd.append('names_json', JSON.stringify(chosen));
+        const r = await api('/api/sheet/delete', { method: 'POST', body: fd });
+        const okN = (r.deleted || []).length;
+        const fails = r.failed || [];
+        _sheetListCache = null;        // force a fresh tab list
+        await loadSheets();
+        renderDeletePanel();           // re-render the now-shorter list
+        if (fails.length) {
+          const why = fails.map(f => `${f.name}（${f.reason}）`).join('；');
+          setMsg(`✓ 已刪 ${okN} 個；✗ ${fails.length} 個未刪：${why}`, 'err');
+        } else {
+          setMsg(`✓ 已刪除 ${okN} 個日期分頁`, 'ok');
+        }
+      } catch (err) {
+        setMsg('✗ ' + err.message, 'err');
+      }
+    });
+    setMsg(`批次刪除：共 ${dates.length} 個日期分頁可選`, 'ok');
+  }
+
+  if (delBtn) {
+    delBtn.addEventListener('click', () => {
+      if (_currentSrc !== 'admission') {
+        setMsg('批次刪除只支援入院 Sheet 的日期分頁', 'err');
+        return;
+      }
+      if (_sheetListCache) renderDeletePanel();
+      else loadSheets().then(renderDeletePanel);
+    });
+  }
 })();
 
 

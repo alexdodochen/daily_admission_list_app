@@ -423,13 +423,23 @@ async def api_step4_lottery(date: str = Form(...),
 @app.post("/api/step4/cell")
 async def api_step4_cell(date: str = Form(...), row: int = Form(...),
                           col: int = Form(...), value: str = Form("")):
-    """Generic single-cell writeback for inline editing (F/G columns)."""
+    """Generic single-cell writeback for inline editing (F/G/H, 備註(住服)…).
+
+    After the write, mirror 備註↔註記 / 術前診斷 / 預計心導管 to the twin
+    cell in the other block (N-V ordering ↔ sub-table) so an edit in any UI
+    keeps the whole sheet consistent.
+    """
     try:
         ws = sheet_service.get_worksheet(date)
         if ws is None:
             raise ValueError(f"找不到工作表 {date}")
         ws.update_cell(row, col, value)
-        return {"ok": True}
+        mirror = {"mirrored": False}
+        try:
+            mirror = ordering_service.propagate_field_edit(date, row, col, value)
+        except Exception:
+            pass  # mirroring is best-effort — never fail the primary write
+        return {"ok": True, "mirror": mirror}
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -740,12 +750,76 @@ async def api_sheet_write_cell(sheet: str = Form(...),
             except Exception:
                 pass
         ws.update_cell(row, col, value)
+        # On an admission date sheet, mirror 備註/術前診斷/預計心導管 edits
+        # between the N-V ordering block and the sub-tables so the 查閱
+        # viewer stays consistent with Step 2/3/4.
+        mirror = {"mirrored": False}
+        if source != "schedule" and name.isdigit() and len(name) == 8:
+            try:
+                mirror = ordering_service.propagate_field_edit(
+                    name, row, col, value)
+            except Exception:
+                pass
         return {"ok": True, "sheet": name, "row": row, "col": col,
-                "value": value}
+                "value": value, "mirror": mirror}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+@app.post("/api/sheet/delete")
+async def api_sheet_delete(names_json: str = Form(...)):
+    """Batch-delete date worksheets from the ADMISSION spreadsheet.
+
+    HARD GUARDRAIL (irreversible op): only tabs whose name is exactly
+    YYYYMMDD (8 digits) are deletable. Config tabs (主治醫師抽籤表 / 下拉選單
+    / 值班總數統計 / 主治醫師導管時段表 / 改期清單 …) and the whole 排班
+    spreadsheet are NEVER touched — any non-date name is rejected 400, even
+    if the UI somehow sent it. The last remaining worksheet is never deleted
+    (a spreadsheet must keep ≥1).
+    """
+    import json as _json
+    import re as _re
+    try:
+        names = _json.loads(names_json or "[]") or []
+    except Exception:
+        raise HTTPException(400, "names_json 格式錯誤")
+    names = [str(n).strip() for n in names if str(n).strip()]
+    if not names:
+        raise HTTPException(400, "沒有選取任何分頁")
+    bad = [n for n in names if not _re.fullmatch(r"\d{8}", n)]
+    if bad:
+        raise HTTPException(
+            400, f"只能刪除 YYYYMMDD 日期分頁，這些不允許刪除：{'、'.join(bad)}")
+    try:
+        sh = sheet_service.get_spreadsheet()
+        existing = {ws.title: ws for ws in sh.worksheets()}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    deleted: list[str] = []
+    failed: list[dict] = []
+    remaining = len(existing)
+    for n in names:
+        ws = existing.get(n)
+        if ws is None:
+            failed.append({"name": n, "reason": "找不到此分頁"})
+            continue
+        if remaining <= 1:
+            failed.append({"name": n, "reason": "這是最後一個分頁，不能刪除"})
+            continue
+        try:
+            sh.del_worksheet(ws)
+            deleted.append(n)
+            remaining -= 1
+        except Exception as e:
+            failed.append({"name": n, "reason": str(e)})
+    if deleted:
+        try:
+            sheet_service.reset_cache()
+        except Exception:
+            pass
+    return {"ok": True, "deleted": deleted, "failed": failed}
 
 
 @app.get("/api/sheet/raw")

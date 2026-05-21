@@ -141,6 +141,61 @@ def test_bug_report_save_without_images_is_plain_txt(client, tmp_path, monkeypat
     assert list((tmp_path / "bug_reports").glob("*.txt"))
 
 
+def test_sheet_delete_rejects_non_date_tabs(client, monkeypatch):
+    """Batch-delete refuses any tab name that isn't exactly YYYYMMDD —
+    config tabs (主治醫師抽籤表 …) can never be deleted."""
+    import json as _json
+    deleted: list = []
+
+    class FakeWS:
+        def __init__(self, title): self.title = title
+
+    class FakeSH:
+        def __init__(self):
+            self._ws = [FakeWS("20260520"), FakeWS("20260521"),
+                        FakeWS("主治醫師抽籤表")]
+        def worksheets(self): return list(self._ws)
+        def del_worksheet(self, ws):
+            self._ws.remove(ws); deleted.append(ws.title)
+
+    fake = FakeSH()
+    monkeypatch.setattr(sheet_service, "get_spreadsheet", lambda: fake)
+
+    r = client.post("/api/sheet/delete",
+                     data={"names_json": _json.dumps(["主治醫師抽籤表"])})
+    assert r.status_code == 400
+    assert deleted == []
+
+    r = client.post("/api/sheet/delete",
+                     data={"names_json": _json.dumps(["20260520", "20260521"])})
+    assert r.status_code == 200
+    body = r.json()
+    assert sorted(body["deleted"]) == ["20260520", "20260521"]
+    assert body["failed"] == []
+    assert sorted(deleted) == ["20260520", "20260521"]
+
+
+def test_sheet_delete_keeps_last_worksheet(client, monkeypatch):
+    """A spreadsheet must keep ≥1 worksheet — the last one is never deleted."""
+    import json as _json
+
+    class FakeWS:
+        def __init__(self, title): self.title = title
+
+    class FakeSH:
+        def __init__(self): self._ws = [FakeWS("20260520")]
+        def worksheets(self): return list(self._ws)
+        def del_worksheet(self, ws): self._ws.remove(ws)
+
+    monkeypatch.setattr(sheet_service, "get_spreadsheet", lambda: FakeSH())
+    r = client.post("/api/sheet/delete",
+                     data={"names_json": _json.dumps(["20260520"])})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["deleted"] == []
+    assert body["failed"][0]["name"] == "20260520"
+
+
 def test_update_check_routes_through_updater(client, monkeypatch):
     async def fake_check():
         return {"available": True, "current": {"short": "aaa"},

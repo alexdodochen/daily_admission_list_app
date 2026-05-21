@@ -343,3 +343,81 @@ def sync_ordering_after_diff(date: str) -> dict:
         "removed":        removed,
         "doctor_changed": doctor_changed,
     }
+
+
+# ---------------------------- live field mirror ----------------------------
+# The N-V ordering block and the per-doctor sub-tables hold the SAME three
+# facts about each patient (matched by 病歷號). Editing either side anywhere
+# — Step 2/3 sub-table inputs, Step 4 入院序結果, the 查閱 viewer — mirrors
+# to the twin cell so the sheet never drifts.
+#   N-V:  R(18)=備註      T(20)=術前診斷  U(21)=預計心導管   [S(19)=病歷號]
+#   sub:  H(8)=註記       F(6)=術前診斷   G(7)=預計心導管    [B(2)=病歷號]
+_MIRROR_NV_COLS  = {18: "note", 20: "diagnosis", 21: "cathlab"}
+_MIRROR_SUB_COLS = {8: "note", 6: "diagnosis", 7: "cathlab"}
+_MIRROR_NV_OF    = {"note": 18, "diagnosis": 20, "cathlab": 21}
+_MIRROR_SUB_OF   = {"note": 8, "diagnosis": 6, "cathlab": 7}
+
+
+def propagate_field_edit(date: str, row: int, col: int, value: str) -> dict:
+    """Mirror a single-cell edit on a date sheet to its twin cell.
+
+    備註↔註記 / 術前診斷↔術前診斷 / 預計心導管↔預計心導管 are one fact each,
+    stored once in the N-V ordering block and once in the sub-table. Whenever
+    one is edited (any UI / the viewer), copy it to the other, matched by
+    病歷號. A column number alone is ambiguous (sub-table F/G/H = cols 6/7/8
+    collide with main-table 姓名/性別/年齡), so the edited `row` is checked
+    against the actual N-V / sub-table row maps — a main-table edit never
+    propagates. Returns {"mirrored": bool, "target": str, "field": str}.
+    """
+    if col not in _MIRROR_NV_COLS and col not in _MIRROR_SUB_COLS:
+        return {"mirrored": False}
+    ws = sheet_service.get_worksheet(date)
+    if ws is None:
+        return {"mirrored": False}
+
+    # chart_no ↔ row maps for both blocks
+    tables = read_doctor_subtables(date)
+    sub_by_row: dict[int, str] = {}
+    sub_by_chart: dict[str, int] = {}
+    for pts in tables.values():
+        for p in pts:
+            ch = (p.get("chart_no") or "").strip()
+            if ch and p.get("row"):
+                sub_by_row[p["row"]] = ch
+                sub_by_chart.setdefault(ch, p["row"])
+
+    nv = sheet_service.read_range(ws, "N2:V200")
+    nv_by_row: dict[int, str] = {}
+    nv_by_chart: dict[str, int] = {}
+    for i, rr in enumerate(nv, start=2):
+        rr = (rr + [""] * 9)[:9]
+        ch = (rr[5] or "").strip()          # S 病歷號 = index 5
+        if ch:
+            nv_by_row[i] = ch
+            nv_by_chart.setdefault(ch, i)
+
+    # N-V cell edited → mirror into the sub-table
+    if col in _MIRROR_NV_COLS and row in nv_by_row:
+        field = _MIRROR_NV_COLS[col]
+        target_row = sub_by_chart.get(nv_by_row[row])
+        if not target_row:
+            return {"mirrored": False}
+        target_col = _MIRROR_SUB_OF[field]
+        ws.update_cell(target_row, target_col, value)
+        return {"mirrored": True, "field": field,
+                "target": f"子表格第 {target_row} 列",
+                "target_row": target_row, "target_col": target_col}
+
+    # sub-table cell edited → mirror into the N-V ordering block
+    if col in _MIRROR_SUB_COLS and row in sub_by_row:
+        field = _MIRROR_SUB_COLS[col]
+        target_row = nv_by_chart.get(sub_by_row[row])
+        if not target_row:
+            return {"mirrored": False}
+        target_col = _MIRROR_NV_OF[field]
+        ws.update_cell(target_row, target_col, value)
+        return {"mirrored": True, "field": field,
+                "target": f"入院序第 {target_row} 列",
+                "target_row": target_row, "target_col": target_col}
+
+    return {"mirrored": False}

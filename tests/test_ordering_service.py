@@ -420,6 +420,65 @@ def test_integrate_refreshes_name_from_subtable(monkeypatch):
     assert body[0][2] == "王小銘"
 
 
+# ---------------- propagate_field_edit (live N-V ↔ sub-table mirror) ----------------
+
+class _MirrorWS:
+    """Fake worksheet capturing update_cell calls."""
+    def __init__(self):
+        self.cells: list[tuple[int, int, str]] = []
+    def update_cell(self, r, c, v):
+        self.cells.append((r, c, v))
+
+
+def _setup_mirror(monkeypatch):
+    sub_grid = [
+        _pad(["Z（1人）"]),
+        _pad(["姓名", "病歷", "EMR", "", "", "術前診斷", "預計心導管", "註記"]),
+        _pad(["甲", "111", "", "", "", "CAD", "PCI", ""]),   # → sheet row 3
+        _pad([]),
+    ]
+    nv = [["1", "Z", "甲", "", "", "111", "CAD", "PCI", ""]]  # N2:V2 → sheet row 2
+    ws = _MirrorWS()
+    monkeypatch.setattr(os_.sheet_service, "get_worksheet", lambda d: ws)
+    monkeypatch.setattr(os_.sheet_service, "read_range",
+                        lambda _ws, rng: nv if rng.startswith("N") else sub_grid)
+    return ws
+
+
+def test_propagate_nv_edit_mirrors_to_subtable(monkeypatch):
+    """Editing N-V 備註 (col 18) copies into sub-table 註記 (col 8) by 病歷號."""
+    ws = _setup_mirror(monkeypatch)
+    r = os_.propagate_field_edit("20260524", 2, 18, "不排導管")
+    assert r["mirrored"] is True
+    assert r["field"] == "note"
+    assert ws.cells == [(3, 8, "不排導管")]
+
+
+def test_propagate_subtable_edit_mirrors_to_nv(monkeypatch):
+    """Editing sub-table 預計心導管 (col 7) copies into N-V 預計心導管 (col 21)."""
+    ws = _setup_mirror(monkeypatch)
+    r = os_.propagate_field_edit("20260524", 3, 7, "RHC")
+    assert r["mirrored"] is True
+    assert r["field"] == "cathlab"
+    assert ws.cells == [(2, 21, "RHC")]
+
+
+def test_propagate_ignores_main_table_edit(monkeypatch):
+    """col 6 is sub-table 術前診斷 AND main-table 姓名 — a row that is not a
+    sub-table patient row (e.g. a main-table row) must NOT propagate."""
+    ws = _setup_mirror(monkeypatch)
+    r = os_.propagate_field_edit("20260524", 99, 6, "王大明")
+    assert r["mirrored"] is False
+    assert ws.cells == []
+
+
+def test_propagate_ignores_non_mirror_column(monkeypatch):
+    ws = _setup_mirror(monkeypatch)
+    r = os_.propagate_field_edit("20260524", 2, 17, "員工眷屬")  # Q 備註(住服)
+    assert r["mirrored"] is False
+    assert ws.cells == []
+
+
 def test_sync_clears_trailing_rows_when_shorter(monkeypatch):
     """If new block is shorter than old, leftover N-V rows should be cleared."""
     existing = [
