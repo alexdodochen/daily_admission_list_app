@@ -155,6 +155,11 @@ Headers are the source of truth — `format_check_service.EXPECTED_MAIN_HEADER` 
 
 ## Status & pending direction
 
+**Delivered (Phase 20 — 2026-05-21 — bug-report screenshots + 查閱 viewer delete/sync, `aca3050` + `dfaa7ab`):**
+- **🐞 回報問題 screenshot upload** — the bug-report modal gains an image picker (≤10 images, 10 MB each, thumbnail preview). `bug_report.write_report_bundle()` bundles the scrubbed report + screenshots into one `.zip` under `DATA_DIR/bug_reports/`. Screenshots attach ONLY to the private 「② 存成檔案」 path — never the public GitHub path (a screenshot renders PHI into pixels, can't be auto-scrubbed; a prefilled-issue URL can't carry attachments). `/api/bug-report/save` takes `images: list[UploadFile]`.
+- **查閱 batch-delete date tabs** — 🗑 button in the viewer toolbar (admission source only). `POST /api/sheet/delete` deletes ONLY `^\d{8}$` admission date tabs; config tabs (主治醫師抽籤表/下拉選單/值班總數統計/…) and the 排班 spreadsheet are rejected 400 (server-side guardrail); the last worksheet is never deleted.
+- **Live field mirror** — `ordering_service.propagate_field_edit()` mirrors 備註↔註記 / 術前診斷 / 預計心導管 between the N-V ordering block and the sub-tables on every single-cell edit, matched by 病歷號. Wired into `/api/step4/cell` AND `/api/sheet/write_cell`, so edits in Step 2/3/4 or the 查閱 viewer all stay consistent. Column number alone is ambiguous (sub F/G/H = cols 6/7/8 vs main 姓名/性別/年齡) so the edited row is validated against the real row maps.
+
 **Delivered (Phase 19 — 2026-05-21 — 6-issue field-bug batch, GitHub #2-#7, `d7b3450`):**
 - **入院序少一位** — `/api/sheet/read` sliced the N-V ordering block by `main_end` (main A-L's last row). When N-V is longer than main A-L the trailing 序號 row was cut. N-V extent is now walked independently (col N/P until blank).
 - **`integrate_ordering` appends missing** — it used to only patch existing N-V rows; a sub-table patient absent from N-V is now appended (returns `appended`).

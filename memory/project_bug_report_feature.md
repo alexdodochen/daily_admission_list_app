@@ -19,8 +19,17 @@ Pieces:
   boolean config flags+scrubbed logs+scrubbed user context),
   `render_markdown()`, `build_issue_url()` (prefilled GitHub new-issue
   URL, body trimmed < ~6.5k, labels=bug), `write_report_file()` →
-  `DATA_DIR/bug_reports/bug_report_<ts>.txt`.
-- Endpoints `POST /api/bug-report/preview` + `/save`.
+  `DATA_DIR/bug_reports/bug_report_<ts>.txt`, `write_report_bundle()`
+  (2026-05-21) → `.zip` when screenshots attached (report.txt +
+  screenshot_NN.png), `MAX_IMAGES=10`.
+- Endpoints `POST /api/bug-report/preview` + `/save` (the latter takes
+  `images: list[UploadFile]`).
+
+**Screenshot upload (2026-05-21):** the modal has an image picker (≤10,
+10 MB each, thumbnail preview). Screenshots attach ONLY to the private
+`.zip` from the 「② 存成檔案」 path — NEVER the public GitHub path. A
+screenshot renders 病人姓名/病歷號 into the pixels and cannot be
+auto-scrubbed; and a prefilled-issue URL can't carry attachments anyway.
 - UI: topbar `🐞 回報問題` (`#bug-link`) + `#bug-modal`; `flash()` now
   stashes the last red error into `window.__lastError` to auto-fill the
   modal. IIFE-wrapped per [[subpage-iife-scope]].
@@ -40,4 +49,5 @@ PHI gate); nothing here makes a network call or auto-submits.
 - If logs start carrying a new secret shape, extend `bug_report` regexes
   + add a `test_bug_report.py` case (don't rely on the name-context
   catch-all).
-- Tests: `tests/test_bug_report.py` (6).
+- Tests: `tests/test_bug_report.py` (9) + `test_main_endpoints.py`
+  bug-report/save image-bundle cases.

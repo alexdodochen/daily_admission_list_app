@@ -6,6 +6,22 @@ originSessionId: 72454ca2-3f8b-459c-b668-ba750a7a2e97
 ---
 This repo (`daily_admission_list_app`, cloned at `C:\Users\dr\Downloads\Y\排班 Key班 DayList APP`) is the **public integration target** for a 3-card home (排班 / Key班 / 入院清單).
 
+State as of 2026-05-21 (Phase 20 — bug-report screenshots + 查閱 viewer delete/sync):
+
+**Delivered (Phase 20 — 2026-05-21 → aca3050, dfaa7ab):**
+- **🐞 回報問題 screenshot upload** — image picker (≤10, 10 MB each,
+  thumbnail preview). Screenshots bundle into the private `.zip` only,
+  never the public GitHub path. See [[bug-report-feature]].
+- **查閱 batch-delete date tabs** — 🗑 button in the viewer toolbar;
+  `POST /api/sheet/delete` deletes ONLY `^\d{8}$` admission date tabs;
+  config tabs + 排班 Sheet rejected 400; last worksheet never deleted.
+- **Live field mirror** — `ordering_service.propagate_field_edit`;
+  備註/術前診斷/預計心導管 sync between N-V and sub-tables on every
+  single-cell edit (Step 4 cell + viewer write_cell). See
+  [[corresponding-fields-must-mirror]].
+
+**Tests:** 400 → 420.
+
 State as of 2026-05-21 (Phase 19 — 6-issue field-bug batch from 5/24 test, GitHub #2-#7):
 
 **Delivered (Phase 19 — 2026-05-21 → d7b3450):**
