@@ -21,15 +21,29 @@ from __future__ import annotations
 
 import random
 import re
+from datetime import datetime
 from typing import Optional
 
 from . import sheet_service
 
 
-# Rule 16: 詹世鴻 is exempt from the 時段 group on Fridays (週五) — he must
-# fall into Group 2 (非時段組) even if listed in the lottery sheet's 週五 row.
-# Enforced in `lottery_with_pins` (the only active caller of read_lottery_tickets).
+# Rule 16 (clarified 2026-05-25): 詹世鴻 is exempt from the 時段 group ONLY
+# when his patients are admitted on a Friday — even if he's listed in some
+# weekday column of the lottery sheet. User rule:
+#   「如果詹在星期五有病人要住院，那他在星期五的入院序算非時段組，
+#    但詹的病人在星期四要住院的話當然要算時段組」
+# Gate is the ADMISSION DAY's weekday (not the op-day weekday parameter
+# passed for column lookup). Pre-fix: gated on weekday == 週五, which dropped
+# 詹 on every Thursday admission (op day = Friday) — wrong.
 FRIDAY_DROP_DOCTORS: tuple[str, ...] = ("詹世鴻",)
+
+
+def _admission_is_friday(date: str) -> bool:
+    """date is YYYYMMDD (the admission sheet name). True iff that date is a Friday."""
+    try:
+        return datetime.strptime(date, "%Y%m%d").weekday() == 4
+    except Exception:
+        return False
 
 
 # ---------------------------- main / lottery readers ----------------------------
@@ -230,8 +244,11 @@ def lottery_with_pins(date: str,
     doctor_pins  = {k: int(v) for k, v in (doctor_pins  or {}).items() if v}
 
     tickets = read_lottery_tickets(weekday) if weekday else {}
-    # Rule 16: drop 詹世鴻 from tickets on 週五 so he falls into Group 2.
-    if weekday == "週五":
+    # Rule 16: drop 詹世鴻 from tickets when ADMISSION day is Friday — his
+    # Friday admissions count as 非時段. Other days he uses the sheet column
+    # as-is. (Pre-fix gated on op-day=週五 which wrongly fired on every
+    # Thursday admission. Field bug 2026-05-25 #5/28.)
+    if _admission_is_friday(date):
         for _drop in FRIDAY_DROP_DOCTORS:
             tickets.pop(_drop, None)
     # Diagnostic: if user passed a weekday but no tickets were read, the
@@ -265,7 +282,8 @@ def lottery_with_pins(date: str,
                 "chart_no":  p.get("chart_no", ""),
                 "diagnosis": p.get("diagnosis", ""),
                 "cathlab":   p.get("cathlab", ""),
-                "note":      (p.get("note") or "").strip(),
+                "note":      (p.get("note")  or "").strip(),
+                "house":     (p.get("house") or "").strip(),
                 "manual":    (p.get("manual") or "").strip(),
             })
         by_doctor[doctor] = ordering_service.sort_by_manual_e(flat)
@@ -377,7 +395,7 @@ def lottery_with_pins(date: str,
             str(i),
             p["doctor"],
             p["name"],
-            "",                     # Q 備註(住服) — user marks manually
+            p.get("house", ""),     # Q 備註(住服) ← 子表格 I (2026-05-25 mirror)
             p.get("note", ""),      # R 備註 ← 子表格 H 註記 (field bug 2026-05-21 #2)
             p["chart_no"],
             p["diagnosis"],

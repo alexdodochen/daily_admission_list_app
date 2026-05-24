@@ -36,9 +36,11 @@ EXPECTED_ORDER_HEADER = [
     "病歷號", "術前診斷", "預計心導管", "改期",
 ]
 # Canonical SUB_HEADER row labels — aligned with daily-admission-list-public.
+# Column I (備註(住服)) added 2026-05-25 so the 住服 marker has a per-patient
+# home in the sub-table that mirrors to N-V Q.
 EXPECTED_SUB_HEADER = [
     "姓名", "病歷號", "EMR", "EMR摘要", "手動設定入院序",
-    "術前診斷", "預計心導管", "註記",
+    "術前診斷", "預計心導管", "註記", "備註(住服)",
 ]
 
 TITLE_RE = re.compile(r"^(.+)（(\d+)人）$")
@@ -129,7 +131,16 @@ def parse_structure(col_a: list[str]) -> dict:
 def check_issues(structure: dict,
                  main_header: list[str],
                  order_header: list[str],
-                 sub_headers: dict[int, list[str]] | None = None) -> list[dict]:
+                 sub_headers: dict[int, list[str]] | None = None,
+                 main_patients: list[dict] | None = None,
+                 sub_patients: list[dict] | None = None) -> list[dict]:
+    """
+    `main_patients`: list of {chart_no, name, doctor, row} from main A-L (col I).
+    `sub_patients`:  list of {chart_no, name, doctor, row} from every sub-table
+                     patient row (col B). Both optional — when omitted, the
+                     cross-block checks (duplicate doctor block, orphan,
+                     missing-from-subtable, doctor-not-in-main) are skipped.
+    """
     issues: list[dict] = []
 
     if main_header != EXPECTED_MAIN_HEADER:
@@ -150,7 +161,7 @@ def check_issues(structure: dict,
         if not sub_row or s.get("orphan"):
             continue
         actual = sub_headers.get(sub_row, [])
-        actual_padded = (actual + [""] * 8)[:8]
+        actual_padded = (actual + [""] * len(EXPECTED_SUB_HEADER))[:len(EXPECTED_SUB_HEADER)]
         if actual_padded != EXPECTED_SUB_HEADER:
             issues.append({
                 "type":     "sub_header_wrong",
@@ -194,6 +205,103 @@ def check_issues(structure: dict,
             })
         # prev_last for next iteration: use last patient or title+1 if empty
         prev_last = s["last_patient_row"] or s["subheader_row"] or s["title_row"]
+
+    # --- Cross-block content checks (only when main / sub patient lists supplied
+    # AND main is non-empty — without main data we can't decide what blocks
+    # are orphans). Test fixtures often skip these so we don't false-positive. ---
+    if main_patients and sub_patients is not None:
+        # 1. Duplicate doctor block — same doctor title appears 2+ times.
+        seen_doctors: dict[str, int] = {}
+        for s in structure["subs"]:
+            doc = s.get("doctor")
+            if doc and not s.get("orphan"):
+                seen_doctors[doc] = seen_doctors.get(doc, 0) + 1
+        for doc, count in seen_doctors.items():
+            if count > 1:
+                rows = [s["title_row"] for s in structure["subs"]
+                        if s.get("doctor") == doc and not s.get("orphan")]
+                issues.append({
+                    "type":    "duplicate_doctor_block",
+                    "doctor":  doc,
+                    "count":   count,
+                    "rows":    rows,
+                    "fixable": True,            # smart_rebuild merges them
+                })
+
+        # Normalize chart_no for matching (strip leading zeros).
+        def norm(c: str) -> str:
+            c = (c or "").strip()
+            return c.lstrip("0") or c
+
+        main_charts = {norm(p["chart_no"]) for p in main_patients
+                       if p.get("chart_no")}
+        sub_charts: dict[str, list[dict]] = {}
+        for p in sub_patients:
+            k = norm(p.get("chart_no", ""))
+            if not k:
+                continue
+            sub_charts.setdefault(k, []).append(p)
+        main_by_chart = {norm(p["chart_no"]): p for p in main_patients
+                         if p.get("chart_no")}
+
+        # 2. Orphan in sub-table: chart_no exists in sub-table but NOT in main.
+        for k, rows in sub_charts.items():
+            if k not in main_charts:
+                for p in rows:
+                    issues.append({
+                        "type":      "subtable_orphan_chart",
+                        "chart_no":  p["chart_no"],
+                        "name":      p.get("name", ""),
+                        "doctor":    p.get("doctor", ""),
+                        "row":       p.get("row"),
+                        "fixable":   True,      # smart_rebuild drops orphans
+                    })
+
+        # 3. Main chart missing from every sub-table.
+        for k, p in main_by_chart.items():
+            if k not in sub_charts:
+                issues.append({
+                    "type":     "main_chart_missing_from_subtable",
+                    "chart_no": p["chart_no"],
+                    "name":     p.get("name", ""),
+                    "doctor":   p.get("doctor", ""),
+                    "row":      p.get("row"),
+                    "fixable":  True,           # smart_rebuild adds it back
+                })
+
+        # 4. Sub-table block for a doctor who has no main patient.
+        main_doctors = {p.get("doctor", "") for p in main_patients
+                        if p.get("doctor")}
+        for s in structure["subs"]:
+            doc = s.get("doctor")
+            if doc and not s.get("orphan") and doc not in main_doctors:
+                # de-dup by doctor (one issue per doctor, not per duplicate block)
+                if not any(i["type"] == "subtable_doctor_not_in_main"
+                           and i["doctor"] == doc for i in issues):
+                    issues.append({
+                        "type":     "subtable_doctor_not_in_main",
+                        "doctor":   doc,
+                        "title_row": s["title_row"],
+                        "fixable":  True,       # smart_rebuild drops the block
+                    })
+
+        # 5. Doctor mismatch — chart's main doctor ≠ chart's sub-table doctor.
+        for k, rows in sub_charts.items():
+            if k not in main_by_chart:
+                continue
+            main_doc = (main_by_chart[k].get("doctor") or "").strip()
+            for p in rows:
+                sub_doc = (p.get("doctor") or "").strip()
+                if main_doc and sub_doc and main_doc != sub_doc:
+                    issues.append({
+                        "type":      "subtable_doctor_mismatch",
+                        "chart_no":  p["chart_no"],
+                        "name":      p.get("name", ""),
+                        "main_doctor": main_doc,
+                        "sub_doctor":  sub_doc,
+                        "row":       p.get("row"),
+                        "fixable":   True,      # smart_rebuild re-buckets by main
+                    })
 
     return issues
 
@@ -256,16 +364,57 @@ def check(date: str) -> dict:
 
     structure = parse_structure(col_a)
 
-    # Read each sub-table's subheader row (A:H) for SUB_HEADER validation.
+    # Read each sub-table's subheader row (A:I) for SUB_HEADER validation.
     sub_headers: dict[int, list[str]] = {}
     for s in structure["subs"]:
         row = s.get("subheader_row")
         if not row or s.get("orphan"):
             continue
-        got = sheet_service.read_range(ws, f"A{row}:H{row}")
+        got = sheet_service.read_range(ws, f"A{row}:I{row}")
         sub_headers[row] = (got[0] if got else [])
 
-    issues = check_issues(structure, main_header, order_header, sub_headers)
+    # Read main patients (chart_no in col I = idx 8, doctor in col D = idx 3,
+    # name in col F = idx 5) up to main_end.
+    main_patients: list[dict] = []
+    main_end = structure.get("main_end", 1)
+    if main_end >= 2:
+        body = sheet_service.read_range(ws, f"A2:L{main_end}")
+        for i, r in enumerate(body, start=2):
+            r = (list(r) + [""] * 12)[:12]
+            chart = (r[8] or "").strip()
+            if not chart:
+                continue
+            main_patients.append({
+                "row":      i,
+                "chart_no": chart,
+                "name":     (r[5] or "").strip(),
+                "doctor":   (r[3] or "").strip(),
+            })
+
+    # Read sub-table patient rows (col A = name, col B = chart_no) for every
+    # sub-table block, tagged with their block's doctor.
+    sub_patients: list[dict] = []
+    for s in structure["subs"]:
+        if s.get("orphan") or not s.get("first_patient_row"):
+            continue
+        doc = s.get("doctor", "")
+        rng = f"A{s['first_patient_row']}:B{s['last_patient_row']}"
+        body = sheet_service.read_range(ws, rng)
+        for i, r in enumerate(body):
+            r = (list(r) + ["", ""])[:2]
+            chart = (r[1] or "").strip()
+            if not chart:
+                continue
+            sub_patients.append({
+                "row":      s["first_patient_row"] + i,
+                "chart_no": chart,
+                "name":     (r[0] or "").strip(),
+                "doctor":   doc,
+            })
+
+    issues = check_issues(structure, main_header, order_header, sub_headers,
+                          main_patients=main_patients,
+                          sub_patients=sub_patients)
     return {"structure": structure, "issues": issues,
             "main_header": main_header, "order_header": order_header,
             "sub_headers": sub_headers}
@@ -336,7 +485,7 @@ def fix(date: str, types: Optional[list[str]] = None) -> dict:
         applied.append({"type": "order_header_wrong"})
     if want("sub_header_wrong"):
         for issue in [i for i in issues if i["type"] == "sub_header_wrong"]:
-            sheet_service.write_range(ws, f"A{issue['row']}:H{issue['row']}",
+            sheet_service.write_range(ws, f"A{issue['row']}:I{issue['row']}",
                                       [EXPECTED_SUB_HEADER], raw=False)
             applied.append(issue)
 
@@ -366,6 +515,27 @@ def fix(date: str, types: Optional[list[str]] = None) -> dict:
             _text_fmt_req(ws.id, 1, 2, main_end, 500),
         ]})
         applied.append({"type": "chart_text_format"})
+
+    # 6. Cross-block content issues (duplicate doctor block, orphan, missing,
+    # doctor not in main, doctor mismatch). All resolved by smart_rebuild —
+    # one call rebuilds the whole sub-table area dedup'd against main A-L.
+    # smart_rebuild preserves EMR/F/G/H/I per chart, so this is safe to chain.
+    REBUILD_TYPES = {
+        "duplicate_doctor_block", "subtable_orphan_chart",
+        "main_chart_missing_from_subtable",
+        "subtable_doctor_not_in_main", "subtable_doctor_mismatch",
+    }
+    rebuild_issues = [i for i in snapshot["issues"]
+                      if i["type"] in REBUILD_TYPES and want(i["type"])]
+    if rebuild_issues:
+        try:
+            from . import subtable_service
+            rb = subtable_service.smart_rebuild(date)
+            for i in rebuild_issues:
+                applied.append({**i, "rebuild": rb})
+        except Exception as e:
+            for i in rebuild_issues:
+                applied.append({**i, "rebuild_error": str(e)})
 
     final = check(date)
     return {"applied": applied,

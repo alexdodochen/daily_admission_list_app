@@ -265,7 +265,7 @@ def test_reupload_no_membership_change_is_noop(monkeypatch):
     # Existing row carries a user-keyed bed ("11A-01") OCR wouldn't know.
     keyed = ["", "", "", "李文煌", "", "甲", "", "", "111", "11A-01", "", ""]
     monkeypatch.setattr(ocr_service.sheet_service, "read_range",
-                        lambda ws, a1: [keyed] if a1 == "A2:L200" else [])
+                        lambda ws, a1: [keyed] if a1 == "A2:L500" else [])
     monkeypatch.setattr(ocr_service.sheet_service, "write_range",
                         lambda *a, **kw: write_calls.append(a))
     monkeypatch.setattr(ocr_service.sheet_service, "clear_range",
@@ -294,7 +294,7 @@ def test_reupload_no_membership_change_but_manual_edit_applies(monkeypatch):
              "111", "11A-01", "VIP", ""]
     monkeypatch.setattr(
         ocr_service.sheet_service, "read_range",
-        lambda ws, a1: [keyed] if a1 == "A2:L200" else [],
+        lambda ws, a1: [keyed] if a1 == "A2:L500" else [],
     )
     def fake_write(ws, a1, body, raw=False):
         written["a1"] = a1
@@ -331,7 +331,7 @@ def test_reupload_no_edits_when_snapshot_matches_is_still_noop(monkeypatch):
     monkeypatch.setattr(ocr_service.sheet_service, "ensure_chart_text_format",
                         lambda ws: None)
     monkeypatch.setattr(ocr_service.sheet_service, "read_range",
-        lambda ws, a1: [_ex("111", "甲", "李文煌")] if a1 == "A2:L200" else [])
+        lambda ws, a1: [_ex("111", "甲", "李文煌")] if a1 == "A2:L500" else [])
     monkeypatch.setattr(ocr_service.sheet_service, "write_range",
                         lambda *a, **kw: write_calls.append(a))
     monkeypatch.setattr(ocr_service.sheet_service, "clear_range",
@@ -343,6 +343,70 @@ def test_reupload_no_edits_when_snapshot_matches_is_still_noop(monkeypatch):
     )
     assert r["unchanged"] is True
     assert write_calls == []
+
+
+def test_reupload_does_not_read_subtable_rows_as_main(monkeypatch):
+    """Field bug 2026-05-25 (5/26 sheet): write_to_sheet read A2:L200 and
+    treated EVERY non-blank row as a kept main row — including sub-table
+    title / subheader / patient rows past main's real end. Symptoms:
+      (a) main A-L write extended into the sub-table area, leaving stray
+          main-shaped rows interleaved with sub-tables
+      (b) main_end_row passed to _apply_diff_to_subtables was inflated by
+          the sub-table row count, so the new sub-table block was written
+          BELOW the old blocks → 2 full copies of every doctor on the sheet
+      (c) genuinely-new patients ended up in the wrong row position
+    Fix: stop the existing-main read at the first blank or sub-table title.
+    """
+    class FakeWS:
+        id = 999
+    fake_ws = FakeWS()
+    written = {}
+    monkeypatch.setattr(ocr_service.sheet_service, "ensure_date_sheet",
+                        lambda d: fake_ws)
+    monkeypatch.setattr(ocr_service.sheet_service, "ensure_chart_text_format",
+                        lambda ws: None)
+    # The sheet has 1 real main patient at row 2, then blank rows 3-4,
+    # then a sub-table block starting at row 5. Reading A2:L500 returns
+    # everything; pre-fix code would treat the sub-table rows as main.
+    real_main = ["2026-05-26", "", "CV", "李文煌", "I25", "甲", "M", "65",
+                 "111", "11A", "", ""]
+    a2_l500 = [
+        real_main,
+        [""] * 12,
+        [""] * 12,
+        ["李文煌（1人）"] + [""] * 11,                # ← sub-table title
+        ["姓名", "病歷號"] + [""] * 10,               # ← subheader
+        ["甲", "111"] + [""] * 10,                     # ← sub-table patient
+    ]
+    monkeypatch.setattr(ocr_service.sheet_service, "read_range",
+                        lambda ws, a1: a2_l500 if a1 == "A2:L500" else
+                                         ([] if a1 == "A1:I500" else []))
+    def fake_write(ws, a1, body, raw=False):
+        written.setdefault("calls", []).append((a1, body))
+    monkeypatch.setattr(ocr_service.sheet_service, "write_range", fake_write)
+    monkeypatch.setattr(ocr_service.sheet_service, "clear_range",
+                        lambda *a, **kw: None)
+    monkeypatch.setattr(ocr_service, "_apply_diff_to_subtables",
+                        lambda *a, **kw: {"updated": False})
+
+    # New OCR: existing 甲 (111) kept verbatim + 乙 (222) added.
+    r = ocr_service.write_to_sheet(
+        "20260526",
+        [_new("111", "甲", "李文煌"), _new("222", "乙", "李文煌")],
+        allow_overwrite=True,
+    )
+    # Only ONE write to A2:L{end} should occur, and end must be 3
+    # (1 header + 1 kept + 1 added = 3 rows of main → A2:L3).
+    main_writes = [c for c in written["calls"] if c[0].startswith("A2:L")]
+    assert len(main_writes) == 1
+    a1, body = main_writes[0]
+    assert a1 == "A2:L3", (
+        f"Main write must end at L3 (header + 2 patients), not extend into "
+        f"sub-table area. Got {a1}, body rows={len(body)}"
+    )
+    assert len(body) == 2
+    assert body[0][8] == "111"   # 甲 kept
+    assert body[1][8] == "222"   # 乙 appended
 
 
 def test_reupload_keeps_kept_rows_verbatim_on_membership_change(monkeypatch):
@@ -360,7 +424,7 @@ def test_reupload_keeps_kept_rows_verbatim_on_membership_change(monkeypatch):
                 "111", "11A-01", "VIP", ""]
     monkeypatch.setattr(
         ocr_service.sheet_service, "read_range",
-        lambda ws, a1: [keyed111] if a1 == "A2:L200" else [],
+        lambda ws, a1: [keyed111] if a1 == "A2:L500" else [],
     )
     def fake_write(ws, a1, body, raw=False):
         written["a1"] = a1
@@ -738,14 +802,14 @@ def test_write_to_sheet_invokes_ordering_sync_after_diff(monkeypatch):
                         lambda d: fake_ws)
     # Pre-OCR sheet has 1 patient at chart 111
     pre_read = {
-        "A2:L200":  [_ex("111", "甲", "李文煌")],
-        "A1:H500":  [
-            ["實際住院日","開刀日","科別","主治醫師","主診斷(ICD)","姓名","性別","年齡"],
-            ["2026-05-01","","CV","李文煌","CAD","甲","","",],
-            [""] * 8, [""] * 8,
-            ["李文煌（1人）","","","","","","",""],
-            ["姓名","病歷號","EMR","summary","入院序","術前診斷","預計心導管","註記"],
-            ["甲","111","","","","CAD","PCI",""],
+        "A2:L500":  [_ex("111", "甲", "李文煌")],
+        "A1:I500":  [
+            ["實際住院日","開刀日","科別","主治醫師","主診斷(ICD)","姓名","性別","年齡",""],
+            ["2026-05-01","","CV","李文煌","CAD","甲","","","",],
+            [""] * 9, [""] * 9,
+            ["李文煌（1人）","","","","","","","",""],
+            ["姓名","病歷號","EMR","summary","入院序","術前診斷","預計心導管","註記","備註(住服)"],
+            ["甲","111","","","","CAD","PCI","",""],
         ],
     }
     monkeypatch.setattr(
@@ -818,7 +882,7 @@ def test_subtable_sync_shifts_down_when_main_grew_into_subtable_area(monkeypatch
     a1, _body = writes[-1]
     # Sub-table must start at row 8 (= main_end_row(5) + 1 + gap(2)), NOT
     # row 4 (the original title row that was clobbered by main growth).
-    assert a1.startswith("A8:H"), (
+    assert a1.startswith("A8:I"), (
         f"Sub-table block must shift down past new main. Got range {a1}"
     )
 
@@ -854,6 +918,6 @@ def test_subtable_sync_stays_in_place_when_main_didnt_grow(monkeypatch):
     a1, _ = writes[-1]
     # _build_grid: header(1) + 1 main(2) + 2 blanks(3,4) + title at row 5.
     # main_end_row=0 means "no shift constraint" → stays at requested_start=5.
-    assert a1.startswith("A5:H"), (
+    assert a1.startswith("A5:I"), (
         f"Without main growth signal, sub-table stays at original row. Got {a1}"
     )

@@ -16,9 +16,17 @@ Hard rules (CLAUDE.md 1, 17, 18 + feedback memories):
   - Sub-tables must be re-read fresh from the Sheet immediately before
     writing (E/F/G/H may have been edited since lottery).
 
-Sub-table layout (8 cols, D = placeholder since EMR summary retired 5/10):
+Sub-table layout (9 cols, D = placeholder since EMR summary retired 5/10):
   A=姓名 | B=病歷號 | C=EMR | D=EMR摘要(placeholder) | E=手動設定入院序
-  F=術前診斷 | G=預計心導管 | H=註記
+  F=術前診斷 | G=預計心導管 | H=註記 | I=備註(住服)
+
+Mirror contract (2026-05-25):
+  H (註記) ↔ R (備註)        — copy non-empty H over R; else preserve R
+  I (備註住服) ↔ Q (備註住服)  — copy non-empty I over Q; else preserve Q
+Edits in any UI (Step 3 cards, Step 4 sub-table inline, 查閱 viewer) mirror
+to the twin cell via propagate_field_edit. Q used to be preserved-only; now
+sub-table I is the source of truth for the 住服 marker so the user has one
+place to type it per patient.
 """
 from __future__ import annotations
 
@@ -48,7 +56,7 @@ ORDERING_HEADERS = [
 
 def parse_subtables_grid(grid: list[list[str]]) -> dict[str, list[dict]]:
     """
-    Pure helper: take an A1:H{n} grid and extract doctor sub-tables.
+    Pure helper: take an A1:I{n} grid and extract doctor sub-tables.
     D column is the retired-summary placeholder — captured into `summary`
     field but never used by ordering.
     """
@@ -61,7 +69,7 @@ def parse_subtables_grid(grid: list[list[str]]) -> dict[str, list[dict]]:
             i += 2  # skip title + sub-header
             patients = []
             while i < len(grid):
-                r = (grid[i] + [""] * 8)[:8]
+                r = (grid[i] + [""] * 9)[:9]
                 if not any(c.strip() for c in r):
                     break
                 if "人）" in r[0]:
@@ -76,6 +84,7 @@ def parse_subtables_grid(grid: list[list[str]]) -> dict[str, list[dict]]:
                     "diagnosis": r[5].strip(),  # F
                     "cathlab":   r[6].strip(),  # G
                     "note":      r[7].strip(),  # H
+                    "house":     r[8].strip(),  # I — 備註(住服)
                 })
                 i += 1
             tables[doctor] = patients
@@ -85,11 +94,11 @@ def parse_subtables_grid(grid: list[list[str]]) -> dict[str, list[dict]]:
 
 
 def read_doctor_subtables(date: str) -> dict[str, list[dict]]:
-    """Re-read fresh from the Sheet (rule 18: never cache E/F/G/H)."""
+    """Re-read fresh from the Sheet (rule 18: never cache E/F/G/H/I)."""
     ws = sheet_service.get_worksheet(date)
     if ws is None:
         raise ValueError(f"找不到工作表 {date}")
-    grid = sheet_service.read_range(ws, "A1:H500")
+    grid = sheet_service.read_range(ws, "A1:I500")
     return parse_subtables_grid(grid)
 
 
@@ -198,14 +207,16 @@ def integrate_ordering(date: str) -> dict:
     if not reordered:
         return {"rows": 0, "appended": []}
 
-    # Renumber 序號 + patch T/U + R from sub-tables; preserve Q (住服) + V (改期)
+    # Renumber 序號 + patch T/U + R/Q from sub-tables; preserve V (改期)
     # R (備註) <- sub-table H (註記) when H non-empty; else preserve existing R.
-    # Mirrors daily-admission-list-public mapping H → R (feedback_subtable_H_to_R_ordering).
+    # Q (備註住服) <- sub-table I (備註住服) when I non-empty; else preserve existing Q.
+    # Mirrors daily-admission-list-public + 2026-05-25 I↔Q parity rule.
     out: list[list[str]] = []
     for seq, r in enumerate(reordered, start=1):
         chart = r[5].strip()
         info = lookup.get(chart, {})
-        sub_note = (info.get("note") or "").strip()
+        sub_note  = (info.get("note")  or "").strip()
+        sub_house = (info.get("house") or "").strip()
         # P 姓名 ← sub-table (EMR-corrected + OCR-"?"-stripped) when available;
         # the existing N-V name can be stale (field bug 2026-05-21 #2).
         sub_name = (info.get("name") or "").strip()
@@ -213,8 +224,8 @@ def integrate_ordering(date: str) -> dict:
             str(seq),                                # N 序號
             r[1],                                    # O 主治醫師
             sub_name if sub_name else r[2],          # P 姓名 ← 子表格
-            r[3],                                    # Q 備註(住服) — preserve
-            sub_note if sub_note else r[4],          # R 備註 ← 子表格 H 註記
+            sub_house if sub_house else r[3],        # Q 備註(住服) ← 子表格 I
+            sub_note  if sub_note  else r[4],        # R 備註 ← 子表格 H
             r[5],                                    # S 病歷號
             info.get("diagnosis", r[6]),             # T 術前診斷
             info.get("cathlab",   r[7]),             # U 預計心導管
@@ -270,6 +281,7 @@ def sync_ordering_after_diff(date: str) -> dict:
                 "diagnosis": p.get("diagnosis", ""),
                 "cathlab":   p.get("cathlab", ""),
                 "note":      p.get("note", ""),
+                "house":     p.get("house", ""),
             }
             fresh_order.append((doc, ch))
 
@@ -294,13 +306,14 @@ def sync_ordering_after_diff(date: str) -> dict:
         new_doc = info["doctor"]
         if old_doc and new_doc and old_doc != new_doc:
             doctor_changed.append({"chart_no": chart, "old": old_doc, "new": new_doc})
-        sub_note = (info.get("note") or "").strip()
+        sub_note  = (info.get("note")  or "").strip()
+        sub_house = (info.get("house") or "").strip()
         kept.append([
             "",                # N — renumbered below
             new_doc,           # O
             info["name"] or (r[2] or "").strip(),
-            r[3],              # Q preserve
-            sub_note if sub_note else r[4],  # R ← 子表格 H 註記; fallback preserve
+            sub_house if sub_house else r[3],  # Q ← 子表格 I; fallback preserve
+            sub_note  if sub_note  else r[4],  # R ← 子表格 H; fallback preserve
             chart,             # S
             info["diagnosis"], # T refresh
             info["cathlab"],   # U refresh
@@ -313,7 +326,10 @@ def sync_ordering_after_diff(date: str) -> dict:
             continue
         info = chart_info[chart]
         kept.append([
-            "", doc, info["name"], "", info.get("note", ""), chart,
+            "", doc, info["name"],
+            info.get("house", ""),         # Q ← 子表格 I
+            info.get("note", ""),          # R ← 子表格 H
+            chart,
             info["diagnosis"], info["cathlab"], "",
         ])
         added.append({"chart_no": chart, "doctor": doc, "name": info["name"]})
@@ -346,16 +362,16 @@ def sync_ordering_after_diff(date: str) -> dict:
 
 
 # ---------------------------- live field mirror ----------------------------
-# The N-V ordering block and the per-doctor sub-tables hold the SAME three
+# The N-V ordering block and the per-doctor sub-tables hold the SAME four
 # facts about each patient (matched by 病歷號). Editing either side anywhere
 # — Step 2/3 sub-table inputs, Step 4 入院序結果, the 查閱 viewer — mirrors
 # to the twin cell so the sheet never drifts.
-#   N-V:  R(18)=備註      T(20)=術前診斷  U(21)=預計心導管   [S(19)=病歷號]
-#   sub:  H(8)=註記       F(6)=術前診斷   G(7)=預計心導管    [B(2)=病歷號]
-_MIRROR_NV_COLS  = {18: "note", 20: "diagnosis", 21: "cathlab"}
-_MIRROR_SUB_COLS = {8: "note", 6: "diagnosis", 7: "cathlab"}
-_MIRROR_NV_OF    = {"note": 18, "diagnosis": 20, "cathlab": 21}
-_MIRROR_SUB_OF   = {"note": 8, "diagnosis": 6, "cathlab": 7}
+#   N-V:  Q(17)=備註(住服) R(18)=備註      T(20)=術前診斷  U(21)=預計心導管   [S(19)=病歷號]
+#   sub:  I(9)=備註(住服)  H(8)=註記       F(6)=術前診斷   G(7)=預計心導管    [B(2)=病歷號]
+_MIRROR_NV_COLS  = {17: "house", 18: "note", 20: "diagnosis", 21: "cathlab"}
+_MIRROR_SUB_COLS = {9:  "house", 8: "note", 6: "diagnosis", 7: "cathlab"}
+_MIRROR_NV_OF    = {"house": 17, "note": 18, "diagnosis": 20, "cathlab": 21}
+_MIRROR_SUB_OF   = {"house": 9,  "note": 8,  "diagnosis": 6,  "cathlab": 7}
 
 
 def propagate_field_edit(date: str, row: int, col: int, value: str) -> dict:

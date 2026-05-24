@@ -188,6 +188,31 @@ def test_friday_drop_constant_is_a_collection():
     assert "詹世鴻" in ls.FRIDAY_DROP_DOCTORS
 
 
+def test_zhan_thursday_admission_with_friday_op_keeps_him_in_group1(monkeypatch):
+    """Field bug 2026-05-25 (5/28 lottery): 詹世鴻 has 3 Thursday admissions
+    whose op day is Friday → weekday="週五" parameter sent to lottery
+    (it's the op-day weekday for column lookup). Pre-fix Rule 16 fired on
+    `weekday=="週五"` and wrongly dropped 詹 to 非時段組 — but his patients
+    are admitted on Thursday, so per user rule they belong to 時段組. Rule 16
+    must gate on the ADMISSION DAY's weekday, not the op-day parameter."""
+    tickets = {"詹世鴻": 1, "鄭朝允": 1}
+    subs = {
+        "詹世鴻": [{"name": "p1", "chart_no": "C1"}],
+        "鄭朝允": [{"name": "p2", "chart_no": "C2"}],
+    }
+    _stub_friday_env(monkeypatch, tickets, subs)
+    # 2026-05-28 is THURSDAY admission; op_day Friday → weekday param 週五.
+    result = ls.lottery_with_pins("20260528", weekday="週五", seed=0)
+    assert "詹世鴻" in result["ticket_doctors"], \
+        "詹世鴻 must STAY in tickets (Group 1) when admission day is Thursday"
+
+
+def test_admission_helper_friday_detection():
+    assert ls._admission_is_friday("20260522") is True   # 2026-05-22 Fri
+    assert ls._admission_is_friday("20260528") is False  # 2026-05-28 Thu
+    assert ls._admission_is_friday("garbage") is False
+
+
 # ---------------- weekday normalization (5/26 root cause) ----------------
 
 def test_normalize_weekday_idempotent():
@@ -241,7 +266,38 @@ def test_lottery_carries_subtable_note_to_R(monkeypatch):
     ls.lottery_with_pins("20260524", weekday="", seed=0)
     body = next(w for w in writes if w[0].startswith("N2:V"))[1]
     assert body[0][4] == "不排導管"   # R ← 子表格 H 註記
-    assert body[0][3] == ""           # Q (備註住服) stays empty
+    assert body[0][3] == ""           # Q empty when sub I (house) absent
+
+
+def test_lottery_carries_subtable_house_to_Q(monkeypatch):
+    """2026-05-25: 子表格 I (備註住服) → 首次抽籤寫入 N-V Q 欄. Mirrors the
+    H→R rule so the 住服 marker has one canonical home (sub-table)."""
+    from app.services import ordering_service
+
+    subs = {
+        "Z": [{"name": "甲", "chart_no": "111", "diagnosis": "CAD",
+               "cathlab": "PCI", "note": "", "house": "V", "manual": ""}],
+    }
+    monkeypatch.setattr(ls, "read_lottery_tickets", lambda wd: {})
+    monkeypatch.setattr(ordering_service, "read_doctor_subtables",
+                        lambda d: {doc: list(pts) for doc, pts in subs.items()})
+
+    writes: list = []
+
+    class _WS:
+        def update_cell(self, *a, **kw): pass
+
+    monkeypatch.setattr(ls.sheet_service, "get_worksheet", lambda d: _WS())
+    monkeypatch.setattr(ls.sheet_service, "read_range", lambda *a, **kw: [])
+    monkeypatch.setattr(ls.sheet_service, "write_range",
+                        lambda _ws, rng, body, raw=False: writes.append((rng, body)))
+    monkeypatch.setattr(ls.sheet_service, "clear_range", lambda *a, **kw: None)
+    monkeypatch.setattr(ls.sheet_service, "ensure_chart_text_format", lambda ws: None)
+
+    ls.lottery_with_pins("20260524", weekday="", seed=0)
+    body = next(w for w in writes if w[0].startswith("N2:V"))[1]
+    assert body[0][3] == "V"          # Q ← 子表格 I 備註(住服)
+    assert body[0][4] == ""           # R empty when sub H absent
 
 
 def test_lottery_with_pins_groups_never_interleave(monkeypatch):

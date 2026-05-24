@@ -236,9 +236,10 @@ def _fake_read_range(col_a_values, main_header=None, order_header=None,
             return [main_header]
         if a1 == "N1:V1":
             return [order_header]
-        # SUB_HEADER row read: "A{n}:H{n}"
+        # SUB_HEADER row read: "A{n}:I{n}" (was A:H pre-2026-05-25 — col I
+        # added for 備註(住服)).
         import re as _re
-        m = _re.match(r"^A(\d+):H\1$", a1)
+        m = _re.match(r"^A(\d+):I\1$", a1)
         if m:
             return [sub_header]
         return []

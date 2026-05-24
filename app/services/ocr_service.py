@@ -5,6 +5,7 @@ Output columns match the date sheet's main data layout (A-L).
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from ..llm import get_llm, extract_json
@@ -39,7 +40,8 @@ OCR_PROMPT = """你是醫療排程助理。請把這張住院名單截圖轉成 
 # Applied to both `doctor` and `name` fields (some patients share a CV doctor's
 # surname; cheap to cover both).
 OCR_NAME_CORRECTIONS = {
-    "柯星諭": "柯呈諭",
+    "柯星諭": "柯呈諭",   # 呈/星 glyph collision
+    "劉獻文": "劉嚴文",   # 嚴/獻 glyph collision
 }
 
 
@@ -49,6 +51,26 @@ def _correct_ocr_name(s: str) -> str:
     # underlying glyph match was right but the LLM flagged it.
     bare = s.rstrip("?？").strip()
     return OCR_NAME_CORRECTIONS.get(bare, s)
+
+
+# Strings that match a known COLUMN HEADER LABEL — if the LLM mis-OCR's the
+# header row and returns it as a patient row, the resulting "patient" would
+# have doctor="主治醫師", name="姓名" etc. That row must be dropped, otherwise
+# `_apply_diff_to_subtables` creates a ghost "主治醫師（0人）" block on the
+# sheet (field bug 2026-05-25 on 5/28 sheet).
+_HEADER_LABEL_FRAGMENTS = {
+    "實際住院日", "開刀日", "科別", "主治醫師", "主診斷",
+    "姓名", "性別", "年齡", "病歷號碼", "病歷號", "病床號",
+    "入院提示", "住急",
+}
+
+
+def _looks_like_header_row(d: dict) -> bool:
+    """A row whose doctor/name fields literally repeat the column header
+    labels is almost certainly the OCR'd header row, not a real patient."""
+    doctor = (d.get("doctor") or "").strip()
+    name = (d.get("name") or "").strip()
+    return doctor in _HEADER_LABEL_FRAGMENTS or name in _HEADER_LABEL_FRAGMENTS
 
 
 async def ocr_image(image_bytes: bytes, mime: str = "image/png") -> list[dict]:
@@ -63,7 +85,7 @@ async def ocr_image(image_bytes: bytes, mime: str = "image/png") -> list[dict]:
     for row in data:
         if not isinstance(row, dict):
             continue
-        out.append({
+        normalized = {
             "admit_date":    str(row.get("admit_date", "")).strip(),
             "op_date":       str(row.get("op_date", "")).strip(),
             "department":    str(row.get("department", "")).strip(),
@@ -76,7 +98,10 @@ async def ocr_image(image_bytes: bytes, mime: str = "image/png") -> list[dict]:
             "bed":           str(row.get("bed", "")).strip(),
             "hint":          str(row.get("hint", "")).strip(),
             "urgent":        str(row.get("urgent", "")).strip(),
-        })
+        }
+        if _looks_like_header_row(normalized):
+            continue  # OCR'd the header row by mistake — skip
+        out.append(normalized)
     return out
 
 
@@ -280,9 +305,28 @@ def write_to_sheet(date: str, patients: list[dict],
     except Exception:
         pass  # best-effort — don't block the OCR write on a format API hiccup
 
-    existing = sheet_service.read_range(ws, "A2:L200")
-    while existing and not any((c or "").strip() for c in existing[-1]):
-        existing.pop()
+    # Read main A-L by walking FROM ROW 2 until we hit either a fully-blank
+    # row OR a sub-table title row (xxx（N人） in col A). Anything past that
+    # is sub-table area, NOT main — including it as "existing" would (a)
+    # inflate the kept row set with sub-table content read back as main
+    # cells, (b) overwrite the sub-table area when we write the new main,
+    # (c) push the sub-table rebuild's start_row past where the old blocks
+    # still live, leaving duplicate sub-tables behind. Field bug 2026-05-25:
+    # 5/26 sheet ended up with 2 full copies of every sub-table block + stray
+    # main-shaped rows interleaved after a re-upload.
+    #
+    # "Fully-blank" (not "col A blank") because main rows with no admit_date
+    # but a populated 病歷號 / 姓名 are legitimate (user keyed bed/hint only).
+    all_rows = sheet_service.read_range(ws, "A2:L500")
+    existing = []
+    _title_re = re.compile(r"^.+（\d+人）\s*$")
+    for row in all_rows:
+        padded = (list(row) + [""] * 12)[:12]
+        if _title_re.match((padded[0] or "").strip()):
+            break  # hit sub-table block — stop reading as main
+        if not any((c or "").strip() for c in padded):
+            break  # fully-blank row — main ended
+        existing.append(padded)
 
     if existing and not allow_overwrite:
         diff = diff_main_data(existing, patients)
@@ -311,7 +355,7 @@ def write_to_sheet(date: str, patients: list[dict],
     #   * Add / remove present → keep every kept patient's A-L row VERBATIM
     #     (never re-write keyed cells from OCR), only DROP removed-chart
     #     rows and APPEND new-chart rows; then reconcile sub-tables + N-V.
-    pre_grid = sheet_service.read_range(ws, "A1:H500")
+    pre_grid = sheet_service.read_range(ws, "A1:I500")
     diff = diff_main_data(existing, patients)
     # User manual edits (cells where final ≠ OCR snapshot). When the user
     # corrected a wrong OCR value in the UI, those edits MUST be applied to
@@ -413,13 +457,18 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc,
     """
     col_a = [(row[0] if row else "") for row in grid]
     structure = fmt_svc.parse_structure(col_a)
+    # Defensive filter: a block whose "doctor" matches a main-table column
+    # header label (主治醫師, 姓名, …) is a ghost block from a prior OCR bug
+    # where the LLM emitted the header row as a patient. Skip + don't re-emit.
     real_subs = [s for s in structure["subs"]
-                 if s.get("doctor") and not s.get("orphan")]
+                 if s.get("doctor") and not s.get("orphan")
+                 and s["doctor"] not in _HEADER_LABEL_FRAGMENTS]
     if not real_subs:
         return {"updated": False, "reason": "no existing sub-tables"}
 
     SUB_HEADER = ["姓名", "病歷號", "EMR", "EMR摘要", "手動設定入院序",
-                  "術前診斷", "預計心導管", "註記"]
+                  "術前診斷", "預計心導管", "註記", "備註(住服)"]
+    SUB_WIDTH = len(SUB_HEADER)  # 9 cols, A-I
 
     # Build current per-doctor patient lists. If the same doctor appears in
     # MULTIPLE existing sub-table blocks (sheet got duplicated by a prior bug),
@@ -439,7 +488,7 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc,
         if s["first_patient_row"] and s["last_patient_row"]:
             for r in range(s["first_patient_row"], s["last_patient_row"] + 1):
                 raw = grid[r - 1] if r - 1 < len(grid) else []
-                padded = ((raw or []) + [""] * 8)[:8]
+                padded = ((raw or []) + [""] * SUB_WIDTH)[:SUB_WIDTH]
                 ch = (padded[1] or "").strip()
                 if ch and ch in seen_charts_per_doc[doc]:
                     continue  # duplicate patient row across duplicate blocks
@@ -507,7 +556,7 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc,
         doc = (p.get("doctor") or "").strip()
         if doc:
             _ensure_doctor(doc)
-            subs_by_doctor[doc].append([name, ch, "", "", "", "", "", ""])
+            subs_by_doctor[doc].append([name, ch] + [""] * (SUB_WIDTH - 2))
             chart_loc[ch] = doc
             added_done.append({"chart_no": ch, "name": name, "doctor": doc})
         else:
@@ -526,13 +575,13 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc,
     block: list[list[str]] = []
     for i, doc in enumerate(doctor_order):
         rows = subs_by_doctor.get(doc, [])
-        block.append([f"{doc}（{len(rows)}人）", "", "", "", "", "", "", ""])
+        block.append([f"{doc}（{len(rows)}人）"] + [""] * (SUB_WIDTH - 1))
         block.append(SUB_HEADER)
         for row in rows:
-            block.append(row)
+            block.append((row + [""] * SUB_WIDTH)[:SUB_WIDTH])
         if i < len(doctor_order) - 1:
-            block.append([""] * 8)
-            block.append([""] * 8)
+            block.append([""] * SUB_WIDTH)
+            block.append([""] * SUB_WIDTH)
 
     new_end = start_row + len(block) - 1
     old_last = real_subs[-1]
@@ -544,11 +593,11 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc,
     # the old sub-table extended into rows that are now gap.
     if main_end_row and start_row > main_end_row + 1:
         sheet_service.clear_range(ws,
-                                   f"A{main_end_row + 1}:H{start_row - 1}")
+                                   f"A{main_end_row + 1}:I{start_row - 1}")
     # Clear residual rows from the old sub-table area BELOW the new block.
     if old_end > new_end:
-        sheet_service.clear_range(ws, f"A{new_end + 1}:H{old_end}")
-    sheet_service.write_range(ws, f"A{start_row}:H{new_end}", block, raw=False)
+        sheet_service.clear_range(ws, f"A{new_end + 1}:I{old_end}")
+    sheet_service.write_range(ws, f"A{start_row}:I{new_end}", block, raw=False)
     # Re-apply F/G dropdown validation across the (possibly grown) sub-table area
     try:
         from . import emr_service
@@ -560,7 +609,7 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc,
 
     return {
         "updated": True,
-        "range": f"A{start_row}:H{new_end}",
+        "range": f"A{start_row}:I{new_end}",
         "removed": removed_done,
         "moved":   [],            # doctor_changed intentionally not applied
         "added":   added_done,

@@ -213,7 +213,7 @@
 
   const MAIN_HEADER  = ['實際住院日','開刀日','科別','主治醫師','主診斷(ICD)','姓名','性別','年齡','病歷號碼','病床號','入院提示','住急'];
   const ORDER_HEADER = ['序號','主治醫師','病人姓名','備註(住服)','備註','病歷號','術前診斷','預計心導管','改期'];
-  const SUB_HEADER   = ['姓名','病歷號','EMR','EMR摘要','手動設定入院序','術前診斷','預計心導管','註記'];
+  const SUB_HEADER   = ['姓名','病歷號','EMR','EMR摘要','手動設定入院序','術前診斷','預計心導管','註記','備註(住服)'];
 
   // Track the currently-loaded sheet name so cell writes know where to land.
   let currentSheet = '';
@@ -259,9 +259,11 @@
       ? ` <span class="viewer-count-mismatch">（標題 ${sub.declared} ≠ 實際 ${sub.actual_count}）</span>`
       : '';
     const title = `<h4>${esc(sub.doctor || '(未命名)')}（${sub.declared ?? '?'} 人）${mismatchTag}</h4>`;
-    // Sub-table patient rows live at title_row + 2 (skip title + sub-header).
-    // Cols A..H = 1..8 in the sheet.
-    const startRow = (sub.title_row || 1) + 2;
+    // `sub.rows` from /api/sheet/read is PATIENT ROWS ONLY (server-side strip
+    // of title + subheader rows — they were ghost-rendered as the 2nd row of
+    // each block's table before this fix, looking like duplicate subheaders).
+    // first_patient_row → start row for inline edit; fall back to title_row+2.
+    const startRow = sub.first_patient_row || ((sub.title_row || 1) + 2);
     return `<div class="viewer-sub">${title}${renderTable(SUB_HEADER, sub.rows || [], startRow, 1)}</div>`;
   }
 
@@ -849,6 +851,39 @@ if (document.querySelector('.stepper')) {
   setupFormatCheck();
   setupFinalizeCheck();
   setupLoadExisting();
+  setupRebuildSubtables();
+}
+
+// ---------- 🔧 Smart rebuild sub-tables (rescue path) ----------
+function setupRebuildSubtables() {
+  const btn = document.getElementById('rebuild-subtables-btn');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    const date = $('#date-input').value.trim();
+    const msg  = $('#rebuild-msg');
+    if (!date) return flash(msg, '請先填日期（或載入既有日期）', 'err');
+    if (!confirm(`確定要依主表 A-L 順序重建 ${date} 的所有子表格嗎？\n\n` +
+                 `會做：去重複 doctor block、合併最完整資料、重排順序。\n` +
+                 `保留：EMR / 術前診斷 / 預計心導管 / 註記 / 備註(住服) / 手動入院序。\n` +
+                 `丟棄：不在主表 A-L 的子表病人（孤兒）。\n\n` +
+                 `主表 A-L 完全不會動。`)) return;
+    await withBusy(btn, '重建中…', async () => {
+      try {
+        const fd = new FormData();
+        fd.append('date', date);
+        const r = await api('/api/step2/rebuild_subtables', { method: 'POST', body: fd });
+        const orphans = (r.dropped_orphans || []);
+        let txt = `✓ 重建完成：${r.doctor_count} 位醫師 / ${r.patient_count} 位病人；` +
+                  `${r.preserved_with_data} 位 EMR 資料保留`;
+        if (orphans.length) txt += `；丟棄 ${orphans.length} 位孤兒（${orphans.slice(0, 3).join(',')}${orphans.length > 3 ? '…' : ''}）`;
+        if (r.ordering_update && r.ordering_update.updated)
+          txt += `；入院序同步 ${r.ordering_update.rows} 列`;
+        flash(msg, txt, 'ok');
+      } catch (err) {
+        flash(msg, '✗ ' + err.message, 'err');
+      }
+    });
+  });
 }
 
 // ---------- 📂 Load existing date sheet (skip OCR, hydrate from Sheet) ----------
@@ -897,14 +932,15 @@ function setupLoadExisting() {
   // Reconstruct Step 3 EMR result cards from sub-table rows so 載入既有日期
   // also surfaces previously-fetched EMR text + auto-detected F/G. Each
   // sub-table row carries: [name, chart_no, c_text(EMR), summary?, manual,
-  // diagnosis(F), cathlab(G)] in cols 0..6.
+  // diagnosis(F), cathlab(G), note(H), house(I)] in cols 0..8.
+  // Note: `s.rows` from /api/sheet/read is now PATIENT ROWS ONLY (server-side
+  // strip; see renderSub comment). first_patient_row is the sheet row of rows[0].
   function subsToEmrResults(subs) {
     const out = [];
     (subs || []).forEach(s => {
       const doc = s.doctor || '';
-      const r0  = s.title_row || 0;
-      // sub.rows[0] = title, [1] = header, [2..] = patients
-      (s.rows || []).slice(2).forEach((row, i) => {
+      const firstPatientRow = s.first_patient_row || ((s.title_row || 0) + 2);
+      (s.rows || []).forEach((row, i) => {
         const c   = (row || []).map(x => (x == null ? '' : String(x)));
         const name   = c[0] || '';
         const chart  = c[1] || '';
@@ -913,16 +949,17 @@ function setupLoadExisting() {
         const fDiag  = c[5] || '';
         const gCath  = c[6] || '';
         const hNote  = c[7] || '';   // H 註記
+        const iHouse = c[8] || '';   // I 備註(住服)
         // Parse "<age> y/o <gender>\n..." prefix from c_text if present
         let age = null, gender = '';
         const m = cText.match(/^(\d+)\s+y\/o\s+([男女])\s*\n/);
         if (m) { age = parseInt(m[1]); gender = m[2]; }
         out.push({
           chart_no: chart, name: name, doctor: doc,
-          c_text: cText, f: fDiag, g: gCath, note: hNote,
+          c_text: cText, f: fDiag, g: gCath, note: hNote, house: iHouse,
           age: age, gender: gender, emr_name: '',
           has_record: !!cText && !cText.includes('查無') && !cText.includes('INPATIENT'),
-          row: r0 + 2 + i,  // sheet row (1-indexed)
+          row: firstPatientRow + i,  // sheet row (1-indexed)
           error: '',
         });
       });
@@ -1043,10 +1080,16 @@ function setupDateInputs() {
 const FMT_LABELS = {
   main_header_missing:     '主資料 A-L 表頭錯誤',
   order_header_wrong:      '入院序 N-V 表頭錯誤',
+  sub_header_wrong:        '子表格表頭錯誤（A-I 標題列）',
   subtable_count_mismatch: '子表格人數標題與實際不符',
   gap_too_small:           '子表格間空白行不足（< 2）',
   subtable_missing_title:  '子表格缺少標題（姓名列前沒有 X（N人））',
   chart_text_format:       '病歷號欄位格式',
+  duplicate_doctor_block:        '同一位醫師有重複的子表格 block',
+  subtable_orphan_chart:         '子表格病人不在主表 A-L',
+  main_chart_missing_from_subtable: '主表 A-L 病人缺少對應子表格列',
+  subtable_doctor_not_in_main:   '子表格醫師主表 A-L 沒有對應病人',
+  subtable_doctor_mismatch:      '主表 vs 子表格 主治醫師不一致',
 };
 
 function setupFormatCheck() {
@@ -1157,6 +1200,18 @@ function renderFormatIssues(issues) {
       detail = ` — ${esc(i.doctor)} 前 ${i.gap} 空白（第 ${i.title_row} 列，需補 ${i.need_insert}）`;
     } else if (i.type === 'subtable_missing_title') {
       detail = ` — 第 ${i.subheader_row} 列`;
+    } else if (i.type === 'duplicate_doctor_block') {
+      detail = ` — ${esc(i.doctor)} 出現 ${i.count} 次（第 ${(i.rows||[]).join('、')} 列）→ 用「🔧 重建子表格」合併`;
+    } else if (i.type === 'subtable_orphan_chart') {
+      detail = ` — ${esc(i.doctor)} / ${esc(i.name)} (${esc(i.chart_no)})，第 ${i.row} 列 → 用「🔧 重建子表格」自動丟掉`;
+    } else if (i.type === 'main_chart_missing_from_subtable') {
+      detail = ` — ${esc(i.doctor)} / ${esc(i.name)} (${esc(i.chart_no)})，主表第 ${i.row} 列 → 用「🔧 重建子表格」補進去`;
+    } else if (i.type === 'subtable_doctor_not_in_main') {
+      detail = ` — ${esc(i.doctor)}（第 ${i.title_row} 列）→ 用「🔧 重建子表格」移除`;
+    } else if (i.type === 'subtable_doctor_mismatch') {
+      detail = ` — ${esc(i.name)} (${esc(i.chart_no)}) 主表=${esc(i.main_doctor)} vs 子表=${esc(i.sub_doctor)} → 用「🔧 重建子表格」以主表為準`;
+    } else if (i.type === 'sub_header_wrong') {
+      detail = ` — ${esc(i.doctor)}（第 ${i.row} 列）`;
     }
     return `<li class="fmt-${i.fixable ? 'fixable' : 'manual'}">${label}${detail}${tag}</li>`;
   }).join('');
@@ -1271,6 +1326,35 @@ function setupStep1() {
   });
 }
 
+// After any Step 1 write, re-read the freshest sub-table state from the sheet
+// so step2Ordered (= Step 3 EMR's patient list) always reflects what's actually
+// on the sheet — never a stale cache from an earlier write. Critical when the
+// user fixes a wrong OCR value (chart_no / doctor / 姓名) in the OCR table
+// before clicking 寫入: the previous step2Ordered carries the WRONG value;
+// without this refresh, Step 3 would still query EMR with the wrong chart_no.
+async function refreshStep2FromSheet(date) {
+  if (!date) return;
+  try {
+    const st = await api('/api/step4/subtables?date=' + encodeURIComponent(date));
+    const flat = [];
+    for (const [doc, pts] of Object.entries(st.tables || {})) {
+      for (const p of (pts || [])) {
+        if ((p.chart_no || '').trim()) {
+          flat.push({
+            chart_no: p.chart_no.trim(),
+            name: (p.name || '').trim(),
+            doctor: doc,
+          });
+        }
+      }
+    }
+    if (flat.length) {
+      step2Ordered = flat;
+      renderStep2AutofillPreview(flat);
+    }
+  } catch (_) { /* sheet read failed — leave preview as-is */ }
+}
+
 async function step1Write(date, rows, allowOverwrite, originalRows) {
   const fd = new FormData();
   fd.append('date', date);
@@ -1297,12 +1381,17 @@ async function step1Write(date, rows, allowOverwrite, originalRows) {
       flash($('#ocr-msg'),
         `✓ 名單沒有新增或減少 — 維持原狀，沒有覆蓋任何已輸入的資料${dcNote}`,
         'ok');
+      // Still refresh step2Ordered — a previous session may have left a
+      // stale list cached, and the user opening Step 3 next would query
+      // EMR with whatever was cached, not what's actually on the sheet.
+      await refreshStep2FromSheet(date);
     } else {
-      // Membership changed (someone added / removed). Kept patients' rows
-      // were preserved verbatim; only new rows appended / removed dropped.
-      // Auto-(re)build sub-tables — idempotent: server refuses if they
-      // already exist (the diff reconcile already ran server-side).
+      // Membership changed (someone added / removed) OR manual edit overlay
+      // applied. Kept patients' rows were preserved verbatim; only new rows
+      // appended / removed dropped / overlay cells patched.
+      // Try build_subtables (idempotent: server refuses if they already exist).
       let subNote = '';
+      let buildOk = false;
       try {
         const fd2 = new FormData();
         fd2.append('date', date);
@@ -1310,36 +1399,16 @@ async function step1Write(date, rows, allowOverwrite, originalRows) {
         const docCount = (sr.doctors || []).length;
         if (sr.patients && sr.patients.length) {
           step2Ordered = sr.patients;
-          // Auto-feed the patient list into the ② EMR panel so user sees
-          // who's queued for the next step (preview + JSON sync).
           renderStep2AutofillPreview(sr.patients);
+          buildOk = true;
         }
         if (docCount) subNote = `；子表格已建 ${docCount} 位醫師`;
       } catch (_) { /* sub-tables already exist or doctor list empty — fine */ }
-      // Sub-tables may already exist (first-write returned no patients in sr).
-      // Fall back to reading the date-sheet's sub-tables so the preview still
-      // populates on the typical "first OCR write of a brand new date" path.
-      if (!step2Ordered.length) {
-        try {
-          const st = await api('/api/step4/subtables?date=' + encodeURIComponent(date));
-          const flat = [];
-          for (const [doc, pts] of Object.entries(st.tables || {})) {
-            for (const p of (pts || [])) {
-              if ((p.chart_no || '').trim()) {
-                flat.push({
-                  chart_no: p.chart_no.trim(),
-                  name: (p.name || '').trim(),
-                  doctor: doc,
-                });
-              }
-            }
-          }
-          if (flat.length) {
-            step2Ordered = flat;
-            renderStep2AutofillPreview(flat);
-          }
-        } catch (_) { /* sheet read failed — leave preview empty */ }
-      }
+      // ALWAYS reconcile step2Ordered against the live sheet after a write.
+      // If the user fixed a wrong OCR value (chart_no / doctor / 姓名) in the
+      // Step 1 table, the build_subtables response can be stale — re-read
+      // from /api/step4/subtables which reflects the post-write state.
+      if (!buildOk) await refreshStep2FromSheet(date);
       const nAdd = (r.diff && r.diff.added || []).length;
       const nDel = (r.diff && r.diff.removed || []).length;
       const parts = [];
@@ -1653,6 +1722,7 @@ async function renderEmrResults(results, mainFixes) {
             術前診斷: ${fgInput(6, r.f, r.row, opts.f, 'fg-f-list')}
             預計心導管: ${fgInput(7, r.g, r.row, opts.g, 'fg-g-list')}
             註記: ${noteInput(r.note, r.row)}
+            備註(住服): ${houseInput(r.house, r.row)}
          </span>`
       : `<span class="emr-fg">術前診斷=${escape(r.f) || '—'} / 預計心導管=${escape(r.g) || '—'} <span class="hint">(無 row, 不可編輯)</span></span>`;
     const isNew = !!r.is_new_this_session;
@@ -2307,6 +2377,16 @@ function noteInput(value, row) {
            placeholder="註記，如 不排導管 / 待會診…">`;
 }
 
+// 備註(住服) (sub-table col I = 9): same free-text affordance as 註記.
+// Mirrors to N-V Q via propagate_field_edit in /api/step4/cell.
+function houseInput(value, row) {
+  const esc = s => String(s || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  if (!row) return `<span class="hint">（無 row，不可填備註(住服)）</span>`;
+  return `<input class="fg-input house-input" type="text" autocomplete="off"
+           data-row="${row}" data-col="9" value="${esc(value)}"
+           placeholder="備註(住服)，如 V (住服已申請)…">`;
+}
+
 function fgDatalist(id, options) {
   // Legacy datalist kept for backward compat (no longer used by fgInput);
   // returns empty string so existing call sites are no-ops.
@@ -2335,10 +2415,11 @@ async function renderSubtables(tables) {
         <td>${fgInput(6, p.diagnosis, p.row, opts.f, 'fg-f-list')}</td>
         <td>${fgInput(7, p.cathlab,   p.row, opts.g, 'fg-g-list')}</td>
         <td>${noteInput(p.note, p.row)}</td>
+        <td>${houseInput(p.house, p.row)}</td>
       </tr>`;
     }).join('');
     return `<div class="doctor-block"><h3>${doc}（${pts.length}人）</h3>
-      <table class="data"><thead><tr><th>姓名</th><th>病歷號</th><th>性別</th><th>年齡</th><th>同醫師內排序(E)</th><th>術前診斷(F)</th><th>預計心導管(G)</th><th>註記</th></tr></thead>
+      <table class="data"><thead><tr><th>姓名</th><th>病歷號</th><th>性別</th><th>年齡</th><th>同醫師內排序(E)</th><th>術前診斷(F)</th><th>預計心導管(G)</th><th>註記</th><th>備註(住服)</th></tr></thead>
       <tbody>${body}</tbody></table></div>`;
   }).join('');
   $('#subtables-wrap').innerHTML = datalists + html || '<p class="hint">沒找到子表格</p>';

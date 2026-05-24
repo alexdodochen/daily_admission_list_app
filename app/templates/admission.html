@@ -38,6 +38,21 @@
     <button id="load-existing-refresh" type="button" title="重新讀取 Sheet 分頁清單">↻</button>
     <span id="load-existing-msg" class="msg"></span>
   </div>
+  <details style="margin-top:10px">
+    <summary style="cursor:pointer;color:#475569">🔧 子表格亂掉？智能重建子表格</summary>
+    <p class="hint" style="margin:8px 0">
+      適用於：sub-table 出現重複 doctor block（同一位醫師被印好幾次）／
+      sub-table 跟主表 A-L 之間混進奇怪的列／姓名病歷號對不上。
+      <strong>不會動主表 A-L</strong>，依主表順序重排所有 doctor block，
+      <strong>保留每位病人的 EMR、F(術前診斷)、G(預計心導管)、註記、備註(住服)、手動入院序</strong>
+      （同一位醫師多 block 時取資料最完整那一份合併）。
+      不在主表的子表病人會被丟掉（孤兒）。
+    </p>
+    <div class="actions">
+      <button id="rebuild-subtables-btn" type="button">🔧 重建子表格（依主表 A-L 順序）</button>
+      <span id="rebuild-msg" class="msg"></span>
+    </div>
+  </details>
 </section>
 
 <!-- Panel for stepper ① -->

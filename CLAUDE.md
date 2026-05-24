@@ -155,6 +155,62 @@ Headers are the source of truth — `format_check_service.EXPECTED_MAIN_HEADER` 
 
 ## Status & pending direction
 
+**Delivered (Phase 22 — 2026-05-25 — sub-table I col + main-boundary + smart_rebuild + lottery rule, 448 tests):**
+- **Sub-table I col 「備註(住服)」** — 8→9 cols across writers/readers; I↔Q
+  mirror joins H↔R / F↔T / G↔U. Inline-editable in Step 3 EMR cards + Step 4
+  sub-tables + 查閱 viewer. `_MIRROR_*` maps in ordering_service expanded;
+  `lottery_with_pins` sources Q from sub I; `integrate_ordering` and
+  `sync_ordering_after_diff` copy non-empty sub I over N-V Q. See updated
+  [[corresponding-fields-must-mirror]].
+- **Main A-L boundary detection** — `write_to_sheet` used to `read_range("A2:L200")`
+  unbounded, which read sub-table rows as "existing main" → on every re-upload
+  the merged main extended INTO the sub-table area, stray main-shaped rows
+  interleaved with sub-tables, duplicate sub-table blocks accumulated. Now
+  walks `A2:L500` and stops at first blank OR sub-table title `xxx（N人）`.
+  Field bug 5/26: sheet had 2 full copies of every sub-table block + stray
+  r45-46 main rows. See [[main-boundary-must-stop-at-subtable]].
+- **`smart_rebuild` rescue button** — `subtable_service.smart_rebuild(date)` +
+  `POST /api/step2/rebuild_subtables` + 「🔧 重建子表格」 collapsible UI on
+  admission page. Reads ALL existing sub-table blocks, dedupes by 病歷號
+  (longest C col wins), drops orphans + ghost blocks (doctor name = column
+  header label), writes ONE block per doctor in main A-L order. Preserves
+  EMR/F/G/H/I across the rewrite. Re-syncs N-V. See [[smart-rebuild-rescue-path]].
+- **OCR header-row filter** — `_HEADER_LABEL_FRAGMENTS` rejects rows where
+  doctor/name = column header labels (主治醫師, 姓名, 病歷號 …). LLM was
+  occasionally returning the column header row as a patient → `_apply_diff_to_subtables`
+  created ghost "主治醫師（0人）" blocks. Same set also filters real_subs
+  in `_apply_diff_to_subtables` and the title walker in `smart_rebuild`.
+- **Viewer rendering** — `/api/sheet/read` `sub.rows` now returns patient rows
+  ONLY (server-side strip of title + subheader). Pre-fix the viewer rendered
+  title and subheader as the first two rows of each block's table → looked
+  like duplicate subheader. Added `first_patient_row` to the response;
+  `subsToEmrResults` + `renderSub` use it for row arithmetic.
+- **Rule 16 clarification** — `lottery_service` Rule 16 (詹世鴻 dropped from
+  時段組 on Fridays) now gates on **admission day** weekday, not the
+  op-day `weekday` parameter. Pre-fix the rule fired on every Thursday
+  admission (op=Friday) and wrongly dropped 詹's 3 patients to 非時段 in
+  5/28 lottery. New `_admission_is_friday(date)` helper. See
+  [[zhan-friday-drop-is-admission-day]].
+- **OCR misread map +1**: 劉獻文 → 劉嚴文 (嚴/獻 glyph collision).
+- **Step 1 button text** → 「比對 → 更新主表與子表格」 + busy 「比對中…」.
+- **Step 1 manual edit overlay** — `_compute_manual_edit_overlay` writes the
+  cells the user fixed in the OCR table to the sheet on re-upload (was
+  silently dropped by the membership-only verbatim rule). See updated
+  [[ocr-reupload-membership-only]].
+- **Format check +5 new issue types** — `duplicate_doctor_block`,
+  `subtable_orphan_chart`, `main_chart_missing_from_subtable`,
+  `subtable_doctor_not_in_main`, `subtable_doctor_mismatch`. All fixable
+  via `smart_rebuild` chain in `fix()`.
+- **`step2Ordered` refresh post-write** — Step 3 EMR was using stale cached
+  patient list when user fixed chart_no in Step 1; now always re-reads
+  `/api/step4/subtables` after a successful write.
+- **Lottery axis fix** — `read_lottery_tickets` rewritten to column-major
+  (sheet has 星期X header in row 1, doctors down each column with same-column
+  repeats accumulating). Old row-major reader returned {} for every weekday.
+  See [[reference-lottery-sheet-column-major]].
+- **Tests:** 430 → 448 (+18). Repaired 5/25, 5/26, 5/28 sheets in-place via
+  smart_rebuild / one-shot scripts.
+
 **Delivered (Phase 21 — 2026-05-24 — 5/24-5/25 field-bug batch, 434 tests):**
 - **Lottery sheet axis fix** — `lottery_service.read_lottery_tickets` was reading
   the sheet as row-major (A col = weekday) but the user's `主治醫師抽籤表`

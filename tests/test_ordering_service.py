@@ -303,6 +303,53 @@ def test_integrate_syncs_subtable_note_to_R(monkeypatch):
     assert body[0][8] == ""            # V preserved
 
 
+def test_integrate_overwrites_Q_when_subtable_house_set(monkeypatch):
+    """2026-05-25: 子表格 I (備註住服) 非空 → 覆寫 existing Q. Mirrors the
+    H→R rule so the user types the 住服 marker once in the sub-table and
+    it propagates to N-V Q on every integrate."""
+    existing = [
+        ["1", "Z", "甲", "舊Q", "舊R", "111", "old", "old", ""],
+    ]
+    sub_grid = [
+        _pad(["Z（1人）"], 9),
+        _pad(["姓名","病歷","EMR","","","術前診斷","預計心導管","註記","備註(住服)"], 9),
+        _pad(["甲","111","","","","CAD","PCI","不排導管","V"], 9),
+        _pad([], 9),
+    ]
+    ws = _FakeWS()
+    monkeypatch.setattr(os_.sheet_service, "get_worksheet", lambda d: ws)
+    monkeypatch.setattr(os_.sheet_service, "read_range",
+                        lambda _ws, rng: existing if rng.startswith("N") else sub_grid)
+    monkeypatch.setattr(os_.sheet_service, "write_range",
+                        lambda _ws, rng, body, raw=False: ws.writes.append((rng, body)))
+    os_.integrate_ordering("20260501")
+    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    assert body[0][3] == "V"           # Q ← 子表格 I 備註(住服)
+    assert body[0][4] == "不排導管"    # R ← 子表格 H
+
+
+def test_integrate_preserves_Q_when_subtable_house_empty(monkeypatch):
+    """子表格 I 空 → 保留 existing Q (user may have typed it directly in N-V)."""
+    existing = [
+        ["1", "Z", "甲", "員工眷屬", "舊R", "111", "", "", ""],
+    ]
+    sub_grid = [
+        _pad(["Z（1人）"], 9),
+        _pad(["姓名","病歷","EMR","","","術前診斷","預計心導管","註記","備註(住服)"], 9),
+        _pad(["甲","111","","","","CAD","PCI","",""], 9),
+        _pad([], 9),
+    ]
+    ws = _FakeWS()
+    monkeypatch.setattr(os_.sheet_service, "get_worksheet", lambda d: ws)
+    monkeypatch.setattr(os_.sheet_service, "read_range",
+                        lambda _ws, rng: existing if rng.startswith("N") else sub_grid)
+    monkeypatch.setattr(os_.sheet_service, "write_range",
+                        lambda _ws, rng, body, raw=False: ws.writes.append((rng, body)))
+    os_.integrate_ordering("20260501")
+    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    assert body[0][3] == "員工眷屬"
+
+
 def test_integrate_preserves_R_when_subtable_note_empty(monkeypatch):
     """子表格 H 註記 空 → R 保留 (preserve user-typed value)."""
     existing = [
@@ -474,9 +521,62 @@ def test_propagate_ignores_main_table_edit(monkeypatch):
 
 def test_propagate_ignores_non_mirror_column(monkeypatch):
     ws = _setup_mirror(monkeypatch)
-    r = os_.propagate_field_edit("20260524", 2, 17, "員工眷屬")  # Q 備註(住服)
+    # Col 19 (S = 病歷號) is NEVER a mirror target — chart_no is the join key,
+    # not a synced fact. Q (17) and I (9) became mirror cols on 2026-05-25 so
+    # they're no longer suitable for this test.
+    r = os_.propagate_field_edit("20260524", 2, 19, "99999999")
     assert r["mirrored"] is False
     assert ws.cells == []
+
+
+def _setup_mirror9(monkeypatch):
+    """Same as _setup_mirror but sub-table is 9 cols wide (with I col)."""
+    sub_grid = [
+        _pad(["Z（1人）"], 9),
+        _pad(["姓名","病歷","EMR","","","術前診斷","預計心導管","註記","備註(住服)"], 9),
+        _pad(["甲","111","","","","CAD","PCI","",""], 9),   # → sheet row 3
+        _pad([], 9),
+    ]
+    nv = [["1", "Z", "甲", "", "", "111", "CAD", "PCI", ""]]  # N2:V2 → sheet row 2
+    ws = _MirrorWS()
+    monkeypatch.setattr(os_.sheet_service, "get_worksheet", lambda d: ws)
+    monkeypatch.setattr(os_.sheet_service, "read_range",
+                        lambda _ws, rng: nv if rng.startswith("N") else sub_grid)
+    return ws
+
+
+def test_propagate_subtable_I_edit_mirrors_to_nv_Q(monkeypatch):
+    """Editing sub-table 備註(住服) (col 9) copies into N-V Q (col 17) by 病歷號.
+    2026-05-25: sub I ↔ N-V Q joins H↔R / F↔T / G↔U as a mirrored field."""
+    ws = _setup_mirror9(monkeypatch)
+    r = os_.propagate_field_edit("20260524", 3, 9, "V")
+    assert r["mirrored"] is True
+    assert r["field"] == "house"
+    assert ws.cells == [(2, 17, "V")]
+
+
+def test_propagate_nv_Q_edit_mirrors_to_subtable_I(monkeypatch):
+    """Editing N-V 備註(住服) (col 17) copies into sub-table I (col 9)."""
+    ws = _setup_mirror9(monkeypatch)
+    r = os_.propagate_field_edit("20260524", 2, 17, "員工眷屬")
+    assert r["mirrored"] is True
+    assert r["field"] == "house"
+    assert ws.cells == [(3, 9, "員工眷屬")]
+
+
+def test_parse_subtables_grid_extracts_house_col_I():
+    """parse_subtables_grid must capture col I (備註住服) into the `house` field
+    of each patient dict, alongside the existing note/diagnosis/cathlab keys."""
+    grid = [
+        _pad(["柯呈諭（1人）"], 9),
+        _pad(["姓名","病歷","EMR","摘要","手動","術前診斷","預計心導管","註記","備註(住服)"], 9),
+        _pad(["甲","111","","","","CAD","PCI","不排導管","V"], 9),
+    ]
+    tables = os_.parse_subtables_grid(grid)
+    assert "柯呈諭" in tables
+    p = tables["柯呈諭"][0]
+    assert p["house"] == "V"
+    assert p["note"] == "不排導管"
 
 
 def test_sync_clears_trailing_rows_when_shorter(monkeypatch):

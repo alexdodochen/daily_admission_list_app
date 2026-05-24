@@ -242,6 +242,22 @@ async def api_step2_build_subtables(date: str = Form(...)):
         raise HTTPException(500, str(e))
 
 
+@app.post("/api/step2/rebuild_subtables")
+async def api_step2_rebuild_subtables(date: str = Form(...)):
+    """Smart rebuild: dedupe duplicate doctor blocks, preserve every chart's
+    EMR/F/G/H/I across all existing blocks, re-write ONE block per doctor
+    in main A-L order. Use when the sub-table area got corrupted (duplicate
+    blocks, stray rows) and a clean re-upload won't help.
+    """
+    try:
+        result = subtable_service.smart_rebuild(date)
+        return result
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 # ------------------------------ Step 2 Lottery (legacy — kept for future use) ------------------------------
 
 @app.get("/api/step2/context")
@@ -373,7 +389,8 @@ async def api_step3_run(session_url: str = Form(...),
                     meta = chart_to_meta.get(ch)
                     if meta:
                         r["row"] = meta["row"]
-                        r["note"] = meta.get("note", "")  # H 註記
+                        r["note"]  = meta.get("note", "")   # H 註記
+                        r["house"] = meta.get("house", "")  # I 備註(住服)
             except Exception:
                 pass  # row enrichment is optional UI sugar
         canceled = any(r.get("canceled") for r in results)
@@ -933,14 +950,23 @@ async def api_sheet_read(date: str):
         for s in structure["subs"]:
             if s.get("orphan") or not s.get("title_row"):
                 continue
-            r0 = s["title_row"]
-            r1 = s["last_patient_row"] or s["subheader_row"] or r0
+            title_r = s["title_row"]
+            # Only return PATIENT rows in `rows` (skip title + subheader). The
+            # viewer renders its own table header from the JS SUB_HEADER
+            # constant; including title/subheader in `rows` made them appear
+            # as ghost data rows at the top of each block's table (field bug
+            # 2026-05-25: 「每一個主治醫師的subtable都出現奇怪的Subheader 在第二列」).
+            first_p = s.get("first_patient_row")
+            last_p  = s.get("last_patient_row")
+            patient_rows = (slice_block(first_p, last_p, 1, 9)
+                            if first_p and last_p else [])
             sub_blocks.append({
                 "doctor": s["doctor"],
                 "declared": s["declared"],
                 "actual_count": s["actual_count"],
-                "title_row": r0,
-                "rows": slice_block(r0, r1, 1, 7),
+                "title_row": title_r,
+                "first_patient_row": first_p,
+                "rows": patient_rows,
             })
 
         return {
