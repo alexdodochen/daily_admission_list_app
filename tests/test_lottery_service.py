@@ -284,13 +284,27 @@ def test_lottery_with_pins_groups_never_interleave(monkeypatch):
     assert sched_block.count("s2a") == 1 and sched_block.count("s2b") == 1
 
 
-def test_read_lottery_tickets_matches_xingqi_row(monkeypatch):
-    """The 5/26 actual failure mode: sheet cell says 『星期三』, JS sends 『週三』.
-    Before this fix tickets came back empty → 劉嚴文 randomly排到第一位.
+def test_read_lottery_tickets_column_major_layout(monkeypatch):
+    """5/24 actual sheet layout: first ROW is weekday header (星期一/星期二/...),
+    each weekday occupies one COLUMN under it. Doctor names with `*N` ticket
+    suffix; repeats in same column accumulate (sheet legend says so).
+
+    Reproduces real sheet at gid 1651661148. Before the column-major fix the
+    reader scanned for a row whose A cell = weekday and always returned {}.
     """
     fake_grid = [
-        ["星期三", "詹世鴻*2", "", "林佳凌", "陳儒逸",
-         "張獻元*2", "黃睦翔", "廖瑀"],
+        ["星期一", "星期二", "星期三", "星期四", "星期五"],
+        ["陳柏升", "劉嚴文", "詹世鴻*2", "陳柏升", "劉嚴文"],
+        ["許志新", "陳昭佑", "",         "許志新", ""],
+        ["",       "李柏增", "",         "林佳凌", ""],
+        ["詹世鴻", "陳儒逸", "林佳凌",   "陳柏偉", "陳柏偉"],
+        ["李柏增*2","鄭朝允","陳儒逸",   "黃鼎鈞*2","陳儒逸"],
+        ["陳昭佑", "劉秉彥", "張獻元*2", "柯呈諭*2","詹世鴻"],
+        ["",       "陳則瑋", "黃睦翔",   "黃睦翔", "李文煌"],
+        ["廖瑀",   "張獻元", "廖瑀",     "",       ""],
+        ["黃鼎鈞", "黃鼎鈞", "",         "",       "柯呈諭"],
+        ["陳柏偉", "黃睦翔", " ",        "",       "鄭朝允"],
+        ["",       "",       "",         "",       "陳則瑋"],
     ]
 
     class _WS:
@@ -298,8 +312,36 @@ def test_read_lottery_tickets_matches_xingqi_row(monkeypatch):
 
     monkeypatch.setattr(ls.sheet_service, "get_worksheet", lambda name: _WS())
     monkeypatch.setattr(ls.sheet_service, "read_range", lambda ws, rng: fake_grid)
-    tickets = ls.read_lottery_tickets("週三")
-    assert tickets == {
+
+    # 週二 column: 劉嚴文 陳昭佑 李柏增 陳儒逸 鄭朝允 劉秉彥 陳則瑋 張獻元 黃鼎鈞 黃睦翔
+    assert ls.read_lottery_tickets("週二") == {
+        "劉嚴文": 1, "陳昭佑": 1, "李柏增": 1, "陳儒逸": 1, "鄭朝允": 1,
+        "劉秉彥": 1, "陳則瑋": 1, "張獻元": 1, "黃鼎鈞": 1, "黃睦翔": 1,
+    }
+    # 週三 column with *2 suffix + the cathlab schedule's 詹世鴻*2 ticket
+    assert ls.read_lottery_tickets("週三") == {
         "詹世鴻": 2, "林佳凌": 1, "陳儒逸": 1,
         "張獻元": 2, "黃睦翔": 1, "廖瑀": 1,
     }
+    # 星期X folds to 週X — also accepts the JS-style label
+    assert ls.read_lottery_tickets("星期三") == ls.read_lottery_tickets("週三")
+
+
+def test_read_lottery_tickets_same_column_repeats_accumulate(monkeypatch):
+    """Sheet legend: 「同名重複列 → 按列數累加」. In the column-major layout,
+    a doctor whose name appears N times in a weekday's column has N tickets
+    (additive with `*N` suffix on any cell)."""
+    fake_grid = [
+        ["星期一"],
+        ["甲*2"],
+        ["甲"],   # totals 3
+        ["乙"],
+        ["乙"],   # totals 2
+    ]
+
+    class _WS:
+        pass
+
+    monkeypatch.setattr(ls.sheet_service, "get_worksheet", lambda name: _WS())
+    monkeypatch.setattr(ls.sheet_service, "read_range", lambda ws, rng: fake_grid)
+    assert ls.read_lottery_tickets("週一") == {"甲": 3, "乙": 2}

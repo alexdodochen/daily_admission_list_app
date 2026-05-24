@@ -1262,24 +1262,28 @@ function setupStep1() {
     const date = $('#date-input').value.trim();
     if (!date) return flash($('#ocr-msg'), '請先填日期', 'err');
     const rows = collectOcrTable();
-    await withBusy($('#write1-btn'), '寫入中…', async () => {
-      await step1Write(date, rows, /* allowOverwrite */ false);
+    // Snapshot the OCR/loaded baseline at submission time so manual edits
+    // can be diffed server-side (cells where final ≠ baseline = user edits).
+    const baseline = (ocrRows || []).map(r => ({...r}));
+    await withBusy($('#write1-btn'), '比對中…', async () => {
+      await step1Write(date, rows, /* allowOverwrite */ false, baseline);
     });
   });
 }
 
-async function step1Write(date, rows, allowOverwrite) {
+async function step1Write(date, rows, allowOverwrite, originalRows) {
   const fd = new FormData();
   fd.append('date', date);
   fd.append('rows', JSON.stringify(rows));
   fd.append('allow_overwrite', allowOverwrite ? 'yes' : 'no');
+  if (originalRows) fd.append('original_rows', JSON.stringify(originalRows));
   try {
     const r = await api('/api/step1/write', { method: 'POST', body: fd });
     if (r.needs_confirm) {
       // Existing sheet — show diff preview and ask for confirmation
       const confirmed = await showStep1DiffAndConfirm(r);
       if (confirmed) {
-        await step1Write(date, rows, true);
+        await step1Write(date, rows, true, originalRows);
       } else {
         flash($('#ocr-msg'), '取消寫入（已保留舊資料）', 'ok');
       }

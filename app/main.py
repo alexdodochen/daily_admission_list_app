@@ -204,16 +204,24 @@ async def api_step1_plan(date: str = Form(...), rows: str = Form(...)):
 
 @app.post("/api/step1/write")
 async def api_step1_write(date: str = Form(...), rows: str = Form(...),
-                          allow_overwrite: str = Form("no")):
+                          allow_overwrite: str = Form("no"),
+                          original_rows: str = Form("")):
     """
     Write main-data A-L. If sheet already has data and allow_overwrite != "yes",
     returns diff + needs_confirm=True instead of writing.
+
+    `original_rows` (optional) is the JSON snapshot of OCR output BEFORE the
+    user manually edited the table. When supplied, cells where final ≠ snapshot
+    are treated as manual edits and overlaid on the kept-row verbatim copy on
+    re-upload (so user fixes are not silently reverted).
     """
     import json as _json
     try:
         patients = _json.loads(rows)
+        originals = _json.loads(original_rows) if original_rows else None
         result = ocr_service.write_to_sheet(
             date, patients, allow_overwrite=(allow_overwrite == "yes"),
+            original_patients=originals,
         )
         return {"ok": True, **result}
     except Exception as e:

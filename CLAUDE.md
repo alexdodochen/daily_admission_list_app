@@ -155,6 +155,42 @@ Headers are the source of truth — `format_check_service.EXPECTED_MAIN_HEADER` 
 
 ## Status & pending direction
 
+**Delivered (Phase 21 — 2026-05-24 — 5/24-5/25 field-bug batch, 434 tests):**
+- **Lottery sheet axis fix** — `lottery_service.read_lottery_tickets` was reading
+  the sheet as row-major (A col = weekday) but the user's `主治醫師抽籤表`
+  is column-major: row 1 carries `星期一/星期二/…` headers, doctors run down
+  each column, repeats in same column accumulate (sheet legend). Old reader
+  always returned `{}` → all doctors routed to 非時段組 → random shuffle.
+  Reader rewritten to column-major; warning copy updated; tests cover both
+  the real-sheet column-major fixture and the same-column repeat rule. See
+  [[reference-lottery-sheet-column-major]].
+- **Manual edits in Step 1 OCR table now land on sheet** — the 2026-05-19
+  membership-only rule was overriding user fixes typed into the OCR table.
+  JS now captures the OCR baseline as `original_rows` and sends it with
+  `/api/step1/write`; `ocr_service.write_to_sheet` accepts `original_patients=`
+  and runs `_compute_manual_edit_overlay` to extract cell-level edits
+  (final ≠ snapshot) and overlay them on the verbatim-kept rows. Pure
+  re-pastes still return `unchanged: True`. See updated
+  [[ocr-reupload-membership-only]].
+- **Sub-table duplicate-block dedupe** — `_apply_diff_to_subtables` rebuilt
+  the doctor list from `real_subs` with `subs_by_doctor[doc] = rows` and
+  `doctor_order.append(doc)` per block. When a doctor appeared in multiple
+  existing blocks (sheet got duplicated by a prior bug), the dict overwrote
+  earlier-block patients AND `doctor_order` carried N copies of the same
+  name → rewrite emitted N duplicate titles. Fixed: merge per-doctor across
+  blocks, dedupe by 病歷號, keep only the first appearance in `doctor_order`.
+  Self-heals on next add/remove reconcile. 5/25 was repaired in-place via
+  a one-shot script (now deleted): 4-row main → 7-row main, 8 duplicate
+  陳昭佑 blocks → 1 block per doctor, all EMR/F/G/註記 preserved, N-V re-synced.
+- **OCR doctor name correction** — `OCR_NAME_CORRECTIONS = {"柯星諭": "柯呈諭"}`
+  applied in `ocr_image()` to `doctor` + `name` fields, strips trailing `?`/`？`
+  before lookup. Extend the map when new mis-reads surface. See
+  [[reference-ocr-doctor-misreads]].
+- **Step 1 button text** — `寫入 Sheet A-L` → `比對 → 更新主表與子表格`,
+  busy `寫入中…` → `比對中…` (reflects what the endpoint actually does).
+- **Tests:** 430 → 434 (+2 lottery column-major + same-column repeats,
+  +2 OCR overlay apply/noop, +1 sub-table dedupe, +3 OCR name correction).
+
 **Delivered (Phase 20 — 2026-05-21 — bug-report screenshots + 查閱 viewer delete/sync, `aca3050` + `dfaa7ab`):**
 - **🐞 回報問題 screenshot upload** — the bug-report modal gains an image picker (≤10 images, 10 MB each, thumbnail preview). `bug_report.write_report_bundle()` bundles the scrubbed report + screenshots into one `.zip` under `DATA_DIR/bug_reports/`. Screenshots attach ONLY to the private 「② 存成檔案」 path — never the public GitHub path (a screenshot renders PHI into pixels, can't be auto-scrubbed; a prefilled-issue URL can't carry attachments). `/api/bug-report/save` takes `images: list[UploadFile]`.
 - **查閱 batch-delete date tabs** — 🗑 button in the viewer toolbar (admission source only). `POST /api/sheet/delete` deletes ONLY `^\d{8}$` admission date tabs; config tabs (主治醫師抽籤表/下拉選單/值班總數統計/…) and the 排班 spreadsheet are rejected 400 (server-side guardrail); the last worksheet is never deleted.

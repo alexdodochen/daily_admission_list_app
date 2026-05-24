@@ -83,28 +83,37 @@ def _normalize_weekday_label(s: str) -> str:
 
 def read_lottery_tickets(schedule_day: str) -> dict[str, int]:
     """
-    Read 主治醫師抽籤表. Layout: first column = weekday label
-    (週一/週二/...), subsequent columns = doctor names with `*N` ticket suffix.
+    Read 主治醫師抽籤表. Layout: first ROW is the weekday header
+    (星期一/星期二/星期三/星期四/星期五), and each weekday occupies one COLUMN
+    underneath. Doctor names in that column carry an optional `*N` ticket suffix.
+    Repeats in the same column accumulate (sheet legend: 「同名重複列 → 按列數累加」).
     Returns {doctor: ticket_count}.
 
-    Weekday matching is whitespace-/punctuation-insensitive so the sheet
-    tolerates minor formatting variants (『週三 』 / 『週三：』 etc.).
+    Weekday matching is whitespace-/punctuation-insensitive and folds
+    『星期X』 ↔ 『週X』 so JS-sent 『週三』 matches sheet cell 『星期三』.
     """
     ws = sheet_service.get_worksheet("主治醫師抽籤表")
     if ws is None:
         return {}
     rows = sheet_service.read_range(ws, "A1:Z50")
+    if not rows:
+        return {}
     target = _normalize_weekday_label(schedule_day)
-    tickets: dict[str, int] = {}
-    for r in rows:
-        if not r:
-            continue
-        if _normalize_weekday_label(r[0]) == target:
-            for cell in r[1:]:
-                name, count = parse_ticket_cell(cell)
-                if name and count > 0:
-                    tickets[name] = tickets.get(name, 0) + count
+    header = rows[0]
+    col_idx = -1
+    for i, cell in enumerate(header):
+        if _normalize_weekday_label(cell) == target:
+            col_idx = i
             break
+    if col_idx < 0:
+        return {}
+    tickets: dict[str, int] = {}
+    for r in rows[1:]:
+        if col_idx >= len(r):
+            continue
+        name, count = parse_ticket_cell(r[col_idx])
+        if name and count > 0:
+            tickets[name] = tickets.get(name, 0) + count
     return tickets
 
 
@@ -236,7 +245,7 @@ def lottery_with_pins(date: str,
             f"讀不到「主治醫師抽籤表」工作表中【{weekday}】這一列。"
             f"所有醫師都會被當成非時段組（隨機分配）。"
             f"請確認 Sheet 是否有名為「主治醫師抽籤表」的工作表，"
-            f"且 A 欄星期文字（如「{weekday}」）寫法正確（無多餘空白／符號）。"
+            f"且第 1 列星期文字（如「{weekday}」或「星期{weekday[-1]}」）寫法正確（無多餘空白／符號）。"
         )
     tables = ordering_service.read_doctor_subtables(date)
     if not tables:

@@ -64,6 +64,33 @@ def test_ocr_strips_whitespace(monkeypatch):
     assert out[0]["chart_no"] == "12345"
 
 
+def test_ocr_corrects_known_doctor_misreads(monkeypatch):
+    """LLM frequently OCRs 柯呈諭 as 柯星諭 (呈/星 share top-half glyph).
+    OCR_NAME_CORRECTIONS must rewrite this BEFORE any downstream comparison
+    so the sub-table lottery / cathlab schedule lookup never sees 柯星諭."""
+    fake = FakeLLM('[{"doctor": "柯星諭", "name": "王何格", "chart_no": "23334279"}]')
+    monkeypatch.setattr(ocr_service, "get_llm", lambda: fake)
+    out = _run(ocr_service.ocr_image(b""))
+    assert out[0]["doctor"] == "柯呈諭"
+
+
+def test_ocr_correction_survives_uncertainty_marker(monkeypatch):
+    """LLM may flag the misread cell with a trailing `?` per OCR_PROMPT.
+    The correction still applies — strip `?` before lookup."""
+    fake = FakeLLM('[{"doctor": "柯星諭?", "name": "X", "chart_no": "1"}]')
+    monkeypatch.setattr(ocr_service, "get_llm", lambda: fake)
+    out = _run(ocr_service.ocr_image(b""))
+    assert out[0]["doctor"] == "柯呈諭"
+
+
+def test_ocr_correction_leaves_correct_names_alone(monkeypatch):
+    fake = FakeLLM('[{"doctor": "柯呈諭", "name": "陳柏升", "chart_no": "1"}]')
+    monkeypatch.setattr(ocr_service, "get_llm", lambda: fake)
+    out = _run(ocr_service.ocr_image(b""))
+    assert out[0]["doctor"] == "柯呈諭"
+    assert out[0]["name"] == "陳柏升"
+
+
 def test_ocr_skips_non_dict_rows(monkeypatch):
     fake = FakeLLM('[{"name": "A"}, "garbage", 42, null, {"name": "B"}]')
     monkeypatch.setattr(ocr_service, "get_llm", lambda: fake)
@@ -250,6 +277,74 @@ def test_reupload_no_membership_change_is_noop(monkeypatch):
     assert write_calls == [] and clear_calls == []   # nothing touched
 
 
+def test_reupload_no_membership_change_but_manual_edit_applies(monkeypatch):
+    """User re-uploads and manually corrects ONE wrong OCR cell (e.g. fixed
+    a misread name). No add/remove. The edit MUST land in the sheet — the
+    membership-only verbatim rule applies only to cells the user did NOT
+    touch, never to the cells they fixed in the UI."""
+    class FakeWS:
+        id = 999
+    fake_ws = FakeWS()
+    written = {}
+    monkeypatch.setattr(ocr_service.sheet_service, "ensure_date_sheet",
+                        lambda d: fake_ws)
+    monkeypatch.setattr(ocr_service.sheet_service, "ensure_chart_text_format",
+                        lambda ws: None)
+    keyed = ["2026-05-01", "", "CV", "李文煌", "I25.10", "舊名", "M", "65",
+             "111", "11A-01", "VIP", ""]
+    monkeypatch.setattr(
+        ocr_service.sheet_service, "read_range",
+        lambda ws, a1: [keyed] if a1 == "A2:L200" else [],
+    )
+    def fake_write(ws, a1, body, raw=False):
+        written["a1"] = a1
+        written["body"] = body
+    monkeypatch.setattr(ocr_service.sheet_service, "write_range", fake_write)
+    monkeypatch.setattr(ocr_service.sheet_service, "clear_range",
+                        lambda *a, **kw: None)
+    monkeypatch.setattr(ocr_service, "_apply_diff_to_subtables",
+                        lambda *a, **kw: {"updated": False})
+
+    # OCR snapshot has the wrong name "舊名"; user fixed it to "新名" in the UI
+    original = [{"chart_no": "111", "name": "舊名", "doctor": "李文煌"}]
+    edited   = [{"chart_no": "111", "name": "新名", "doctor": "李文煌"}]
+    r = ocr_service.write_to_sheet(
+        "20260501", edited, allow_overwrite=True,
+        original_patients=original,
+    )
+    assert r.get("unchanged") is not True
+    # F (idx 5) = 姓名: edit applied; everything else from existing verbatim
+    assert written["body"][0][5] == "新名"
+    assert written["body"][0][9] == "11A-01"  # bed preserved
+    assert written["body"][0][10] == "VIP"     # hint preserved
+
+
+def test_reupload_no_edits_when_snapshot_matches_is_still_noop(monkeypatch):
+    """Re-upload with original_patients == incoming (user reviewed but didn't
+    edit anything) still returns unchanged — no writes."""
+    class FakeWS:
+        id = 999
+    fake_ws = FakeWS()
+    write_calls = []
+    monkeypatch.setattr(ocr_service.sheet_service, "ensure_date_sheet",
+                        lambda d: fake_ws)
+    monkeypatch.setattr(ocr_service.sheet_service, "ensure_chart_text_format",
+                        lambda ws: None)
+    monkeypatch.setattr(ocr_service.sheet_service, "read_range",
+        lambda ws, a1: [_ex("111", "甲", "李文煌")] if a1 == "A2:L200" else [])
+    monkeypatch.setattr(ocr_service.sheet_service, "write_range",
+                        lambda *a, **kw: write_calls.append(a))
+    monkeypatch.setattr(ocr_service.sheet_service, "clear_range",
+                        lambda *a, **kw: write_calls.append(("clear",) + a))
+
+    same = [_new("111", "甲", "李文煌")]
+    r = ocr_service.write_to_sheet(
+        "20260501", same, allow_overwrite=True, original_patients=same,
+    )
+    assert r["unchanged"] is True
+    assert write_calls == []
+
+
 def test_reupload_keeps_kept_rows_verbatim_on_membership_change(monkeypatch):
     """Add + remove present → kept patient's A-L row is preserved EXACTLY
     (not re-OCR'd); removed dropped; added appended from OCR."""
@@ -386,6 +481,58 @@ def test_subtable_sync_appends_added_patient_to_its_doctor(monkeypatch):
     new_rows = [row for row in body if row[1] == "333"]
     assert len(new_rows) == 1
     assert new_rows[0][0] == "丙"
+
+
+def test_subtable_sync_dedupes_existing_duplicate_doctor_blocks(monkeypatch):
+    """Field bug 2026-05-25 (5/25 sheet got 8 duplicate 陳昭佑 blocks): if a
+    prior glitch left the SAME doctor's sub-table block appearing N times on
+    the sheet, the next reconcile must MERGE them into ONE block — not emit
+    N duplicates again (which the old `subs_by_doctor[doc] = rows` dict
+    overwrite would have done, also silently dropping earlier-block patients).
+    Self-heal contract: any add/remove cleans up the duplication."""
+    grid = _build_grid(
+        main_rows=[
+            ["2026-05-01","","CV","李文煌","CAD","甲","","",],
+            ["2026-05-01","","CV","李文煌","CAD","乙","","",],
+            ["2026-05-01","","CV","李文煌","CAD","丙","","",],  # newly added
+        ],
+        subs=[
+            # Same doctor 李文煌 appears 3 times on the sheet (prior corruption)
+            ("李文煌", [["甲","111","","","","CAD","PCI",""]]),
+            ("李文煌", [["甲","111","","","","CAD","PCI",""],
+                       ["乙","222","","","","AS","TAVI","保留註記"]]),
+            ("李文煌", [["甲","111","","","","CAD","PCI",""],
+                       ["乙","222","","","","AS","TAVI","保留註記"]]),
+        ],
+    )
+    writes: list = []
+    monkeypatch.setattr(ocr_service.sheet_service, "write_range",
+                        lambda ws, a1, body, raw=False: writes.append((a1, body)))
+    monkeypatch.setattr(ocr_service.sheet_service, "clear_range",
+                        lambda ws, a1: None)
+    diff = {
+        "added": [{"chart_no": "333", "name": "丙", "doctor": "李文煌"}],
+        "removed": [],
+        "doctor_changed": [],
+    }
+    new_patients = [_new("111","甲","李文煌"), _new("222","乙","李文煌"),
+                    _new("333","丙","李文煌")]
+    result = ocr_service._apply_diff_to_subtables(
+        _FakeWS(), grid, diff, new_patients=new_patients, fmt_svc=_fcs,
+    )
+    assert result["updated"] is True
+    a1, body = writes[-1]
+    titles = [row[0] for row in body if "人）" in (row[0] or "")]
+    # Exactly one 李文煌 title, no duplicates
+    assert titles.count("李文煌（3人）") == 1
+    assert len(titles) == 1
+    # Earlier blocks' patients (especially 乙 with 註記) are NOT dropped by
+    # dict overwrite — merged into the single block.
+    charts = [row[1] for row in body if row[1] in ("111","222","333")]
+    assert charts == ["111", "222", "333"]
+    # 註記 from the duplicate block is preserved
+    rows_222 = [row for row in body if row[1] == "222"]
+    assert rows_222[0][7] == "保留註記"
 
 
 def test_subtable_sync_does_not_duplicate_existing_chart(monkeypatch):

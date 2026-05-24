@@ -33,6 +33,24 @@ OCR_PROMPT = """你是醫療排程助理。請把這張住院名單截圖轉成 
 """
 
 
+# Known OCR mis-reads of cardiology attending names that recur often enough
+# to be worth auto-correcting before any downstream comparison / sub-table /
+# lottery logic runs. Map = wrong → canonical. Extend as new cases surface.
+# Applied to both `doctor` and `name` fields (some patients share a CV doctor's
+# surname; cheap to cover both).
+OCR_NAME_CORRECTIONS = {
+    "柯星諭": "柯呈諭",
+}
+
+
+def _correct_ocr_name(s: str) -> str:
+    s = (s or "").strip()
+    # Strip trailing OCR-uncertain marker so the lookup still hits when the
+    # underlying glyph match was right but the LLM flagged it.
+    bare = s.rstrip("?？").strip()
+    return OCR_NAME_CORRECTIONS.get(bare, s)
+
+
 async def ocr_image(image_bytes: bytes, mime: str = "image/png") -> list[dict]:
     """Return list of patient dicts parsed from the screenshot."""
     llm = get_llm()
@@ -49,9 +67,9 @@ async def ocr_image(image_bytes: bytes, mime: str = "image/png") -> list[dict]:
             "admit_date":    str(row.get("admit_date", "")).strip(),
             "op_date":       str(row.get("op_date", "")).strip(),
             "department":    str(row.get("department", "")).strip(),
-            "doctor":        str(row.get("doctor", "")).strip(),
+            "doctor":        _correct_ocr_name(str(row.get("doctor", ""))),
             "icd_diagnosis": str(row.get("icd_diagnosis", "")).strip(),
-            "name":          str(row.get("name", "")).strip(),
+            "name":          _correct_ocr_name(str(row.get("name", ""))),
             "gender":        str(row.get("gender", "")).strip(),
             "age":           str(row.get("age", "")).strip(),
             "chart_no":      str(row.get("chart_no", "")).strip(),
@@ -62,15 +80,48 @@ async def ocr_image(image_bytes: bytes, mime: str = "image/png") -> list[dict]:
     return out
 
 
+_AL_KEYS = (
+    "admit_date", "op_date", "department", "doctor",
+    "icd_diagnosis", "name", "gender", "age",
+    "chart_no", "bed", "hint", "urgent",
+)  # index = A-L column offset (0=A, 8=I=chart_no)
+
+
 def _patients_to_ab_rows(patients: list[dict]) -> list[list[str]]:
-    return [[
-        p.get("admit_date", ""), p.get("op_date", ""),
-        p.get("department", ""), p.get("doctor", ""),
-        p.get("icd_diagnosis", ""), p.get("name", ""),
-        p.get("gender", ""), p.get("age", ""),
-        p.get("chart_no", ""), p.get("bed", ""),
-        p.get("hint", ""), p.get("urgent", ""),
-    ] for p in patients]
+    return [[p.get(k, "") for k in _AL_KEYS] for p in patients]
+
+
+def _compute_manual_edit_overlay(patients: list[dict],
+                                 original_patients: Optional[list[dict]]
+                                 ) -> dict[str, dict[int, str]]:
+    """
+    Diff incoming `patients` against the OCR-snapshot `original_patients`
+    per chart_no. Returns {chart_no: {col_idx_0based: edited_value}} —
+    only cells the user genuinely changed in the UI.
+
+    Empty result when `original_patients` is None (legacy callers) — the
+    "membership-only on re-upload" rule then applies verbatim.
+    """
+    if not original_patients:
+        return {}
+    orig_by_chart = {(o.get("chart_no") or "").strip(): o for o in original_patients}
+    overlay: dict[str, dict[int, str]] = {}
+    for inc in patients:
+        chart = (inc.get("chart_no") or "").strip()
+        if not chart:
+            continue
+        orig = orig_by_chart.get(chart)
+        if not orig:
+            continue  # newly-added charts go through the add-branch, not overlay
+        edits: dict[int, str] = {}
+        for ci, k in enumerate(_AL_KEYS):
+            ov = (orig.get(k) or "").strip()
+            fv = (inc.get(k) or "").strip()
+            if ov != fv:
+                edits[ci] = fv
+        if edits:
+            overlay[chart] = edits
+    return overlay
 
 
 def diff_main_data(existing_rows: list[list[str]],
@@ -193,13 +244,20 @@ def plan_write(date: str, patients: list[dict]) -> dict:
 
 
 def write_to_sheet(date: str, patients: list[dict],
-                   allow_overwrite: bool = False) -> dict:
+                   allow_overwrite: bool = False,
+                   original_patients: Optional[list[dict]] = None) -> dict:
     """
     Write main data A2:L{n+1} with reviewed patient rows.
 
     If the sheet already has data AND `allow_overwrite` is False, we refuse
     and return the diff — caller must re-submit with allow_overwrite=True
     after the user confirms the add/remove list.
+
+    `original_patients` is the OCR snapshot BEFORE the user manually edited
+    the table in the UI. When provided, cells where final ≠ snapshot are
+    treated as manual user edits and overlaid on the kept-row verbatim copy.
+    Cells the user did NOT touch stay verbatim (preserves 2026-05-19 rule
+    that re-upload OCR text never overwrites already-keyed cells).
 
     On overwrite, also auto-updates existing per-doctor sub-tables to reflect
     added / removed / doctor-changed patients (preserves F/G/E/H for kept
@@ -255,8 +313,12 @@ def write_to_sheet(date: str, patients: list[dict],
     #     rows and APPEND new-chart rows; then reconcile sub-tables + N-V.
     pre_grid = sheet_service.read_range(ws, "A1:H500")
     diff = diff_main_data(existing, patients)
+    # User manual edits (cells where final ≠ OCR snapshot). When the user
+    # corrected a wrong OCR value in the UI, those edits MUST be applied to
+    # the kept rows — verbatim re-keeping would silently revert the fix.
+    overlay = _compute_manual_edit_overlay(patients, original_patients)
 
-    if not diff["added"] and not diff["removed"]:
+    if not diff["added"] and not diff["removed"] and not overlay:
         return {
             "rows": len(existing), "sheet": date,
             "range": f"A2:L{1 + len(existing)}", "needs_confirm": False,
@@ -273,12 +335,17 @@ def write_to_sheet(date: str, patients: list[dict],
     removed_charts = {r["chart_no"] for r in diff["removed"]}
     added_charts   = {a["chart_no"] for a in diff["added"]}
 
-    # Kept rows: existing A-L verbatim, minus removed, original order.
-    kept_rows = [
-        (list(row) + [""] * 12)[:12]
-        for row in existing
-        if _chart_of(row) not in removed_charts
-    ]
+    # Kept rows: existing A-L verbatim, minus removed, original order,
+    # then overlay any manual user edits (cell-by-cell) on top.
+    kept_rows: list[list[str]] = []
+    for row in existing:
+        chart = _chart_of(row)
+        if chart in removed_charts:
+            continue
+        row_padded = (list(row) + [""] * 12)[:12]
+        for ci, val in overlay.get(chart, {}).items():
+            row_padded[ci] = val
+        kept_rows.append(row_padded)
     # Appended rows: OCR values only for the genuinely-new charts.
     added_rows = _patients_to_ab_rows([
         p for p in patients
@@ -354,18 +421,31 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc,
     SUB_HEADER = ["姓名", "病歷號", "EMR", "EMR摘要", "手動設定入院序",
                   "術前診斷", "預計心導管", "註記"]
 
-    # Build current per-doctor patient lists (preserve original order on sheet)
+    # Build current per-doctor patient lists. If the same doctor appears in
+    # MULTIPLE existing sub-table blocks (sheet got duplicated by a prior bug),
+    # merge all their patient rows under one entry and dedup by 病歷號 so the
+    # rewrite produces ONE block per doctor, not N. Without this, the rewrite
+    # would emit the same doctor's title N times (visible duplication on sheet)
+    # and silently drop earlier block's patients via dict overwrite.
     subs_by_doctor: dict[str, list[list[str]]] = {}
     doctor_order: list[str] = []
+    seen_charts_per_doc: dict[str, set[str]] = {}
     for s in real_subs:
         doc = s["doctor"]
-        doctor_order.append(doc)
-        rows = []
+        if doc not in subs_by_doctor:
+            doctor_order.append(doc)
+            subs_by_doctor[doc] = []
+            seen_charts_per_doc[doc] = set()
         if s["first_patient_row"] and s["last_patient_row"]:
             for r in range(s["first_patient_row"], s["last_patient_row"] + 1):
                 raw = grid[r - 1] if r - 1 < len(grid) else []
-                rows.append(((raw or []) + [""] * 8)[:8])
-        subs_by_doctor[doc] = rows
+                padded = ((raw or []) + [""] * 8)[:8]
+                ch = (padded[1] or "").strip()
+                if ch and ch in seen_charts_per_doc[doc]:
+                    continue  # duplicate patient row across duplicate blocks
+                if ch:
+                    seen_charts_per_doc[doc].add(ch)
+                subs_by_doctor[doc].append(padded)
 
     # chart_no → (doctor, row_data) reverse lookup
     chart_loc: dict[str, str] = {}
