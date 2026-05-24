@@ -244,6 +244,46 @@ def test_lottery_carries_subtable_note_to_R(monkeypatch):
     assert body[0][3] == ""           # Q (備註住服) stays empty
 
 
+def test_lottery_with_pins_groups_never_interleave(monkeypatch):
+    """lottery_with_pins must run 時段組 RR to completion BEFORE 非時段組
+    starts — even when both have multiple patients.
+
+    Field bug 2026-05-24 (5/25 sheet): the inner RR loop iterated all
+    doctors in one queue, so a 時段 doctor's 2nd patient appeared AFTER a
+    非時段 doctor's 1st patient. Per feedback_lottery_roundrobin.md and the
+    reference `two_group_round_robin`, the groups must NEVER interleave.
+    """
+    from app.services import ordering_service
+
+    tickets = {"S1": 1, "S2": 1}  # 時段組 (in lottery sheet)
+    subs = {
+        "S1": [{"name": "s1a", "chart_no": "C1A"},
+               {"name": "s1b", "chart_no": "C1B"}],
+        "S2": [{"name": "s2a", "chart_no": "C2A"},
+               {"name": "s2b", "chart_no": "C2B"}],
+        "N1": [{"name": "n1a", "chart_no": "N1A"},
+               {"name": "n1b", "chart_no": "N1B"}],  # 非時段組 (no ticket)
+    }
+    _stub_friday_env(monkeypatch, tickets, subs)
+    writes: list = []
+    monkeypatch.setattr(ls.sheet_service, "write_range",
+                        lambda _ws, rng, body, raw=False: writes.append((rng, body)))
+
+    ls.lottery_with_pins("20260525", weekday="週日", seed=0)
+    body = next(w for w in writes if w[0].startswith("N2:V"))[1]
+    names = [r[2] for r in body]  # P col = 病人姓名
+
+    last_sched = max(i for i, n in enumerate(names) if not n.startswith("n"))
+    first_non  = min(i for i, n in enumerate(names) if n.startswith("n"))
+    assert last_sched < first_non, (
+        f"非時段組 must come ENTIRELY after 時段組. Got order: {names}"
+    )
+    # And both 時段 doctors should each have both patients in the 時段 block
+    sched_block = names[:last_sched + 1]
+    assert sched_block.count("s1a") == 1 and sched_block.count("s1b") == 1
+    assert sched_block.count("s2a") == 1 and sched_block.count("s2b") == 1
+
+
 def test_read_lottery_tickets_matches_xingqi_row(monkeypatch):
     """The 5/26 actual failure mode: sheet cell says 『星期三』, JS sends 『週三』.
     Before this fix tickets came back empty → 劉嚴文 randomly排到第一位.

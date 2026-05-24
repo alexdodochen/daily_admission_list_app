@@ -625,3 +625,88 @@ def test_write_to_sheet_invokes_ordering_sync_after_diff(monkeypatch):
     assert called_with == ["20260501"]
     assert r["ordering_update"]["updated"] is True
     assert r["ordering_update"]["rows"] == 2
+
+
+def test_subtable_sync_shifts_down_when_main_grew_into_subtable_area(monkeypatch):
+    """Field bug 2026-05-24 (5/25 sheet): re-upload added enough new patients
+    that the merged main A-L extended down INTO the original sub-table
+    title row. Without shifting, _apply_diff_to_subtables wrote the sub-
+    table block starting at A{old_title_row}, OVERWRITING the newly-added
+    main row. Symptom: 「新增病人只進子表，主表沒進」.
+
+    Fix: pass main_end_row so start_row shifts DOWN to (main_end + 1 + gap)
+    when needed.
+    """
+    # 1 main row + 2-row gap + sub-table title at row 4 (title_row = 4).
+    grid = _build_grid(
+        main_rows=[["2026-05-01","","CV","李文煌","CAD","甲","","",]],
+        subs=[("李文煌", [["甲","111","","","","CAD","PCI",""]])],
+    )
+    writes: list = []
+    clears: list = []
+    monkeypatch.setattr(ocr_service.sheet_service, "write_range",
+                        lambda ws, a1, body, raw=False: writes.append((a1, body)))
+    monkeypatch.setattr(ocr_service.sheet_service, "clear_range",
+                        lambda ws, a1: clears.append(a1))
+
+    diff = {
+        "added": [{"chart_no": "222", "name": "乙", "doctor": "李文煌"},
+                  {"chart_no": "333", "name": "丙", "doctor": "李文煌"},
+                  {"chart_no": "444", "name": "丁", "doctor": "李文煌"}],
+        "removed": [],
+        "doctor_changed": [],
+    }
+    new_patients = [_new("111","甲","李文煌"), _new("222","乙","李文煌"),
+                    _new("333","丙","李文煌"), _new("444","丁","李文煌")]
+
+    # Original sub-table title at row 4 (1 main + 2 blank + title).
+    # Simulated post-main-write end_row = 5 (4 patients = rows 2-5),
+    # which collides with the original title_row=4. With main_end_row=5
+    # and gap=2, start_row must shift to row 8.
+    result = ocr_service._apply_diff_to_subtables(
+        _FakeWS(), grid, diff, new_patients=new_patients, fmt_svc=_fcs,
+        main_end_row=5,
+    )
+    assert result["updated"] is True
+    a1, _body = writes[-1]
+    # Sub-table must start at row 8 (= main_end_row(5) + 1 + gap(2)), NOT
+    # row 4 (the original title row that was clobbered by main growth).
+    assert a1.startswith("A8:H"), (
+        f"Sub-table block must shift down past new main. Got range {a1}"
+    )
+
+
+def test_subtable_sync_stays_in_place_when_main_didnt_grow(monkeypatch):
+    """When main didn't grow into the sub-table area, start_row stays at
+    the original title_row — no unnecessary shift (preserves user's layout).
+    """
+    grid = _build_grid(
+        main_rows=[["2026-05-01","","CV","李文煌","CAD","甲","","",]],
+        subs=[("李文煌", [["甲","111","","","","CAD","PCI",""]])],
+    )
+    # Original sub-table title_row = 4. main_end_row = 2 (1 patient only),
+    # so min_start = 2 + 1 + 2 = 5, but requested_start = 4 — max keeps 5?
+    # No — original code uses max(requested_start, min_start). If min_start=5
+    # > requested_start=4, sub-tables shift. Need to use main_end=1 to keep
+    # in place (no main rows, just header — atypical but tests the guard).
+    writes: list = []
+    monkeypatch.setattr(ocr_service.sheet_service, "write_range",
+                        lambda ws, a1, body, raw=False: writes.append((a1, body)))
+    monkeypatch.setattr(ocr_service.sheet_service, "clear_range",
+                        lambda ws, a1: None)
+
+    diff = {"added": [{"chart_no": "222", "name": "乙", "doctor": "李文煌"}],
+            "removed": [], "doctor_changed": []}
+    # main_end_row=0 means "don't apply shift constraint" — defaults preserved.
+    result = ocr_service._apply_diff_to_subtables(
+        _FakeWS(), grid, diff,
+        new_patients=[_new("111","甲","李文煌"), _new("222","乙","李文煌")],
+        fmt_svc=_fcs, main_end_row=0,
+    )
+    assert result["updated"] is True
+    a1, _ = writes[-1]
+    # _build_grid: header(1) + 1 main(2) + 2 blanks(3,4) + title at row 5.
+    # main_end_row=0 means "no shift constraint" → stays at requested_start=5.
+    assert a1.startswith("A5:H"), (
+        f"Without main growth signal, sub-table stays at original row. Got {a1}"
+    )

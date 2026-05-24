@@ -314,12 +314,25 @@ def lottery_with_pins(date: str,
             ui += 1
 
     # --- Round-robin patients across doctor_order, then apply patient pins ---
-    queues = {d: list(by_doctor[d]) for d in doctor_order}
-    rr_sequence: list[dict] = []
-    while any(queues[d] for d in doctor_order):
-        for d in doctor_order:
-            if queues[d]:
-                rr_sequence.append(queues[d].pop(0))
+    # HARD RULE (feedback_lottery_roundrobin.md): 非時段組 must come ENTIRELY
+    # after 時段組 — never interleave. Run two independent RRs and concat.
+    # (Field bug 2026-05-24: lottery on 5/25 mixed 非時段 patients into the
+    # middle of 時段 patients because a single RR loop iterated all doctors
+    # together.)  See reference impl `two_group_round_robin` in
+    # 每日入院名單 Claude/lottery_utils.py.
+    group1_docs = [d for d in doctor_order if d and d in tickets]
+    group2_docs = [d for d in doctor_order if d and d not in tickets]
+
+    def _rr(group: list[str]) -> list[dict]:
+        queues = {d: list(by_doctor[d]) for d in group}
+        out: list[dict] = []
+        while any(queues[d] for d in group):
+            for d in group:
+                if queues[d]:
+                    out.append(queues[d].pop(0))
+        return out
+
+    rr_sequence: list[dict] = _rr(group1_docs) + _rr(group2_docs)
 
     # Remove pinned patients from the RR sequence — they're assigned to fixed slots
     pinned_charts = {p["chart_no"] for p in pinned_patients.values()}

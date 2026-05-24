@@ -294,8 +294,13 @@ def write_to_sheet(date: str, patients: list[dict],
     sub_result: dict = {"updated": False}
     ordering_result: dict = {"updated": False}
     if diff["added"] or diff["removed"] or diff["doctor_changed"]:
+        # Pass main_end_row so sub-tables shift DOWN if main has grown past
+        # the original sub-table start row (otherwise the sub-table write
+        # would overwrite the newly-added main row — field bug 2026-05-24:
+        # added patient ended up in sub-table but not in main).
         sub_result = _apply_diff_to_subtables(
             ws, pre_grid, diff, patients, format_check_service,
+            main_end_row=end_row,
         )
         if sub_result.get("updated"):
             # Re-sync N-V so seq numbers, doctor column, T/U stay consistent
@@ -318,7 +323,8 @@ def write_to_sheet(date: str, patients: list[dict],
 
 # ----------------------- sub-table sync (Phase 9) -----------------------
 
-def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc) -> dict:
+def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc,
+                              main_end_row: int = 0, gap: int = 2) -> dict:
     """
     Re-render the sub-table area (below main data) so that:
       - patients in `diff.removed` are dropped from whichever sub-table
@@ -427,8 +433,16 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc) -> dict:
         else:
             unattached_added.append({"chart_no": ch, "name": name, "doctor": doc})
 
-    # Build the rendered block and write it back
-    start_row = real_subs[0]["title_row"]
+    # Build the rendered block and write it back.
+    # start_row defaults to the existing sub-table title row, but shifts DOWN
+    # to (main_end_row + 1 + gap) if main has grown past the original start
+    # (otherwise the sub-table write would land ON TOP of newly-added main
+    # rows — field bug 2026-05-24: added patient was in sub-table but not
+    # main because the sub-table title row was written at the same row as
+    # the new main patient's row).
+    requested_start = real_subs[0]["title_row"]
+    min_start = (main_end_row + 1 + gap) if main_end_row else requested_start
+    start_row = max(requested_start, min_start)
     block: list[list[str]] = []
     for i, doc in enumerate(doctor_order):
         rows = subs_by_doctor.get(doc, [])
@@ -445,7 +459,13 @@ def _apply_diff_to_subtables(ws, grid, diff, new_patients, fmt_svc) -> dict:
     old_end = (old_last["last_patient_row"]
                or old_last["subheader_row"]
                or old_last["title_row"])
-    # Clear residual rows from the old sub-table area before writing
+    # Clear leftover sub-table cells in the gap rows between main end and
+    # the new (possibly shifted-down) sub-table start. Covers the case where
+    # the old sub-table extended into rows that are now gap.
+    if main_end_row and start_row > main_end_row + 1:
+        sheet_service.clear_range(ws,
+                                   f"A{main_end_row + 1}:H{start_row - 1}")
+    # Clear residual rows from the old sub-table area BELOW the new block.
     if old_end > new_end:
         sheet_service.clear_range(ws, f"A{new_end + 1}:H{old_end}")
     sheet_service.write_range(ws, f"A{start_row}:H{new_end}", block, raw=False)
