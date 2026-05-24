@@ -628,6 +628,73 @@ def best_patient_name(r: dict) -> str:
 
 # ---------------------------- Sheet writeback ----------------------------
 
+def filter_already_filled(date: str, patients: list[dict]
+                          ) -> tuple[list[dict], list[dict]]:
+    """Split `patients` into (`to_fetch`, `preserved_results`) based on whether
+    the sub-table row for each chart_no already has C/F/G data on the Sheet.
+
+    A chart with ANY of C / F / G non-empty is treated as "already done" — we
+    skip the EMR fetch entirely (saving the WebDriver round-trip per patient).
+    Such patients are returned as synthetic result rows carrying the existing
+    C/F/G values and `skipped_existing: True`, so the UI's renderEmrResults
+    can display them as completed cards.
+
+    Mirrors the preserve-existing rule of `write_results_to_subtables`, but
+    applied BEFORE fetching instead of just before writing.
+
+    If anything fails (no sub-tables, sheet unreachable…), returns
+    (`patients`, []) — i.e. fall back to fetching everything. Pre-filter is
+    an optimisation, never a blocker.
+    """
+    if not date:
+        return list(patients), []
+    try:
+        from . import ordering_service
+        tables = ordering_service.read_doctor_subtables(date)
+    except Exception:
+        return list(patients), []
+    if not tables:
+        return list(patients), []
+
+    chart_to_existing: dict[str, dict] = {}
+    for _, pts in tables.items():
+        for p in pts:
+            ch = (p.get("chart_no") or "").strip()
+            if not ch:
+                continue
+            chart_to_existing[ch] = {
+                "emr":       (p.get("emr") or "").strip(),
+                "diagnosis": (p.get("diagnosis") or "").strip(),
+                "cathlab":   (p.get("cathlab") or "").strip(),
+                "name":      (p.get("name") or "").strip(),
+            }
+
+    to_fetch: list[dict] = []
+    preserved: list[dict] = []
+    for p in patients:
+        ch = (p.get("chart_no") or "").strip()
+        ex = chart_to_existing.get(ch) if ch else None
+        if ex and (ex["emr"] or ex["diagnosis"] or ex["cathlab"]):
+            preserved.append({
+                **p,
+                "c_text": ex["emr"],
+                "f": ex["diagnosis"],
+                "g": ex["cathlab"],
+                "emr_name": "",
+                "emr_doctor": "",
+                "age": None,
+                "gender": "",
+                "has_record": True,
+                "matched_doctor": False,
+                "visit_label": "",
+                "error": "",
+                "skipped_existing": True,
+            })
+        else:
+            to_fetch.append(p)
+    return to_fetch, preserved
+
+
 def write_results_to_subtables(date: str, results: list[dict]) -> dict:
     """Write per-patient EMR data back to the doctor sub-tables.
 

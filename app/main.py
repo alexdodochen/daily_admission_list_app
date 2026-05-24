@@ -320,11 +320,19 @@ async def api_step3_run(session_url: str = Form(...),
     cancel_registry.start(op_id, {"step": 3, "date": date or admission_date})
     try:
         patients = _json.loads(patients_json)
-        results = await emr_service.extract_patients(
-            session_url, patients, admission_date=admission_date, op_id=op_id)
+        target_date = (date or admission_date or "").strip()
+        # Pre-filter: anyone whose sub-table row already has C/F/G is skipped
+        # entirely (no EMR fetch). The rest are "new this session" — tagged so
+        # renderEmrResults can flag them with a 🆕 badge.
+        to_fetch, preserved_results = emr_service.filter_already_filled(
+            target_date, patients)
+        for p in to_fetch:
+            p["is_new_this_session"] = True
+        fetched_results = await emr_service.extract_patients(
+            session_url, to_fetch, admission_date=admission_date, op_id=op_id)
+        results = preserved_results + fetched_results
         write_info: dict = {"written": 0, "missing": [], "skipped": True}
         main_fixes: dict = {"patches_count": 0, "fixes": [], "skipped": True}
-        target_date = (date or admission_date or "").strip()
         if target_date:
             try:
                 write_info = emr_service.write_results_to_subtables(target_date, results)
@@ -334,8 +342,12 @@ async def api_step3_run(session_url: str = Form(...),
                               "error": str(we)}
             # Auto-correct main A-L (姓名/性別/年齡) from EMR (independent of
             # sub-table writeback — even if sub-tables fail we still try main).
+            # Only fetched patients can amend main A-L; preserved/skipped
+            # patients have emr_name="" so best_patient_name would fall back
+            # to the OCR-input name and could clobber a user-corrected main F.
             try:
-                main_fixes = emr_service.apply_emr_main_fixes(target_date, results)
+                main_fixes = emr_service.apply_emr_main_fixes(
+                    target_date, fetched_results)
             except Exception as me:
                 main_fixes = {"patches_count": 0, "fixes": [], "skipped": True,
                               "error": str(me)}
@@ -359,6 +371,9 @@ async def api_step3_run(session_url: str = Form(...),
         canceled = any(r.get("canceled") for r in results)
         return {"ok": True, "results": results,
                 "writeback": write_info, "main_fixes": main_fixes,
+                "skipped_existing": len(preserved_results),
+                "new_this_session": sum(1 for r in results
+                                        if r.get("is_new_this_session")),
                 "canceled": canceled, "op_id": op_id}
     except Exception as e:
         raise HTTPException(500, str(e))

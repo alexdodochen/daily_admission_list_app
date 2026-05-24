@@ -245,6 +245,14 @@ textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 13px; b
 .emr-collapse-bar button:hover { background: var(--accent-2); }
 .emr-card .emr-fg { color: #2563eb; font-weight: 600; }
 .emr-card .emr-name-fix { color: #d97706; font-weight: 600; margin-left: 4px; }
+.emr-badge { display: inline-block; padding: 2px 8px; border-radius: 10px;
+             font-size: 12px; font-weight: 600; margin-left: 6px;
+             vertical-align: middle; }
+.emr-badge-new { background: #fef3c7; color: #92400e; border: 1px solid #fbbf24; }
+.emr-badge-skip { background: #e5e7eb; color: #4b5563; border: 1px solid #cbd5e1; }
+.emr-card-new { border-color: #fbbf24; background: #fffbeb; }
+.emr-card-skipped { background: #f9fafb; opacity: 0.85; }
+.emr-card-skipped pre { background: #f3f4f6; }
 
 /* Help modal */
 .help-modal { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.55);

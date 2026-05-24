@@ -571,6 +571,88 @@ def test_writeback_emr_name_overrides_preserved_row(monkeypatch):
     assert not any(c.startswith("G7") for c, _ in cells)
 
 
+def test_filter_already_filled_splits_by_existing_cfg(monkeypatch):
+    """Pre-Step 3 filter: charts with ANY C/F/G filled in sub-tables go to
+    `preserved`; fresh charts go to `to_fetch`.
+    """
+    from app.services import ordering_service
+    tables = {"李文煌": [
+        # Has C → preserved
+        {"row": 5, "name": "甲", "chart_no": "111",
+         "emr": "65 y/o 男\nOLD SOAP", "diagnosis": "", "cathlab": ""},
+        # Has F only → preserved
+        {"row": 6, "name": "乙", "chart_no": "222",
+         "emr": "", "diagnosis": "CAD", "cathlab": ""},
+        # Has G only → preserved
+        {"row": 7, "name": "丙", "chart_no": "333",
+         "emr": "", "diagnosis": "", "cathlab": "PCI"},
+        # All blank → to_fetch
+        {"row": 8, "name": "丁", "chart_no": "444",
+         "emr": "", "diagnosis": "", "cathlab": ""},
+    ]}
+    monkeypatch.setattr(ordering_service, "read_doctor_subtables",
+                        lambda d: {doc: list(pts) for doc, pts in tables.items()})
+    patients = [
+        {"chart_no": "111", "name": "甲", "doctor": "李文煌"},
+        {"chart_no": "222", "name": "乙", "doctor": "李文煌"},
+        {"chart_no": "333", "name": "丙", "doctor": "李文煌"},
+        {"chart_no": "444", "name": "丁", "doctor": "李文煌"},
+    ]
+    to_fetch, preserved = es.filter_already_filled("20260525", patients)
+    assert [p["chart_no"] for p in to_fetch] == ["444"]
+    assert sorted(p["chart_no"] for p in preserved) == ["111", "222", "333"]
+    # Preserved synthetic results carry the existing C/F/G + skipped flag
+    by_chart = {p["chart_no"]: p for p in preserved}
+    assert by_chart["111"]["c_text"] == "65 y/o 男\nOLD SOAP"
+    assert by_chart["222"]["f"] == "CAD"
+    assert by_chart["333"]["g"] == "PCI"
+    assert all(p.get("skipped_existing") is True for p in preserved)
+    assert all(p.get("emr_name") == "" for p in preserved)  # didn't fetch
+
+
+def test_filter_already_filled_chart_not_in_subtable_goes_to_fetch(monkeypatch):
+    """A chart in the input list but NOT in any sub-table is treated as new
+    (no existing C/F/G to preserve) and goes to_fetch.
+    """
+    from app.services import ordering_service
+    tables = {"李文煌": [
+        {"row": 5, "name": "甲", "chart_no": "111",
+         "emr": "OLD", "diagnosis": "CAD", "cathlab": "PCI"},
+    ]}
+    monkeypatch.setattr(ordering_service, "read_doctor_subtables",
+                        lambda d: {doc: list(pts) for doc, pts in tables.items()})
+    patients = [
+        {"chart_no": "999", "name": "新", "doctor": "新醫師"},  # not in sub-table
+        {"chart_no": "111", "name": "甲", "doctor": "李文煌"},  # in sub-table, filled
+    ]
+    to_fetch, preserved = es.filter_already_filled("20260525", patients)
+    assert [p["chart_no"] for p in to_fetch] == ["999"]
+    assert [p["chart_no"] for p in preserved] == ["111"]
+
+
+def test_filter_already_filled_falls_back_to_fetch_all_on_error(monkeypatch):
+    """If sub-table read fails (sheet unreachable, etc), fall back to
+    fetching everything — the pre-filter is an optimisation, never a
+    blocker.
+    """
+    from app.services import ordering_service
+    def _boom(d):
+        raise RuntimeError("sheet unreachable")
+    monkeypatch.setattr(ordering_service, "read_doctor_subtables", _boom)
+    patients = [{"chart_no": "111", "name": "甲", "doctor": "李"}]
+    to_fetch, preserved = es.filter_already_filled("20260525", patients)
+    assert to_fetch == patients
+    assert preserved == []
+
+
+def test_filter_already_filled_empty_date_returns_all_to_fetch():
+    """Empty date string → can't read sub-tables → fetch all."""
+    patients = [{"chart_no": "111", "name": "甲", "doctor": "李"}]
+    to_fetch, preserved = es.filter_already_filled("", patients)
+    assert to_fetch == patients
+    assert preserved == []
+
+
 def test_writeback_mixed_batch_one_preserved_one_new(monkeypatch):
     """Two charts: one already-EMR'd → preserved; one fresh → written."""
     tables = {"許志新": [

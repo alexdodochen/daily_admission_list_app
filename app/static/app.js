@@ -1575,10 +1575,10 @@ function setupStep3() {
           skippedNote = '（未寫回 — 缺日期）';
         } else {
           const autoBuilt = wb.auto_built ? '（已自動建立子表格）' : '';
-          const preservedN = (wb.preserved || []).length;
-          const preservedNote = preservedN
-            ? `，保留既有 ${preservedN} 位（已有資料未覆寫）` : '';
-          skippedNote = `；寫回子表格 ${wb.written} 位${autoBuilt}${preservedNote}` +
+          const skippedFetchN = r.skipped_existing || 0;
+          const skippedFetchNote = skippedFetchN
+            ? `，跳過抓取 ${skippedFetchN} 位（Sheet 已有資料）` : '';
+          skippedNote = `；寫回子表格 ${wb.written} 位${autoBuilt}${skippedFetchNote}` +
             (missing ? `，${missing} 位查無子表格` : '');
         }
         // Append main A-L 修正 summary
@@ -1651,9 +1651,20 @@ async function renderEmrResults(results, mainFixes) {
             註記: ${noteInput(r.note, r.row)}
          </span>`
       : `<span class="emr-fg">術前診斷=${escape(r.f) || '—'} / 預計心導管=${escape(r.g) || '—'} <span class="hint">(無 row, 不可編輯)</span></span>`;
+    const isNew = !!r.is_new_this_session;
+    const isSkipped = !!r.skipped_existing;
+    const badge = isNew
+      ? `<span class="emr-badge emr-badge-new" title="本次擷取新增的病人">🆕 本次新增</span>`
+      : (isSkipped
+         ? `<span class="emr-badge emr-badge-skip" title="Sheet 已有資料，未重新抓取 EMR">📄 沿用 Sheet 既有資料</span>`
+         : '');
+    const cardCls = 'emr-card'
+      + (noRecord ? ' emr-no-record' : '')
+      + (isNew ? ' emr-card-new' : '')
+      + (isSkipped ? ' emr-card-skipped' : '');
     return `
-    <div class="emr-card${noRecord ? ' emr-no-record' : ''}" data-chart="${escape(r.chart_no)}">
-      <h3>${escape(r.doctor)} / ${escape(dispName)} ${emrName} (${escape(r.chart_no)}) ${r.error ? '⚠' : ''}</h3>
+    <div class="${cardCls}" data-chart="${escape(r.chart_no)}">
+      <h3>${escape(r.doctor)} / ${escape(dispName)} ${emrName} (${escape(r.chart_no)}) ${badge} ${r.error ? '⚠' : ''}</h3>
       ${r.error ? `<p class="msg err">${escape(r.error)}</p>` : ''}
       <p class="hint">${escape(demog)} &nbsp; ${visit}</p>
       <div class="emr-fg-row">${fgEditor}</div>
