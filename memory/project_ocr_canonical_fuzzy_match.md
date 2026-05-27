@@ -7,8 +7,18 @@ metadata:
 
 ## What
 
-`app/services/ocr_service.py` corrects OCR-misread cardiology attending names
-via two layers, in order:
+The canonical CV-attending pool lives at
+`app/services/canonical_doctors.py` and is consumed by TWO independent
+layers — both must run for OCR misreads to self-heal end-to-end:
+
+  - **Step 1 (`ocr_service`)** — fixes the OCR output at intake.
+  - **Step 3 (`emr_service._name_variants`)** — fixes EMR visit-anchor
+    matching when the assigned doctor name on the sub-table is non-canonical
+    (e.g. user manually fixed main D but the sub-table block title still
+    has the misread, OR an old sub-table block was built before the fuzzy
+    layer existed).
+
+`ocr_service` correction layers (in order):
 
 1. **`OCR_NAME_CORRECTIONS`** — hardcoded `{wrong: canonical}` map for known
    recurring misreads (廖瑤→廖瑀, 柯星諭→柯呈諭, 劉獻文→劉嚴文, 廖世鴻→詹世鴻).
@@ -33,8 +43,16 @@ catches >95% of glyph collisions deterministically.
 
 ## How to apply
 
-- **Extending canonical list** — edit `CANONICAL_CV_DOCTORS` frozenset at
-  the top of `app/services/ocr_service.py`.
+- **Extending canonical list** — edit `CANONICAL_CV_DOCTORS` frozenset in
+  `app/services/canonical_doctors.py` (single source of truth for both
+  Step 1 OCR and Step 3 EMR layers).
+- **EMR doctor field in `_name_variants`** — if a sub-table's doctor name
+  is non-canonical (because OCR mis-read AND user fixed main A-L only, OR
+  the block was built pre-fuzzy), `_name_variants` adds the canonical
+  1-char-diff neighbor as an extra variant. EMR match then hits the real
+  attending's anchor; `apply_emr_main_fixes` rewrites main D to canonical;
+  user clicks 🔧 重建子表格 (smart_rebuild) to consolidate the sub-table
+  title.
 - **Adding a known misread that the fuzzy layer doesn't catch** (e.g.
   different length, multi-char diff, ambiguous) — add to
   `OCR_NAME_CORRECTIONS` dict at the top of `ocr_service.py`.

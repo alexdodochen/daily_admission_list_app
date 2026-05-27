@@ -10,17 +10,7 @@ from typing import Optional
 
 from ..llm import get_llm, extract_json
 from . import sheet_service
-
-
-# Canonical NCKUH cardiology attending pool — source of truth for fuzzy
-# OCR-name correction (see `_fuzzy_canonical_match`). Keep in sync with the
-# admission lottery sheet (主治醫師抽籤表). Doctors here must also have a
-# 6-digit code in `app/data/static/doctor_codes.json` for cathlab keyin.
-CANONICAL_CV_DOCTORS: frozenset[str] = frozenset({
-    "陳柏升", "劉嚴文", "詹世鴻", "許志新", "陳昭佑", "李柏增",
-    "林佳凌", "陳柏偉", "鄭朝允", "陳儒逸", "劉秉彥", "陳則瑋",
-    "張獻元", "黃睦翔", "廖瑀", "黃鼎鈞", "柯呈諭", "李文煌",
-})
+from .canonical_doctors import CANONICAL_CV_DOCTORS, fuzzy_canonical_match
 
 OCR_PROMPT = """你是醫療排程助理。請把這張住院名單截圖轉成 JSON 陣列。
 
@@ -58,35 +48,6 @@ OCR_NAME_CORRECTIONS = {
 }
 
 
-def _fuzzy_canonical_match(name: str) -> Optional[str]:
-    """If `name` is NOT in the canonical CV-attending pool, look for canonical
-    names that differ by exactly one character (same length). Return that
-    canonical name iff EXACTLY ONE such neighbor exists; otherwise None
-    (ambiguous or no neighbor — leave the LLM output alone).
-
-    Why same-length only: OCR glyph collisions (廖瑤/廖瑀, 柯星諭/柯呈諭,
-    林佳淩/林佳凌) substitute one CJK character for a visually similar one;
-    insertion/deletion is far rarer and risk-of-bad-correction goes up
-    sharply when length differs. Same-length distance-1 catches >95% of
-    real-world cases observed in 2026-Q1/Q2 field tests.
-
-    Why "exactly one neighbor": 張獻文 (made-up) has TWO same-length
-    distance-1 canonical neighbors — 張獻元 and 劉獻文. Picking one would
-    be a coin flip; safer to leave it for the user / explicit map to fix.
-    """
-    if not name or name in CANONICAL_CV_DOCTORS:
-        return None
-    matches = []
-    for canon in CANONICAL_CV_DOCTORS:
-        if len(canon) != len(name):
-            continue
-        if sum(1 for a, b in zip(name, canon) if a != b) == 1:
-            matches.append(canon)
-            if len(matches) > 1:
-                return None  # ambiguous, bail early
-    return matches[0] if len(matches) == 1 else None
-
-
 def _correct_ocr_name(s: str, *, is_doctor: bool = False) -> str:
     """Correct OCR-misread CJK names. Two layers:
 
@@ -102,7 +63,7 @@ def _correct_ocr_name(s: str, *, is_doctor: bool = False) -> str:
     if bare in OCR_NAME_CORRECTIONS:
         return OCR_NAME_CORRECTIONS[bare]
     if is_doctor:
-        fuzzy = _fuzzy_canonical_match(bare)
+        fuzzy = fuzzy_canonical_match(bare)
         if fuzzy is not None:
             return fuzzy
     return s

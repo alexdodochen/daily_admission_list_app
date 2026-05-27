@@ -948,7 +948,19 @@ def _name_variants(name: str) -> list[str]:
     # are correct — otherwise we silently fall to FALLBACK_DOCTORS and lose
     # the chance to canonicalize the doctor.
     cleaned = re.sub(r"[?？]+\s*$", "", (name or "").strip()).strip()
-    return NAME_ALIASES.get(cleaned, [cleaned] if cleaned else [])
+    base = NAME_ALIASES.get(cleaned, [cleaned] if cleaned else [])
+    # If the assigned doctor name is NOT in the canonical CV-attending pool
+    # but is exactly 1 character from EXACTLY ONE canonical name, also try
+    # matching the canonical variant. Field bug 2026-05-27: 廖瑤 in the
+    # sub-table title (an OCR misread of 廖瑀 that the user fixed in the
+    # main table but didn't propagate to the sub-table block) caused EMR
+    # match to miss the actual 廖瑀 visit anchors. Adding the canonical
+    # neighbor as a variant makes the match self-heal in this scenario.
+    from .canonical_doctors import fuzzy_canonical_match
+    fuzzy = fuzzy_canonical_match(cleaned)
+    if fuzzy and fuzzy not in base:
+        base = base + [fuzzy]
+    return base
 
 
 # Visit label format: "<date> <doctor> 門診" (e.g. "2026/04/12 詹世鴻 門診").

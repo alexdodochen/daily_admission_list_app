@@ -11,6 +11,37 @@ from app.services import emr_service as es
 
 # --------------------- inpatient-only boilerplate (2026-05-15) ---------------------
 
+# --------------------- _name_variants canonical fuzzy expansion ----------------
+
+def test_name_variants_includes_canonical_neighbor_for_misread():
+    """Field bug 2026-05-27: sub-table title was OCR-misread as 廖瑤 (and
+    not corrected by Step 1 manual edit because the user edited main A-L
+    but the sub-table block kept the wrong title). Step 3 EMR match did
+    string-equality on 廖瑤 → all 廖瑀 visit anchors missed. Fix: extend
+    _name_variants to also yield the canonical 1-char neighbor."""
+    assert "廖瑀" in es._name_variants("廖瑤")
+    assert "廖瑤" in es._name_variants("廖瑤")  # original variant still tried
+
+
+def test_name_variants_canonical_input_no_fuzzy_expansion():
+    """If the input is already canonical, don't add anything extra."""
+    out = es._name_variants("廖瑀")
+    assert out == ["廖瑀"]
+
+
+def test_name_variants_ambiguous_no_expansion():
+    """陳柏勝 → 1 char from BOTH 陳柏升 AND 陳柏偉 → ambiguous, no expansion."""
+    out = es._name_variants("陳柏勝")
+    assert out == ["陳柏勝"]
+
+
+def test_name_variants_strips_uncertainty_marker_then_fuzzy():
+    """OCR may append `?` to flag uncertainty. Strip it BEFORE fuzzy lookup
+    so `廖瑤?` still expands to include 廖瑀."""
+    out = es._name_variants("廖瑤?")
+    assert "廖瑀" in out
+
+
 def test_is_index_page_boilerplate_detects_typical_index():
     text = "住院資料量較大,請點選個別項目後瀏覽\n全部摺疊 | 全部展開\n執行時間 : 00:00:01.656s"
     assert es.is_index_page_boilerplate(text) is True
