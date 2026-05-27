@@ -101,6 +101,56 @@ def test_ocr_corrects_liao_yu_misread_as_liao_yao(monkeypatch):
     assert out[0]["doctor"] == "廖瑀"
 
 
+# ---- Fuzzy match against canonical CV-attending pool ----
+
+def test_fuzzy_corrects_unknown_one_char_neighbor(monkeypatch):
+    """When OCR returns a doctor name that isn't in CANONICAL_CV_DOCTORS but
+    is exactly 1 character away from EXACTLY ONE canonical name, auto-correct
+    even without an entry in OCR_NAME_CORRECTIONS."""
+    # 林佳淩 (with water radical) → 林佳凌 (canonical, no water radical).
+    fake = FakeLLM('[{"doctor": "林佳淩", "name": "X", "chart_no": "1"}]')
+    monkeypatch.setattr(ocr_service, "get_llm", lambda: fake)
+    out = _run(ocr_service.ocr_image(b""))
+    assert out[0]["doctor"] == "林佳凌"
+
+
+def test_fuzzy_leaves_ambiguous_alone(monkeypatch):
+    """陳柏勝 has TWO same-length distance-1 canonical neighbors:
+    陳柏升 and 陳柏偉 (both differ only at position 2). Must NOT auto-pick
+    — leave it for the user / explicit map."""
+    fake = FakeLLM('[{"doctor": "陳柏勝", "name": "X", "chart_no": "1"}]')
+    monkeypatch.setattr(ocr_service, "get_llm", lambda: fake)
+    out = _run(ocr_service.ocr_image(b""))
+    assert out[0]["doctor"] == "陳柏勝"
+
+
+def test_fuzzy_does_not_touch_patient_name(monkeypatch):
+    """Patient names go through _correct_ocr_name with is_doctor=False, so
+    the canonical-doctor fuzzy layer must NOT fire. A plausible patient
+    name like 廖瑪 (1 char from canonical 廖瑀) must be preserved."""
+    fake = FakeLLM('[{"doctor": "廖瑀", "name": "廖瑪", "chart_no": "1"}]')
+    monkeypatch.setattr(ocr_service, "get_llm", lambda: fake)
+    out = _run(ocr_service.ocr_image(b""))
+    assert out[0]["name"] == "廖瑪"
+
+
+def test_fuzzy_skips_when_already_canonical(monkeypatch):
+    """If the doctor name is already canonical, fuzzy match is a no-op."""
+    fake = FakeLLM('[{"doctor": "陳柏升", "name": "X", "chart_no": "1"}]')
+    monkeypatch.setattr(ocr_service, "get_llm", lambda: fake)
+    out = _run(ocr_service.ocr_image(b""))
+    assert out[0]["doctor"] == "陳柏升"
+
+
+def test_fuzzy_skips_different_length(monkeypatch):
+    """Same-length only — name with extra/missing char doesn't fuzzy-match.
+    「廖瑀x」 (3 chars) must NOT be rewritten to 廖瑀 (2 chars) via fuzzy."""
+    fake = FakeLLM('[{"doctor": "廖瑀x", "name": "Y", "chart_no": "1"}]')
+    monkeypatch.setattr(ocr_service, "get_llm", lambda: fake)
+    out = _run(ocr_service.ocr_image(b""))
+    assert out[0]["doctor"] == "廖瑀x"
+
+
 def test_ocr_correction_leaves_correct_names_alone(monkeypatch):
     fake = FakeLLM('[{"doctor": "柯呈諭", "name": "陳柏升", "chart_no": "1"}]')
     monkeypatch.setattr(ocr_service, "get_llm", lambda: fake)
