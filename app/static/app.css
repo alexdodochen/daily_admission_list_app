@@ -79,7 +79,7 @@ html, body { margin: 0; padding: 0; font-family: -apple-system, "Noto Sans TC", 
 button.mini { padding: 3px 10px; font-size: 12px; background: #f59e0b; }
 button.mini:hover:not(:disabled) { background: #d97706; }
 
-main { max-width: 1100px; margin: 20px auto; padding: 0 16px; }
+main { max-width: 1280px; margin: 20px auto; padding: 0 16px; }
 
 .card {
   background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
@@ -434,9 +434,12 @@ button.viewer-src-tab.active { background: var(--accent); color: #fff; }
 .scroll-to-top:hover { background: #1d4ed8; opacity: 1; }
 @media print { .scroll-to-top { display: none; } }
 
-/* Step 3 EMR card F/G inline editor */
-.emr-card .emr-fg-edit { display: inline-flex; align-items: center; gap: 12px;
-  flex-wrap: wrap; font-weight: 600; color: var(--accent); }
+/* Step 3 EMR card F/G inline editor — keep all 4 fields on one line.
+   Each label+input is wrapped in .emr-fg-pair so it never breaks mid-pair. */
+.emr-card .emr-fg-edit { display: flex; align-items: center; gap: 14px;
+  flex-wrap: nowrap; font-weight: 600; color: var(--accent); }
+.emr-fg-pair { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.emr-fg-pair input.fg-input { width: 140px; }
 .emr-fix-list { background: #fef3c7; border: 1px solid #fcd34d; border-radius: 6px;
   padding: 8px 12px; margin: 8px 0; }
 .emr-fix-list h4 { margin: 0 0 6px; font-size: 14px; color: #92400e; }

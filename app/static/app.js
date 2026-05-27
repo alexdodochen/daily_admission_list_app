@@ -1723,10 +1723,10 @@ async function renderEmrResults(results, mainFixes) {
     // If row is missing (patient not in any sub-table), still render read-only.
     const fgEditor = (r.row)
       ? `<span class="emr-fg-edit">
-            術前診斷: ${fgInput(6, r.f, r.row, opts.f, 'fg-f-list')}
-            預計心導管: ${fgInput(7, r.g, r.row, opts.g, 'fg-g-list')}
-            註記: ${noteInput(r.note, r.row)}
-            備註(住服): ${houseInput(r.house, r.row)}
+            <span class="emr-fg-pair">術前診斷:${fgInput(6, r.f, r.row, opts.f, 'fg-f-list')}</span>
+            <span class="emr-fg-pair">預計心導管:${fgInput(7, r.g, r.row, opts.g, 'fg-g-list')}</span>
+            <span class="emr-fg-pair">註記:${noteInput(r.note, r.row)}</span>
+            <span class="emr-fg-pair">備註(住服):${houseInput(r.house, r.row)}</span>
          </span>`
       : `<span class="emr-fg">術前診斷=${escape(r.f) || '—'} / 預計心導管=${escape(r.g) || '—'} <span class="hint">(無 row, 不可編輯)</span></span>`;
     const isNew = !!r.is_new_this_session;
