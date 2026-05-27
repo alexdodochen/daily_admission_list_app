@@ -258,43 +258,6 @@ async def api_step2_rebuild_subtables(date: str = Form(...)):
         raise HTTPException(500, str(e))
 
 
-# ------------------------------ Step 2 Lottery (legacy — kept for future use) ------------------------------
-
-@app.get("/api/step2/context")
-async def api_step2_context(date: str, weekday: str = ""):
-    try:
-        patients = lottery_service.read_main_patients(date)
-        tickets = lottery_service.read_lottery_tickets(weekday) if weekday else {}
-        return {"ok": True, "patients": patients, "tickets": tickets}
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.post("/api/step2/run")
-async def api_step2_run(date: str = Form(...), tickets_json: str = Form(...),
-                        seed: int = Form(0)):
-    import json as _json
-    try:
-        tickets = _json.loads(tickets_json)
-        patients = lottery_service.read_main_patients(date)
-        drawn = lottery_service.draw(patients, tickets, seed=seed or None)
-        ordered = lottery_service.round_robin(drawn, tickets)
-        return {"ok": True, "drawn": drawn, "ordered": ordered}
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.post("/api/step2/write")
-async def api_step2_write(date: str = Form(...), ordered_json: str = Form(...)):
-    import json as _json
-    try:
-        ordered = _json.loads(ordered_json)
-        result = lottery_service.write_to_sheet(date, ordered)
-        return {"ok": True, **result}
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
 # ------------------------------ F/G canonical options ------------------------------
 
 @app.get("/api/options/fg")
@@ -542,42 +505,6 @@ async def api_op_list():
     """Diagnostic: list currently-running long-ops."""
     from .services import cancel_registry
     return {"ok": True, "running": cancel_registry.list_running()}
-
-
-# ------------------------------ EMR main verify ------------------------------
-
-@app.post("/api/emr/verify_main")
-async def api_emr_verify_main(date: str = Form(...),
-                              session_url: str = Form(...),
-                              today: str = Form("")):
-    """
-    Cross-check main A-L姓名/性別/年齡 against EMR #divUserSpec for each
-    chart. Returns the diff + patches (caller decides whether to apply).
-    """
-    from datetime import date as _date
-    try:
-        ws = sheet_service.get_worksheet(date)
-        if ws is None:
-            raise ValueError(f"找不到工作表 {date}")
-        main = sheet_service.read_range(ws, "A2:L200") or []
-        rows: list[dict] = []
-        for i, r in enumerate(main):
-            rr = (r + [""] * 12)[:12]
-            chart = rr[8].strip()
-            if not chart:
-                continue
-            rows.append({
-                "row": i + 2,
-                "chart": chart,
-                "sheet_name": rr[5],
-                "sheet_gender": rr[6],
-                "sheet_age": rr[7],
-            })
-        today_str = today or _date.today().strftime("%Y%m%d")
-        result = await emr_service.verify_main_emr(session_url, rows, today_str)
-        return {"ok": True, **result}
-    except Exception as e:
-        raise HTTPException(500, str(e))
 
 
 # ------------------------------ Step 6 LINE ------------------------------

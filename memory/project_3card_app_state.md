@@ -1,88 +1,41 @@
 ---
 name: 3-card app integration state
-description: Current state of the daily_admission_list_app — what's delivered, what's pending in the CV_APP 3-card consolidation
+description: daily_admission_list_app shape — 3-card home (排班 / Key班 / 入院清單), public repo, .exe distribution
 type: project
-originSessionId: 72454ca2-3f8b-459c-b668-ba750a7a2e97
 ---
-This repo (`daily_admission_list_app`, cloned at `C:\Users\dr\Downloads\Y\排班 Key班 DayList APP`) is the **public integration target** for a 3-card home (排班 / Key班 / 入院清單).
 
-State as of 2026-05-21 (Phase 20 — bug-report screenshots + 查閱 viewer delete/sync):
+`daily_admission_list_app` (public on GitHub) is the integration target for a
+3-card home (排班 / Key班 / 入院清單). Ships as a double-clickable `.exe` (PyInstaller
+onedir, ~880 MB with bundled Chromium + service-account) to each year's
+incoming 行政總醫師. Recipients pull updates via in-app 更新 button — never
+re-ship the zip after the first install.
 
-**Delivered (Phase 20 — 2026-05-21 → aca3050, dfaa7ab):**
-- **🐞 回報問題 screenshot upload** — image picker (≤10, 10 MB each,
-  thumbnail preview). Screenshots bundle into the private `.zip` only,
-  never the public GitHub path. See [[bug-report-feature]].
-- **查閱 batch-delete date tabs** — 🗑 button in the viewer toolbar;
-  `POST /api/sheet/delete` deletes ONLY `^\d{8}$` admission date tabs;
-  config tabs + 排班 Sheet rejected 400; last worksheet never deleted.
-- **Live field mirror** — `ordering_service.propagate_field_edit`;
-  備註/術前診斷/預計心導管 sync between N-V and sub-tables on every
-  single-cell edit (Step 4 cell + viewer write_cell). See
-  [[corresponding-fields-must-mirror]].
+**Card 1 (排班)** — `/sched`, `schedule_gen.html`, Tailwind via CDN. Solver in
+`cv_solver.py`, Sheets I/O in `scheduling_service.py` (separate spreadsheet
+keyed on `cfg.schedule_sheet_id`). Solver cache at `main._solve_cache`.
+Calendar cells are editable `<select>` → `POST /api/sched/apply-edits`
+overwrites the cache. `POST /api/sched/handoff-to-keyin` ships the schedule
+into Card 2's prefill state.
 
-**Tests:** 400 → 420.
+**Card 2 (Key 班)** — `/keyin`, `keyin.html`, ported from
+`alexdodochen/Key-Schedule-APP`. APIRouter at `/keyin/api/*`. Auth + audit
+stripped per [[strip-auth-for-local-ports]].
 
-State as of 2026-05-21 (Phase 19 — 6-issue field-bug batch from 5/24 test, GitHub #2-#7):
+**Card 3 (入院清單)** — `/admission`, `admission.html`. The 6-step admission
+workflow (OCR / build sub-tables / EMR / lottery / cathlab keyin / LINE).
+Format check + finalize panel at bottom of the page.
 
-**Delivered (Phase 19 — 2026-05-21 → d7b3450):**
-- **入院序少一位** — `/api/sheet/read` sliced the N-V ordering block by
-  `main_end` (main A-L's last row); when N-V is longer than main A-L the
-  trailing 序號 was cut. N-V extent now walked independently.
-- **integrate_ordering appends missing** — it used to only patch existing
-  N-V rows; a sub-table patient absent from N-V now gets appended.
-- **lottery H→R** — `首次抽籤` now carries sub-table H 註記 into N-V R 備註
-  (previously only ③ integrate did).
-- **name cleanup** — `parse_subtables_grid` strips OCR "?" marks; integrate
-  refreshes P 姓名 from the (EMR-corrected) sub-table.
-- **入院序結果 備註(住服) editable** — inline-edit cell synced via /api/step4/cell.
-- **bug-report buttons** — were white-on-near-white (invisible); now solid dark.
-- **cathlab verify honours 不排** — `verify()` accepts `overrides` like
-  `keyin()`; un-checking 不排 in 預覽排程 now affects 與現有排程對照.
-- **main↔sub-table chart_no reconcile** — see [[ocr-reupload-membership-only]].
+**Cross-cutting**:
+- `📋 查閱` viewer modal — `/api/sheet/read` (date sheet structured) +
+  `/api/sheet/raw` (any tab). Editable cells via `/api/sheet/write_cell`.
+  Batch-delete date tabs via `/api/sheet/delete` (admission sheet only,
+  `^\d{8}$` tabs only; last worksheet never deleted).
+- `🐞 回報問題` modal — bug_report scrub (PHI/creds) → public GitHub
+  prefilled issue OR private `.zip` (with screenshots, never public).
+- Live field mirror — sub-table H/I/F/G ↔ N-V R/Q/T/U via
+  `ordering_service.propagate_field_edit`, fired on every single-cell edit.
+- Cache-buster: `?v={static_version}` (per-startup timestamp).
+- Watermark: bottom-right, hidden in print.
+- Sub-pages must `{% extends "base.html" %}` + IIFE-wrap their inline script.
 
-**Tests:** 400 → 409.
-
-State as of 2026-05-20 (Phase 15 — 10-issue field-bug batch from 麒翔's install):
-
-**Delivered (Phase 15 — 2026-05-20 → c47d357):**
-- **② EMR 註記 ↔ ③ 入院序整合 註記 bidirectional sync** — `renderSubtables`
-  H-col cell upgraded from plain `<td>` to `noteInput()` (editable text
-  input with `class="fg-input note-input"`). Existing `wireFgInputsIn`
-  paths in both directions pick it up automatically.
-- **EMR doctor canonicalization for main D col** — see [[emr-doctor-canonicalization]].
-  `fetch_raw_html` now returns 4-tuple incl. `matched_doctor` bool;
-  `_name_variants` strips trailing OCR "?". `apply_emr_main_fixes` patches
-  D when matched_doctor=True.
-- **FALLBACK_DOCTORS pool 6 → 28** — `_load_cv_doctor_pool()` unions the
-  hardcoded floor with `app/data/static/doctor_codes.json` keys at import.
-  Closes the "查無 EMR" gap for inpatient-only patients consulted by any
-  known CV attending. See [[emr-fallback-pool-from-doctor-codes]].
-- **Re-upload doctor_changed branch removed** — `_apply_diff_to_subtables`
-  no longer moves patients between sub-tables on doctor change. Same chart_no
-  rows are completely untouched. See [[ocr-reupload-membership-only]].
-  Two ocr_service tests rewritten.
-- **Load-existing button no longer auto-jumps tabs** — see [[load-existing-no-tab-jump]].
-- **資料檢查 panel moved bottom of /admission** (between Step 6 and end).
-- **Scroll-to-top floating button** — `#scroll-to-top` in base.html, CSS
-  fade-in past 240px, smooth scroll JS. Visible across every page.
-- **③ 入院序整合 sub-table shows 性別 + 年齡** — parsed from C-col c_text
-  prefix `<age> y/o <gender>\n` in `renderSubtables`. No backend change.
-- **Step 5 預覽排程 per-patient overrides** — UI gains 「排」checkbox column
-  (uncheck = skip from keyin) + 「導管日期」`<input type=date>` (shift this
-  patient to a different day). Backend `_apply_overrides` whitelist gains
-  `skip` + `cath_date`. Override collection in keyin5-btn translates
-  checkbox `skip_inverted` → `skip` bool and ISO date → YYYY/MM/DD.
-- **Step 5 missing_after reason column** — see [[missing-after-must-show-reason]].
-  `cathlab_service.keyin` pairs each missing patient with their Phase-1
-  `add_results` row; UI shows the explanation, never bare "✗ 沒寫進去".
-
-**Tests:** 372 → 372 (2 ocr_service tests rewritten for the new "doctor
-unchanged" rule, cathlab override surface covered by existing tests).
-
-State as of 2026-05-18 (Phase 14 — Card 1 full UI port from Key-Schedule-APP + Step 5 manual edit + exe delivery):
-
-**Delivered (Phase 14 — 2026-05-18):**
-- **Card 1 UI fully ported from Key-Schedule-APP** (was: solver aligned but UI/endpoints didn't surface it). `scheduling_service.previous_year_month` + `read_calendar_tail` (local calendar layout byte-identical to upstream → parser reused verbatim). `/api/sched/init` returns `prev_tail`+`prev_year/month`; `/api/sched/compute` forwards `vs_holiday_exempt`; `/api/sched/solve` forwards `prev_tail`+`vs_holiday_exempt`, caches `targets`, returns `projected_cumulative` (baseline−prev+new per cell) + `cr_holiday_target`. `_build_projection()` shared helper. UI: 上月末跨月限制 box, VS 不值假日 checkboxes (toggle → recompute), CR 預估表, 寫入後預估值班總數統計 table.
-- **Step 5 manual schedule edit** (Key-Schedule-APP `7b6ccf4`, the LAST sync from that repo). `cv_solver.recompute_from_schedule()` pure fn (same classification as solver). `POST /api/sched/apply-edits` overwrites cache so write/handoff emit edited result. UI: every calendar cell → editable `<select>`, changed cells amber, `✎ 套用手調並重算` / `↺ 還原 solver 原班`, edit-aware QOD banner, draft stores revert point.
-- **schedule_gen.html ported verbatim from upstream** + local infra re-applied: `extends base.html`, IIFE-scoped `$` (see [[feedback-subpage-iife-scope]]), draft fns rewired to local `/api/draft/sched/*`, dropped dup watermark. `.day-btn.selected` restored to solid indigo + white (upstream's rgba 0.40 was too faint — user correction).
-- **exe built + delivered** — `pyinstaller packaging.spec` → `dist/每日入院名單/每日入院名單.exe` (onedir, 882MB w/ bundled Chromium + SA). Zipped (Windows `tar.exe`, NOT Git Bash tar — that treats `C:/` as remote host) to `C:\Users\dr\Downloads\Y\每日入院名單 for 麒翔.zip` (380MB, outside repo). exe boots + bundled SA connects to Sheet (verified).
+Historical phase log lives in git log + commit history.

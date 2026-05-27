@@ -29,10 +29,12 @@ concerns. Splitting: Step 2 is structural (sub-tables), Step 4 is decisional
 (who goes first in 入院序).
 
 **How to apply:**
-- Don't restore the old `/api/step2/run` lottery + N-S write path.
+- Don't restore an `/api/step2/run` lottery + N-S write path. The old
+  legacy routes + `read_main_patients` / `draw` / `round_robin` /
+  `write_to_sheet` helpers were deleted 2026-05-27 — only `lottery_with_pins`
+  + `read_lottery_tickets` + `weighted_doctor_shuffle` + `parse_ticket_cell`
+  remain in `lottery_service`.
 - `subtable_service.build_subtables_from_main` REFUSES to overwrite existing
   sub-tables; user must go through Step 1 OCR diff path to preserve F/G.
-- The old `lottery_service.read_main_patients / read_lottery_tickets / draw /
-  round_robin` are kept in the module for Step 4 to use; the standalone
-  `/api/step2/run` and `/api/step2/write` endpoints remain as "legacy" routes
-  but the UI doesn't call them anymore.
+- Rescue path for corrupted sub-tables: `subtable_service.smart_rebuild` via
+  `POST /api/step2/rebuild_subtables`.

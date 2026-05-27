@@ -1683,8 +1683,6 @@ function setupStep3() {
 async function renderEmrResults(results, mainFixes) {
   const escape = s => String(s == null ? '' : s).replace(/</g, '&lt;').replace(/"/g, '&quot;');
   const opts = await ensureFgOptions();
-  // One shared datalist per page; render once at the top of the Step 3 area.
-  const datalists = fgDatalist('fg-f-list', opts.f) + fgDatalist('fg-g-list', opts.g);
 
   // Main A-L 修正摘要區（EMR → 主治醫師/姓名/性別/年齡 autofix）
   const FIELD_LABELS = {doctor: '主治醫師', name: '姓名', gender: '性別', age: '年齡'};
@@ -1758,7 +1756,7 @@ async function renderEmrResults(results, mainFixes) {
          <button type="button" id="emr-expand-all">▾ 全部展開</button>
        </div>`
     : '';
-  $('#emr-results').innerHTML = datalists + fixesHtml + collapseBar + cards;
+  $('#emr-results').innerHTML = fixesHtml + collapseBar + cards;
   const _setAllEmrBodies = (open) =>
     $('#emr-results').querySelectorAll('details.emr-body')
       .forEach(d => { d.open = open; });
@@ -2391,12 +2389,6 @@ function houseInput(value, row) {
            placeholder="備註(住服)，如 V (住服已申請)…">`;
 }
 
-function fgDatalist(id, options) {
-  // Legacy datalist kept for backward compat (no longer used by fgInput);
-  // returns empty string so existing call sites are no-ops.
-  return '';
-}
-
 async function renderSubtables(tables) {
   const opts = await ensureFgOptions();
   const esc = s => String(s || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -2406,8 +2398,6 @@ async function renderSubtables(tables) {
     const m = String(cText || '').match(/^(\d+)\s+y\/o\s+([男女])\s*\n/);
     return m ? { age: m[1], gender: m[2] } : { age: '', gender: '' };
   };
-  // Datalists are shared across all rows; render once at the top
-  const datalists = fgDatalist('fg-f-list', opts.f) + fgDatalist('fg-g-list', opts.g);
   const html = Object.entries(tables).map(([doc, pts]) => {
     const body = pts.map(p => {
       const d = parseDemog(p.emr);
@@ -2426,7 +2416,7 @@ async function renderSubtables(tables) {
       <table class="data subtable"><thead><tr><th>姓名</th><th>病歷號</th><th>性別</th><th>年齡</th><th>同醫師內排序</th><th>術前診斷</th><th>預計心導管</th><th>註記</th><th>備註(住服)</th></tr></thead>
       <tbody>${body}</tbody></table></div>`;
   }).join('');
-  $('#subtables-wrap').innerHTML = datalists + html || '<p class="hint">沒找到子表格</p>';
+  $('#subtables-wrap').innerHTML = html || '<p class="hint">沒找到子表格</p>';
   renderPinPanels(tables);
   wireEditableCells();
   wireFgInputs();
