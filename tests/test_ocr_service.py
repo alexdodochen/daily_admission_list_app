@@ -83,6 +83,24 @@ def test_ocr_correction_survives_uncertainty_marker(monkeypatch):
     assert out[0]["doctor"] == "柯呈諭"
 
 
+def test_ocr_corrects_zhan_misread_as_liao(monkeypatch):
+    """廖/詹 glyph collision — LLM mistakes 詹世鴻 for 廖世鴻 (left radical
+    confusion). Rule 16 (Friday admission drop) only fires when the doctor
+    name is canonical 詹世鴻, so this MUST be fixed at OCR time."""
+    fake = FakeLLM('[{"doctor": "廖世鴻", "name": "X", "chart_no": "1"}]')
+    monkeypatch.setattr(ocr_service, "get_llm", lambda: fake)
+    out = _run(ocr_service.ocr_image(b""))
+    assert out[0]["doctor"] == "詹世鴻"
+
+
+def test_ocr_corrects_liao_yu_misread_as_liao_yao(monkeypatch):
+    """瑤/瑀 glyph collision — LLM mistakes 廖瑀 for 廖瑤 (right half 䍃 vs 禹)."""
+    fake = FakeLLM('[{"doctor": "廖瑤", "name": "X", "chart_no": "1"}]')
+    monkeypatch.setattr(ocr_service, "get_llm", lambda: fake)
+    out = _run(ocr_service.ocr_image(b""))
+    assert out[0]["doctor"] == "廖瑀"
+
+
 def test_ocr_correction_leaves_correct_names_alone(monkeypatch):
     fake = FakeLLM('[{"doctor": "柯呈諭", "name": "陳柏升", "chart_no": "1"}]')
     monkeypatch.setattr(ocr_service, "get_llm", lambda: fake)

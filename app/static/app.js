@@ -825,12 +825,16 @@ function renderConnTest(r) {
 // ============================ workflow page ============================
 
 if (document.querySelector('.stepper')) {
-  // step switcher
+  // step switcher — keeps top + bottom steppers in sync
   $$('.step').forEach(s => s.addEventListener('click', () => {
-    $$('.step').forEach(x => x.classList.remove('active'));
-    s.classList.add('active');
     const i = s.dataset.step;
+    $$('.step').forEach(x => x.classList.toggle('active', x.dataset.step === i));
     $$('.panel').forEach(p => p.classList.toggle('hidden', p.dataset.panel !== i));
+    const fromBottom = s.closest('.stepper-bottom');
+    if (fromBottom) {
+      const target = document.querySelector(`.panel[data-panel="${i}"]`);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   }));
 
   // default date = today (Taipei), format YYYYMMDD

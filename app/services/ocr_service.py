@@ -42,6 +42,8 @@ OCR_PROMPT = """你是醫療排程助理。請把這張住院名單截圖轉成 
 OCR_NAME_CORRECTIONS = {
     "柯星諭": "柯呈諭",   # 呈/星 glyph collision
     "劉獻文": "劉嚴文",   # 嚴/獻 glyph collision
+    "廖世鴻": "詹世鴻",   # 廖/詹 glyph collision (left-radical 广 vs 言)
+    "廖瑤": "廖瑀",       # 瑤/瑀 glyph collision (右半 䍃 vs 禹)
 }
 
 
