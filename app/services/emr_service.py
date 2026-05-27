@@ -890,9 +890,50 @@ def apply_emr_main_fixes(date: str, results: list[dict]) -> dict:
             fixes.append({"chart_no": ch, "field": "age",
                           "old": ex_age, "new": new_age})
 
-    if patches:
-        sheet_service.batch_write_cells(ws, patches)
-    return {"patches_count": len(patches), "fixes": fixes, "skipped": False}
+    # Sub-table block title rename — when main D shifts from misread→canonical
+    # (e.g. 廖瑤 → 廖瑀 via Step 3 EMR fuzzy-anchor match), the sub-table block
+    # that was built under the misread title 「廖瑤（N人）」 must follow, so
+    # downstream Step 4 / ordering / cathlab read the canonical doctor name
+    # from the title row too. Without this rename the block becomes orphan:
+    # main D = 廖瑀, sub-table title = 廖瑤, and smart_rebuild would have to
+    # be invoked manually to re-consolidate. Field bug 2026-05-27.
+    rename_patches: list[tuple[str, str]] = []
+    title_renames: list[dict] = []
+    rename_pairs = {f["old"]: f["new"] for f in fixes if f["field"] == "doctor"}
+    if rename_pairs:
+        col_a = sheet_service.read_range(ws, "A1:A500")
+        # Map title-text → row number so we can detect when the canonical
+        # name already has its own block (would create a duplicate; skip).
+        title_to_row: dict[str, int] = {}
+        title_re = re.compile(r"^(.+?)（(\d+)人）\s*$")
+        for i, row in enumerate(col_a):
+            cell = (row[0] if row else "").strip()
+            m = title_re.match(cell)
+            if m:
+                title_to_row[m.group(1).strip()] = i + 1  # 1-indexed
+        for old, new in rename_pairs.items():
+            if old not in title_to_row or new in title_to_row:
+                # Either no block to rename, or canonical block already
+                # exists (would dup — leave for smart_rebuild to merge).
+                continue
+            row_idx = title_to_row[old]
+            old_cell = (col_a[row_idx - 1][0] if col_a[row_idx - 1] else "").strip()
+            new_cell = old_cell.replace(old, new, 1)
+            rename_patches.append((f"A{row_idx}", new_cell))
+            title_renames.append({"old": old_cell, "new": new_cell, "row": row_idx})
+            # Mutate map so a second doctor-rename in the same batch sees
+            # the new title in place (rare, but defends against duplicates).
+            del title_to_row[old]
+            title_to_row[new] = row_idx
+
+    if patches or rename_patches:
+        sheet_service.batch_write_cells(ws, patches + rename_patches)
+    return {
+        "patches_count": len(patches),
+        "fixes": fixes,
+        "title_renames": title_renames,
+        "skipped": False,
+    }
 
 
 # ---------------------------- Playwright orchestration ----------------------------

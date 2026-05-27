@@ -429,6 +429,90 @@ def test_apply_emr_main_fixes_missing_sheet_returns_skipped(monkeypatch):
     assert out["patches_count"] == 0
 
 
+def test_apply_emr_main_fixes_renames_subtable_title_when_doctor_canonical(monkeypatch):
+    """Field bug 2026-05-27: OCR mis-read 廖瑀 as 廖瑤. Sub-table block was
+    created under title 「廖瑤（2人）」. After EMR Step 3 the canonical doctor
+    is detected and main D is patched 廖瑤 → 廖瑀; the sub-table block title
+    must follow so the block isn't orphaned."""
+    main_grid = [
+        ["", "", "", "廖瑤", "", "郭書政", "男", "41", "07813737", "", "", ""],
+        ["", "", "", "廖瑤", "", "洪麗花", "女", "56", "08500119", "", "", ""],
+    ]
+    col_a_grid = [
+        ["主治醫師（N人）"],  # main header row (filtered out by title regex)
+        [""], [""],
+        ["廖瑤（2人）"],  # ← this is the row that must be renamed
+        ["姓名"], ["郭書政"], ["洪麗花"],
+    ]
+    patches_captured = []
+
+    class _FakeWS:
+        id = 1
+
+    def _read_range(ws, a1):
+        if a1.startswith("A1:A"):
+            return col_a_grid
+        return main_grid
+
+    from app.services import sheet_service as ss
+    monkeypatch.setattr(ss, "get_worksheet", lambda d: _FakeWS())
+    monkeypatch.setattr(ss, "read_range", _read_range)
+    monkeypatch.setattr(ss, "batch_write_cells",
+                        lambda ws, patches, raw=False: patches_captured.extend(patches))
+
+    results = [
+        {"chart_no": "07813737", "emr_name": "郭書政", "gender": "男", "age": 41,
+         "emr_doctor": "廖瑀", "matched_doctor": True, "error": ""},
+        {"chart_no": "08500119", "emr_name": "洪麗花", "gender": "女", "age": 56,
+         "emr_doctor": "廖瑀", "matched_doctor": True, "error": ""},
+    ]
+    out = es.apply_emr_main_fixes("20260527", results)
+
+    # Both main D rows patched to 廖瑀.
+    cells = dict(patches_captured)
+    assert cells["D2"] == "廖瑀"
+    assert cells["D3"] == "廖瑀"
+    # Sub-table title row 4 renamed.
+    assert cells["A4"] == "廖瑀（2人）"
+    assert len(out["title_renames"]) == 1
+    assert out["title_renames"][0]["old"] == "廖瑤（2人）"
+    assert out["title_renames"][0]["new"] == "廖瑀（2人）"
+
+
+def test_apply_emr_main_fixes_skips_rename_when_canonical_block_exists(monkeypatch):
+    """If the canonical doctor already has its own sub-table block, don't
+    rename the misread block — that would create a duplicate (two 廖瑀 blocks).
+    Leave for smart_rebuild to merge."""
+    main_grid = [["", "", "", "廖瑤", "", "X", "男", "40", "111", "", "", ""]]
+    # Both 廖瑤 and 廖瑀 blocks already exist.
+    col_a_grid = [[""], ["廖瑤（1人）"], ["姓名"], ["X"], [""], ["廖瑀（1人）"], ["姓名"], ["Y"]]
+    patches_captured = []
+
+    class _FakeWS:
+        id = 1
+
+    def _read_range(ws, a1):
+        if a1.startswith("A1:A"):
+            return col_a_grid
+        return main_grid
+
+    from app.services import sheet_service as ss
+    monkeypatch.setattr(ss, "get_worksheet", lambda d: _FakeWS())
+    monkeypatch.setattr(ss, "read_range", _read_range)
+    monkeypatch.setattr(ss, "batch_write_cells",
+                        lambda ws, patches, raw=False: patches_captured.extend(patches))
+
+    results = [{"chart_no": "111", "emr_name": "X", "gender": "男", "age": 40,
+                "emr_doctor": "廖瑀", "matched_doctor": True, "error": ""}]
+    out = es.apply_emr_main_fixes("20260527", results)
+    cells = dict(patches_captured)
+    # main D still patched.
+    assert cells.get("D2") == "廖瑀"
+    # But NO sub-table rename — conflict avoidance.
+    assert out["title_renames"] == []
+    assert "A2" not in cells and "A6" not in cells
+
+
 def test_compare_demographics_all_match():
     row = {"row": 5, "chart": "111", "sheet_name": "王小明",
            "sheet_gender": "男", "sheet_age": "66"}
