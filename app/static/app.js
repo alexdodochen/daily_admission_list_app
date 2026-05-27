@@ -2423,7 +2423,7 @@ async function renderSubtables(tables) {
       </tr>`;
     }).join('');
     return `<div class="doctor-block"><h3>${doc}（${pts.length}人）</h3>
-      <table class="data"><thead><tr><th>姓名</th><th>病歷號</th><th>性別</th><th>年齡</th><th>同醫師內排序(E)</th><th>術前診斷(F)</th><th>預計心導管(G)</th><th>註記</th><th>備註(住服)</th></tr></thead>
+      <table class="data subtable"><thead><tr><th>姓名</th><th>病歷號</th><th>性別</th><th>年齡</th><th>同醫師內排序</th><th>術前診斷</th><th>預計心導管</th><th>註記</th><th>備註(住服)</th></tr></thead>
       <tbody>${body}</tbody></table></div>`;
   }).join('');
   $('#subtables-wrap').innerHTML = datalists + html || '<p class="hint">沒找到子表格</p>';

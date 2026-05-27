@@ -214,6 +214,23 @@ table.data th { background: #f1f5f9; }
 table.data td input { width: 100%; border: 0; background: transparent; font-size: 13px; }
 table.data td input:focus { outline: 1px solid var(--accent); background: #fff; }
 
+/* Step 4 sub-table column widths — keep 姓名 on one line (no 歐林麗春→兩行)
+   and tighten 同醫師內排序 / 性別 / 年齡 to give 姓名 + 術前診斷 + 預計心導管
+   more room. Field tweak 2026-05-27. */
+table.data.subtable th:nth-child(1), table.data.subtable td:nth-child(1) {
+  width: 84px; white-space: nowrap;
+}
+table.data.subtable th:nth-child(2), table.data.subtable td:nth-child(2) {
+  width: 80px;
+}
+table.data.subtable th:nth-child(3), table.data.subtable td:nth-child(3),
+table.data.subtable th:nth-child(4), table.data.subtable td:nth-child(4) {
+  width: 44px;
+}
+table.data.subtable th:nth-child(5), table.data.subtable td:nth-child(5) {
+  width: 72px;
+}
+
 .tickets { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .tickets .t { display: flex; align-items: center; gap: 4px; background: #f1f5f9; padding: 4px 8px; border-radius: 4px; }
 .tickets .t input { width: 40px; }
