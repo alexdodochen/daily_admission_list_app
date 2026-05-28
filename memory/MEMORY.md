@@ -1,5 +1,7 @@
 # Memory index — daily_admission_list_app
 
+- [LINE quota hidden burner = OA Manager auto-reply / Smart Chat](feedback_line_quota_oa_manager_hidden_burner.md) — 5/28 198/200 root cause; check manager.line.biz settings before suspecting code
+- [LINE Messaging API Free tier 2026 = 200/month](reference_line_messaging_api_free_tier_2026.md) — Light 4000 / Standard 25000; per-message detail not in dashboard
 - [EMR visit-link match must NFC + strip whitespace](feedback_visit_match_norm_unicode.md) — 鄭朝允 / 陳淑貞 root cause; raw t.includes() missed fullwidth-space variants; diagnostic now surfaces seen anchor texts
 - [fetch_raw_html must sentinel-stamp #divUserSpec](feedback_emr_divuserspec_race_fix.md) — 石文明 → 周素珍 root cause; off-by-one corruption; mirror _verify_query_and_read pattern
 - [Cancel registry for Step 3 + Step 5 long ops](project_cancel_registry.md) — cooperative checkpoint pattern; `step{N}_{date}` op_id; `/api/op/cancel`; partial results + `canceled` flag; don't switch to asyncio.Task.cancel
