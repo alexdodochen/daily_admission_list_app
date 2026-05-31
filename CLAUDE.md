@@ -146,7 +146,10 @@ Headers are the source of truth — `format_check_service.EXPECTED_MAIN_HEADER` 
 
 ### Auto-update
 
-`updater.py` polls `https://api.github.com/repos/alexdodochen/daily_admission_list_app` (constants `REPO_OWNER` / `REPO_NAME` at top of file) and `git pull --ff-only` on `apply`. Version source order: `git rev-parse HEAD` → `app/VERSION` file → "unknown".
+`updater.py` polls `https://api.github.com/repos/alexdodochen/daily_admission_list_app` (constants `REPO_OWNER` / `REPO_NAME` at top of file). Version source order: `git rev-parse HEAD` → `app/VERSION` file → "unknown". The `來源有更新` button routes `/api/update/sync/self` → `upstream._sync_self` → mode split:
+
+- **Dev (git checkout)** → `git pull --ff-only`.
+- **Frozen (.exe)** → `updater._apply_frozen`: download the release `admission-app.zip`, extract, write a **detached** PowerShell swap script (`__update_swap__.ps1` + ASCII `.bat` shim), then `os._exit(0)` so the swap can rename `install_dir`→`.old`, move the new bundle in, and relaunch. The swap is the most brick-prone code in the app — it MUST write `__update_swap__.log`, migrate `install_dir/user_data` (config + SA key + cathlab JSONs) from `.old` into the new bundle, and never block on a console prompt (drops `UPDATE_FAILED_see_log.txt` instead). See [[updater-swap-must-use-powershell]]. A bricked install can't auto-update — those users recover manually once.
 
 ## Status
 
