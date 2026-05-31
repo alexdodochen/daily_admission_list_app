@@ -42,3 +42,4 @@
 - [F/G options come from Sheet 下拉選單 tab](feedback_fg_options_from_sheet_dropdown_tab.md) — Sheet col A=F / col D=G is canonical; hardcoded DIAG_RULES only as fallback
 - [No column letters / jargon in user-facing UI](feedback_no_column_letters_in_ui.md) — never F/G/N-V/T/U/Q NOR dry-run/ADD/UPT/pdijson/phcjson/OK-NG-SKIP nor OCR `?` to user; plain Chinese + foldable 說明
 - [F/G popup must show all on chevron click](feedback_fg_popup_must_show_all_on_click.md) — click ▼ = all options unfiltered; typing = filter; never use native datalist
+- [Long forms get bottom nav](feedback_long_forms_get_bottom_nav.md) — duplicate `.stepper.stepper-bottom` at page bottom; click handler syncs both instances + smooth-scrolls to top on bottom click; no sticky/fixed positioning

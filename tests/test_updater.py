@@ -382,6 +382,70 @@ def test_swap_ps1_has_bounded_wait(tmp_path):
     assert "AddSeconds(60)" in ps1
 
 
+def test_swap_ps1_writes_log_file(tmp_path, monkeypatch):
+    """Field bug #8 (2026-05-30): a frozen install clicked 更新, the page
+    died, and it never updated — with ZERO diagnostic trail because the
+    detached swap discards all Write-Host output and the old Read-Host
+    can't run console-less. The swap MUST persist a log so the failing
+    stage (rename / move / relaunch) is identifiable next time."""
+    install_dir = tmp_path / "行政總醫師.排班.Key班.入院"
+    install_dir.mkdir()
+    pending = tmp_path / "ext" / install_dir.name
+    pending.parent.mkdir()
+    pending.mkdir()
+    zip_path = tmp_path / "z.zip"
+    zip_path.touch()
+
+    monkeypatch.setattr(os, "getpid", lambda: 12345)
+
+    updater._write_swap_bat(install_dir, pending, zip_path, pending.parent)
+    ps1 = (tmp_path / "__update_swap__.ps1").read_text(encoding="utf-8-sig")
+    assert "__update_swap__.log" in ps1, "swap must write a persistent log"
+    assert "function Log" in ps1
+    assert "Add-Content" in ps1, "log lines must be appended to the file"
+
+
+def test_swap_ps1_migrates_user_data(tmp_path, monkeypatch):
+    """The fresh bundle ships an empty user_data; user_data holds
+    config.json + service_account.json + cathlab static JSONs INSIDE the
+    install dir that gets renamed to .old. Without an explicit migration
+    the user loses all settings + credentials on every update."""
+    install_dir = tmp_path / "行政總醫師.排班.Key班.入院"
+    install_dir.mkdir()
+    pending = tmp_path / "ext" / install_dir.name
+    pending.parent.mkdir()
+    pending.mkdir()
+    zip_path = tmp_path / "z.zip"
+    zip_path.touch()
+
+    monkeypatch.setattr(os, "getpid", lambda: 12345)
+
+    updater._write_swap_bat(install_dir, pending, zip_path, pending.parent)
+    ps1 = (tmp_path / "__update_swap__.ps1").read_text(encoding="utf-8-sig")
+    assert "user_data" in ps1, "must migrate user_data from .old to new bundle"
+    assert "Copy-Item" in ps1
+
+
+def test_swap_ps1_no_read_host_uses_breadcrumb(tmp_path, monkeypatch):
+    """Read-Host can't work on a detached console-less process — it errors
+    and the failure reason vanishes. Failure branches must Log + drop an
+    ASCII breadcrumb file the user can find, never block on Read-Host."""
+    install_dir = tmp_path / "行政總醫師.排班.Key班.入院"
+    install_dir.mkdir()
+    pending = tmp_path / "ext" / install_dir.name
+    pending.parent.mkdir()
+    pending.mkdir()
+    zip_path = tmp_path / "z.zip"
+    zip_path.touch()
+
+    monkeypatch.setattr(os, "getpid", lambda: 12345)
+
+    updater._write_swap_bat(install_dir, pending, zip_path, pending.parent)
+    ps1 = (tmp_path / "__update_swap__.ps1").read_text(encoding="utf-8-sig")
+    assert "Read-Host" not in ps1, "Read-Host is useless on a detached swap"
+    assert "UPDATE_FAILED" in ps1, "must drop a breadcrumb file on failure"
+
+
 def test_swap_bat_has_no_chcp_command(tmp_path, monkeypatch):
     """`chcp 65001 >nul` was a misleading no-op (only affects OUTPUT codepage,
     not how cmd PARSES the script). The new shim doesn't need it at all

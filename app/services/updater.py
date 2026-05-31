@@ -255,6 +255,8 @@ def _write_swap_bat(install_dir: Path,
     parent = install_dir.parent
     ps1_path = parent / "__update_swap__.ps1"
     bat_path = parent / "__update_swap__.bat"
+    log_path = parent / "__update_swap__.log"
+    fail_marker = parent / "UPDATE_FAILED_see_log.txt"
 
     current_pid = _os.getpid()
 
@@ -272,8 +274,26 @@ $zipPath      = '{_psq(zip_path)}'
 $extractDir   = '{_psq(extract_dir)}'
 $oldPid       = {current_pid}
 $exeName      = '{_psq(exe_name)}'
+$logPath      = '{_psq(log_path)}'
+$failMarker   = '{_psq(fail_marker)}'
 
-Write-Host "Waiting for old app (PID $oldPid) to exit (max 60s)..."
+# Persistent log. The swap runs DETACHED with no console (field bug #8,
+# 2026-05-30): Write-Host vanishes and a blocking console prompt can't
+# run, so a failed rename/move/relaunch used to brick the install with
+# zero trail. Log every step to a file the user (and we) can read after.
+function Log($m) {{
+    $line = "{{0:yyyy-MM-dd HH:mm:ss}} {{1}}" -f (Get-Date), $m
+    Write-Host $line
+    try {{ Add-Content -LiteralPath $logPath -Value $line -Encoding UTF8 }} catch {{ }}
+}}
+
+# Clear any stale failure breadcrumb from a previous attempt.
+Remove-Item -LiteralPath $failMarker -Force -ErrorAction SilentlyContinue
+
+Log "=== swap start (oldPid=$oldPid) ==="
+Log "installDir=$installDir"
+
+Log "Waiting for old app to exit (max 60s)..."
 $deadline = (Get-Date).AddSeconds(60)
 while ((Get-Date) -lt $deadline) {{
     $p = Get-Process -Id $oldPid -ErrorAction SilentlyContinue
@@ -285,13 +305,13 @@ while ((Get-Date) -lt $deadline) {{
 # that should be holding files in $installDir at this point.
 $p = Get-Process -Id $oldPid -ErrorAction SilentlyContinue
 if ($p) {{
-    Write-Host "Process did not exit gracefully — taskkill /F /PID $oldPid"
+    Log "Process did not exit gracefully — Stop-Process -Id $oldPid -Force"
     Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 800
 }}
 
 # Try the rename a few times — Windows can hold a stale file lock briefly
-# even after process death.
+# even after process death (commonly antivirus scanning the new exe).
 $renamed = $false
 for ($i = 0; $i -lt 20; $i++) {{
     try {{
@@ -303,18 +323,49 @@ for ($i = 0; $i -lt 20; $i++) {{
     }}
 }}
 if (-not $renamed) {{
-    Write-Host "[ERR] Cannot rename old install dir. Aborting; old app left intact."
-    Read-Host 'Press Enter'
+    Log "[ERR] Cannot rename old install dir after 20 tries (antivirus or open file lock). Aborting; old app left intact."
+    Set-Content -LiteralPath $failMarker -Encoding UTF8 -ErrorAction SilentlyContinue -Value @"
+UPDATE FAILED — could not rename the install folder (usually antivirus or an open file lock).
+Your OLD version is intact and safe to keep using.
+Details: __update_swap__.log (same folder).
+Manual update: download admission-app.zip from GitHub Releases, unzip it, copy your
+old folder's  user_data\\  into the new folder, then run the new .exe.
+"@
     exit 1
 }}
+Log "Renamed install dir -> .old"
 
 try {{
     Move-Item -LiteralPath $pendingInner -Destination $installDir -ErrorAction Stop
+    Log "Moved new bundle into place"
 }} catch {{
-    Write-Host "[ERR] Move-Item failed: $_. Rolling back."
+    Log "[ERR] Move-Item failed: $_. Rolling back."
     Rename-Item -LiteralPath ($installDir + '.old') -NewName ([System.IO.Path]::GetFileName($installDir))
-    Read-Host 'Press Enter'
+    Set-Content -LiteralPath $failMarker -Encoding UTF8 -ErrorAction SilentlyContinue -Value @"
+UPDATE FAILED — could not move the new version into place. Rolled back to the OLD version.
+Details: __update_swap__.log (same folder).
+"@
     exit 1
+}}
+
+# Migrate user data from the old bundle. config.json + service_account.json
+# + the cathlab static JSONs live in install_dir\\user_data, which we just
+# renamed to .old. The fresh bundle ships an empty user_data, so without
+# this copy the user loses all settings + credentials on every update.
+$oldUserData = Join-Path ($installDir + '.old') 'user_data'
+$newUserData = Join-Path $installDir 'user_data'
+if (Test-Path -LiteralPath $oldUserData) {{
+    try {{
+        if (-not (Test-Path -LiteralPath $newUserData)) {{
+            New-Item -ItemType Directory -Path $newUserData | Out-Null
+        }}
+        Copy-Item -Path (Join-Path $oldUserData '*') -Destination $newUserData -Recurse -Force -ErrorAction Stop
+        Log "Migrated user_data from old bundle"
+    }} catch {{
+        Log "[WARN] user_data migration failed: $_. User may need to re-enter settings."
+    }}
+}} else {{
+    Log "No user_data in old bundle to migrate"
 }}
 
 Remove-Item -LiteralPath ($installDir + '.old') -Recurse -Force -ErrorAction SilentlyContinue
@@ -322,8 +373,9 @@ Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContin
 Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
 
 $newExe = Join-Path $installDir $exeName
-Write-Host "Restarting: $newExe"
+Log "Restarting: $newExe"
 Start-Process -FilePath $newExe -WorkingDirectory $installDir
+Log "=== swap done ==="
 
 # Self-delete (best-effort)
 Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue

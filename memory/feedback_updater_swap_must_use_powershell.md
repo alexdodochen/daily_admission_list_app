@@ -29,6 +29,36 @@ bricked installs:
    rename retried 20×500ms for file-lock release. `.bat` is now a
    pure-ASCII shim that just invokes the PS1.
 
+**2026-05-30 — field bug #8 (GitHub issue): silent brick + lost data.**
+A frozen install on `23d4100` (which HAS the stable PS1 swap) clicked
+更新, page died, never updated — with NO diagnostic trail. Two defects:
+
+1. **Swap was unobservable.** It runs `DETACHED_PROCESS` (no console),
+   so every `Write-Host` is discarded and the failure-branch
+   `Read-Host 'Press Enter'` can't run console-less → it errored and
+   exited, leaving zero trace. Could not determine whether
+   rename / move / relaunch failed. Most likely sub-cause: antivirus
+   locking the freshly-downloaded unsigned `.exe` during
+   `Rename-Item` / `Move-Item`.
+2. **`user_data` was not migrated.** `config.json` +
+   `service_account.json` + 3 cathlab JSONs live in
+   `install_dir/user_data`, which the swap renames to `.old`. The fresh
+   bundle ships an empty `user_data`, so a *successful* swap would have
+   wiped all settings + the SA key — fixing defect 1 alone would make
+   things worse.
+
+Fix (commit pending): swap PS1 now writes `__update_swap__.log` via a
+`Log()` helper, copies `.old/user_data/*` into the new bundle before
+deleting `.old`, replaces `Read-Host` with a `Log` + ASCII breadcrumb
+file `UPDATE_FAILED_see_log.txt` (which also tells the user the manual
+zip-recovery steps). Verified: 3 new tests + full suite + real
+PowerShell `Parser::ParseFile` syntax check. NOT verifiable on a
+non-Windows / non-frozen dev box — the actual rename/move/relaunch only
+runs in a real shipped build. **A bricked install can't auto-update, so
+this fix only protects FUTURE updates; already-bricked users must
+recover manually once** (download `admission-app.zip`, copy old
+`user_data\` into the new folder, run new exe).
+
 **How to apply:** any future change to the swap logic must:
 
 - Keep all Chinese path operations (`Rename-Item`, `Move-Item`,
@@ -42,6 +72,12 @@ bricked installs:
   `bat_path.read_bytes().decode('ascii')` in tests.
 - Save the `.ps1` as **UTF-8 BOM** (`encoding='utf-8-sig'`). PowerShell
   needs the BOM to detect UTF-8 reliably on Windows.
+- **Always write the swap log** (`__update_swap__.log`) — a detached
+  swap with no log is undiagnosable when it fails.
+- **Never `Read-Host`** (or any blocking prompt) in the swap — the
+  process has no console; drop a breadcrumb file instead.
+- **Always migrate `user_data`** from `.old` to the new bundle before
+  deleting `.old`, or every update wipes the user's settings + SA key.
 
 Related: [[delivery-protocol-inapp-update]] still holds, but for any
 install on a commit between `a68c3da` and `4eae323` inclusive the in-app
