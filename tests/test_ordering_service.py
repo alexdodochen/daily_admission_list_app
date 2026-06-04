@@ -98,10 +98,10 @@ def test_sort_by_manual_e_empty():
 
 # ---------------- ordering_headers ----------------
 
-def test_ordering_headers_9_cols():
+def test_ordering_headers_8_cols():
     assert os_.ORDERING_HEADERS == [
         "序號", "主治醫師", "病人姓名", "備註(住服)", "備註",
-        "病歷號", "術前診斷", "預計心導管", "改期",
+        "病歷號", "術前診斷", "預計心導管",
     ]
 
 
@@ -113,10 +113,10 @@ class _FakeWS:
 
 
 def test_integrate_renumbers_and_patches_fg(monkeypatch):
-    # Existing N2:V200 — two patients of doc Z, with old T/U + Q/V we must preserve
+    # Existing N2:U200 — two patients of doc Z, with old T/U + Q we must preserve
     existing = [
-        ["1", "Z", "王小明", "員工眷屬", "急", "12345678", "old_diag", "old_cath", ""],
-        ["2", "Z", "李大華", "",         "",   "87654321", "old_diag", "old_cath", "20260420"],
+        ["1", "Z", "王小明", "員工眷屬", "急", "12345678", "old_diag", "old_cath"],
+        ["2", "Z", "李大華", "",         "",   "87654321", "old_diag", "old_cath"],
     ]
     # Fresh sub-table values (T/U should come from these)
     sub_grid = [
@@ -140,18 +140,17 @@ def test_integrate_renumbers_and_patches_fg(monkeypatch):
 
     result = os_.integrate_ordering("20260420")
     assert result["rows"] == 2
-    assert result["range"] == "N2:V3"
+    assert result["range"] == "N2:U3"
 
     # Body write
-    body_write = next(w for w in ws.writes if w[0] == "N2:V3")
+    body_write = next(w for w in ws.writes if w[0] == "N2:U3")
     body = body_write[1]
     assert body[0][0] == "1"
     assert body[0][3] == "員工眷屬"  # Q preserved
     assert body[0][6] == "CAD"        # T patched from sub-table
     assert body[0][7] == "Left heart cath."
-    assert body[0][8] == ""           # V preserved (empty)
-    assert body[1][8] == "20260420"   # V preserved (改期 marker)
     assert body[1][6] == "pAf"
+    assert len(body[0]) == 8
 
 
 def test_integrate_resorts_by_subtable_e(monkeypatch):
@@ -183,7 +182,7 @@ def test_integrate_resorts_by_subtable_e(monkeypatch):
     monkeypatch.setattr(os_.sheet_service, "write_range", fake_write_range)
 
     os_.integrate_ordering("20260420")
-    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    body = next(w for w in ws.writes if w[0].startswith("N2:U"))[1]
     names = [row[2] for row in body]
     assert names == ["P2", "P3", "P1"]
     # Renumbered
@@ -228,15 +227,15 @@ def test_sync_drops_removed_patient(monkeypatch):
     assert r["updated"] is True
     assert r["rows"] == 1
     assert r["removed"] == ["222"]
-    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    body = next(w for w in ws.writes if w[0].startswith("N2:U"))[1]
     assert [row[5] for row in body] == ["111"]
     assert body[0][0] == "1"
 
 
 def test_sync_appends_new_patient(monkeypatch):
-    """Chart in sub-tables but not in N-V → appended at end."""
+    """Chart in sub-tables but not in 入院序 → appended at end."""
     existing = [
-        ["1", "Z", "甲", "員工", "急", "111", "CAD", "PCI", "20260420"],
+        ["1", "Z", "甲", "員工", "急", "111", "CAD", "PCI"],
     ]
     sub_grid = [
         _pad(["Z（2人）"]),
@@ -249,14 +248,13 @@ def test_sync_appends_new_patient(monkeypatch):
     r = os_.sync_ordering_after_diff("20260501")
     assert r["rows"] == 2
     assert [a["chart_no"] for a in r["added"]] == ["222"]
-    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
-    # Old row preserves Q/V manual markers
+    body = next(w for w in ws.writes if w[0].startswith("N2:U"))[1]
+    # Old row preserves Q manual marker
     assert body[0][3] == "員工"
-    assert body[0][8] == "20260420"
-    # New row appended with empty Q/V
+    assert len(body[0]) == 8
+    # New row appended with empty Q
     assert body[1][5] == "222"
     assert body[1][3] == ""
-    assert body[1][8] == ""
 
 
 def test_sync_reflects_doctor_change(monkeypatch):
@@ -275,7 +273,7 @@ def test_sync_reflects_doctor_change(monkeypatch):
     assert r["doctor_changed"] == [
         {"chart_no": "111", "old": "李文煌", "new": "新醫師"}
     ]
-    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    body = next(w for w in ws.writes if w[0].startswith("N2:U"))[1]
     assert body[0][1] == "新醫師"
 
 
@@ -297,10 +295,10 @@ def test_integrate_syncs_subtable_note_to_R(monkeypatch):
     monkeypatch.setattr(os_.sheet_service, "write_range",
                         lambda _ws, rng, body, raw=False: ws.writes.append((rng, body)))
     os_.integrate_ordering("20260501")
-    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    body = next(w for w in ws.writes if w[0].startswith("N2:U"))[1]
     assert body[0][3] == "員工"        # Q (住服) preserved
     assert body[0][4] == "不排導管"    # R ← 子表格 H 註記
-    assert body[0][8] == ""            # V preserved
+    assert len(body[0]) == 8
 
 
 def test_integrate_overwrites_Q_when_subtable_house_set(monkeypatch):
@@ -323,7 +321,7 @@ def test_integrate_overwrites_Q_when_subtable_house_set(monkeypatch):
     monkeypatch.setattr(os_.sheet_service, "write_range",
                         lambda _ws, rng, body, raw=False: ws.writes.append((rng, body)))
     os_.integrate_ordering("20260501")
-    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    body = next(w for w in ws.writes if w[0].startswith("N2:U"))[1]
     assert body[0][3] == "V"           # Q ← 子表格 I 備註(住服)
     assert body[0][4] == "不排導管"    # R ← 子表格 H
 
@@ -346,7 +344,7 @@ def test_integrate_preserves_Q_when_subtable_house_empty(monkeypatch):
     monkeypatch.setattr(os_.sheet_service, "write_range",
                         lambda _ws, rng, body, raw=False: ws.writes.append((rng, body)))
     os_.integrate_ordering("20260501")
-    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    body = next(w for w in ws.writes if w[0].startswith("N2:U"))[1]
     assert body[0][3] == "員工眷屬"
 
 
@@ -368,7 +366,7 @@ def test_integrate_preserves_R_when_subtable_note_empty(monkeypatch):
     monkeypatch.setattr(os_.sheet_service, "write_range",
                         lambda _ws, rng, body, raw=False: ws.writes.append((rng, body)))
     os_.integrate_ordering("20260501")
-    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    body = next(w for w in ws.writes if w[0].startswith("N2:U"))[1]
     assert body[0][4] == "用戶手填備註"
 
 
@@ -386,7 +384,7 @@ def test_sync_appends_new_patient_carries_note(monkeypatch):
     ]
     ws, _ = _setup_sync(monkeypatch, existing, sub_grid)
     os_.sync_ordering_after_diff("20260501")
-    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    body = next(w for w in ws.writes if w[0].startswith("N2:U"))[1]
     assert body[1][5] == "222"
     assert body[1][4] == "待會診"
 
@@ -436,7 +434,7 @@ def test_integrate_appends_subtable_patient_missing_from_nv(monkeypatch):
     r = os_.integrate_ordering("20260524")
     assert r["rows"] == 2
     assert [a["chart_no"] for a in r["appended"]] == ["999"]
-    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    body = next(w for w in ws.writes if w[0].startswith("N2:U"))[1]
     assert body[1][5] == "999"
     assert body[1][1] == "許志新"
     assert body[1][2] == "許春芳"
@@ -463,7 +461,7 @@ def test_integrate_refreshes_name_from_subtable(monkeypatch):
     monkeypatch.setattr(os_.sheet_service, "write_range",
                         lambda _ws, rng, body, raw=False: ws.writes.append((rng, body)))
     os_.integrate_ordering("20260524")
-    body = next(w for w in ws.writes if w[0].startswith("N2:V"))[1]
+    body = next(w for w in ws.writes if w[0].startswith("N2:U"))[1]
     assert body[0][2] == "王小銘"
 
 
@@ -502,7 +500,7 @@ def test_propagate_nv_edit_mirrors_to_subtable(monkeypatch):
 
 
 def test_propagate_subtable_edit_mirrors_to_nv(monkeypatch):
-    """Editing sub-table 預計心導管 (col 7) copies into N-V 預計心導管 (col 21)."""
+    """Editing sub-table 預計心導管 (col 7) copies into 入院序 預計心導管 (col 21)."""
     ws = _setup_mirror(monkeypatch)
     r = os_.propagate_field_edit("20260524", 3, 7, "RHC")
     assert r["mirrored"] is True
@@ -596,4 +594,4 @@ def test_sync_clears_trailing_rows_when_shorter(monkeypatch):
     r = os_.sync_ordering_after_diff("20260501")
     assert r["rows"] == 1
     # End is N2:V2, so cleared should hit N3:V4
-    assert any("N3:V" in c for c in cleared)
+    assert any("N3:U" in c for c in cleared)

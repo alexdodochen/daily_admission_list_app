@@ -260,11 +260,11 @@ def ensure_date_sheet(date: str):
                        "姓名", "性別", "年齡", "病歷號碼", "病床號",
                        "入院提示", "住急"]
         header_order = ["序號", "主治醫師", "病人姓名", "備註(住服)", "備註",
-                        "病歷號", "術前診斷", "預計心導管", "每日續等清單", "改期"]
+                        "病歷號", "術前診斷", "預計心導管"]
         write_range(ws, "A1:L1", [header_main])
-        write_range(ws, "N1:W1", [header_order])
+        write_range(ws, "N1:U1", [header_order])
         format_header(ws, 1, 12, 1)
-        format_header(ws, 1, 10, 14)
+        format_header(ws, 1, 8, 14)
         # Force TEXT format on chart-no columns BEFORE any data lands —
         # otherwise USER_ENTERED parses "01937569" → 1937569 (lost zero).
         ensure_chart_text_format(ws)

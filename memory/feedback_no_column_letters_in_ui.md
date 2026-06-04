@@ -15,12 +15,11 @@ Mapping for /admission (date sheet):
 - E (sub-table col 5) → 同醫師排序 / 同醫師內排序
 - F (sub-table col 6) → 術前診斷
 - G (sub-table col 7) → 預計心導管
-- N-V (cols 14-22) → 入院序 / 入院序區塊
+- N-U (cols 14-21) → 入院序 / 入院序區塊
 - O (col 15)        → 主治醫師（在入院序）
 - Q (col 17)        → 備註(住服)
 - T (col 20)        → 術前診斷（在入院序）
 - U (col 21)        → 預計心導管（在入院序）
-- V (col 22)        → 改期
 
 For main A-L:
 - F (col 6) → 姓名

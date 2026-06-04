@@ -75,7 +75,7 @@ Each step is a `/api/step{N}/...` endpoint group in `main.py` delegating to one 
      - L2: `patient_pins` `{chart_no: seq}` → forces a patient to global 序號 N.
      - L3: `doctor_pins` `{doctor: rank}` → forces a doctor to be N-th in RR draw order.
      - Returns 400 on duplicate / out-of-range pin values.
-   - **`POST /api/step4/integrate`** re-runs `ordering_service.integrate_ordering(date)` — preserves existing N-V (Q 住服 / V 改期) while patching T/U from current sub-table F/G + re-applying L1 sort.
+   - **`POST /api/step4/integrate`** re-runs `ordering_service.integrate_ordering(date)` — preserves existing N-U Q (住服) while patching T/U from current sub-table F/G + re-applying L1 sort.
    - **`POST /api/step4/cell`** is the inline-edit endpoint for any sub-table cell (used by both the editable-pin E col and the F/G datalist inputs).
 5. **Cathlab** (`cathlab_service.py`) — `plan` (dry-run) / `verify` (cross-check WEBCVIS) / `keyin` (Phase 1 ADD + Phase 2 UPT). Static lookup tables in `app/data/static/` (`cathlab_id_maps.json`, `doctor_codes.json`, `cathlab_schedule.json`) — **never hardcode IDs in `.py`**. `resolve_diag` falls back to `OTHERS_PDI = "PDI20090908120008"` for any unresolved text so user-typed F values still key into WEBCVIS (under "OTHERS" with the label as free text). `resolve_proc` returns `("","")` for unresolved G → existing logic appends the cath text to `note_out` (WEBCVIS 備註).
 6. **LINE push** (`line_service.py`) — read N-Q → preview → push to user-configured group.
@@ -83,13 +83,13 @@ Each step is a `/api/step{N}/...` endpoint group in `main.py` delegating to one 
 Two cross-cutting services gate Steps 5–6:
 
 - `format_check_service.py` — read-back verification + auto-fix for layout drift (headers, subtable counts, ≥2-row gap, 病歷號 TEXT format).
-- `finalize_service.py` — read-only 定案 readiness checklist (D/F/I non-empty, subtable F/G complete, N-row count matches main, 改期 column shape).
+- `finalize_service.py` — read-only 定案 readiness checklist (D/F/I non-empty, subtable F/G complete, N-row count matches main).
 
 ### Read-only sheet viewer (global)
 
 Two endpoints, one modal:
-- `GET /api/sheet/read?date=YYYYMMDD` — date sheet view (structured: main A-L + ordering N-W + per-doctor sub-tables via `format_check_service.parse_structure`).
-- `GET /api/sheet/raw?name=<tab>` — generic A:Z read for any non-date tab (主治醫師抽籤表 / 值班總數統計 / 改期清單…).
+- `GET /api/sheet/read?date=YYYYMMDD` — date sheet view (structured: main A-L + ordering N-U + per-doctor sub-tables via `format_check_service.parse_structure`).
+- `GET /api/sheet/raw?name=<tab>` — generic A:Z read for any non-date tab (主治醫師抽籤表 / 值班總數統計 …).
 
 The `📋 查閱` topbar link opens the viewer modal; the dropdown groups options into "日期分頁 (YYYYMMDD)" + "其他工作表" via JS (`isYmd()` check). Topbar also has `🔗 入院 Sheet` / `🔗 排班 Sheet` links that open the live Google Sheet in a new tab (only render if respective `cfg.*_sheet_id` is set).
 
@@ -137,12 +137,12 @@ Both use the same `google_creds_path`; the service account must be an editor on 
 Date sheets are titled `YYYYMMDD`. Canonical layout:
 
 - **A–L** (main data, 12 cols): 實際住院日 / 開刀日 / 科別 / 主治醫師 / 主診斷(ICD) / 姓名 / 性別 / 年齡 / 病歷號碼 / 病床號 / 入院提示 / 住急
-- **N–W** (ordering, 10 cols): 序號 / 主治醫師 / 病人姓名 / 備註(住服) / 備註 / 病歷號 / 術前診斷 / 預計心導管 / 每日續等清單 / 改期
+- **N–U** (ordering, 8 cols): 序號 / 主治醫師 / 病人姓名 / 備註(住服) / 備註 / 病歷號 / 術前診斷 / 預計心導管
 - Sub-tables below, one per doctor, title row `<doctor>（N人）`, ≥2 blank rows between sections.
 
 Headers are the source of truth — `format_check_service.EXPECTED_MAIN_HEADER` / `EXPECTED_ORDER_HEADER` / `EXPECTED_SUB_HEADER` must stay in sync with `sheet_service.ensure_date_sheet` + `subtable_service.SUB_HEADER` + `ocr_service.SUB_HEADER` + `app.js SUB_HEADER`. Canonical SUB_HEADER (9 cols): `["姓名","病歷號","EMR","EMR摘要","手動設定入院序","術前診斷","預計心導管","註記","備註(住服)"]`.
 
-**Sub-table mirror to N-V (`ordering_service`)** — H 註記 → R 備註; I 備註(住服) → Q; F 術前診斷 → T; G 預計心導管 → U. Empty sub-table cells preserve existing N-V. V (改期) is preserved verbatim. `propagate_field_edit` keeps both sides in sync on every single-cell edit.
+**Sub-table mirror to N-U (`ordering_service`)** — H 註記 → R 備註; I 備註(住服) → Q; F 術前診斷 → T; G 預計心導管 → U. Empty sub-table cells preserve existing N-U. `propagate_field_edit` keeps both sides in sync on every single-cell edit.
 
 ### Auto-update
 
@@ -156,11 +156,11 @@ Headers are the source of truth — `format_check_service.EXPECTED_MAIN_HEADER` 
 Current state lives in git log + `memory/MEMORY.md`; this section keeps only
 the load-bearing invariants the codebase relies on.
 
-**Sub-table 9-col layout**: `["姓名","病歷號","EMR","EMR摘要","手動設定入院序","術前診斷","預計心導管","註記","備註(住服)"]`. Cols F/G/H/I mirror N-V T/U/R/Q via `ordering_service` (`integrate_ordering`, `sync_ordering_after_diff`, `propagate_field_edit`). Q (住服) / R (備註) preserved when sub I/H empty; V (改期) preserved verbatim.
+**Sub-table 9-col layout**: `["姓名","病歷號","EMR","EMR摘要","手動設定入院序","術前診斷","預計心導管","註記","備註(住服)"]`. Cols F/G/H/I mirror N-U T/U/R/Q via `ordering_service` (`integrate_ordering`, `sync_ordering_after_diff`, `propagate_field_edit`). Q (住服) / R (備註) preserved when sub I/H empty.
 
 **Main A-L boundary**: `_apply_diff_to_subtables` walks `A2:L500` and stops at first blank OR sub-table title `xxx（N人）`. Never read `A2:Lnnn` unbounded — sub-table rows would be misread as main.
 
-**Smart rebuild rescue**: `subtable_service.smart_rebuild(date)` + `POST /api/step2/rebuild_subtables` rewrites blocks deduped by 病歷號, drops orphans + ghost blocks (doctor name = column-header label, filtered via `_HEADER_LABEL_FRAGMENTS`). Preserves EMR/F/G/H/I; re-syncs N-V.
+**Smart rebuild rescue**: `subtable_service.smart_rebuild(date)` + `POST /api/step2/rebuild_subtables` rewrites blocks deduped by 病歷號, drops orphans + ghost blocks (doctor name = column-header label, filtered via `_HEADER_LABEL_FRAGMENTS`). Preserves EMR/F/G/H/I; re-syncs N-U.
 
 **Lottery rule 16** (詹世鴻): on Friday **admission** day (not op day) he's dropped from 時段組 to 非時段組. `_admission_is_friday(date)` gates the rule.
 

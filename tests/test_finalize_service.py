@@ -65,15 +65,15 @@ def test_all_green(monkeypatch):
     })
     # A2:L3 = 2 patients, all fields present
     # F8:G9 = all filled
-    # N2:V200 = 2 ordering rows, V=改期 empty
-    ordering_empty_v = ["1", "李文煌", "王", "", "", "123", "Dx", "C", ""]
+    # N2:U200 = 2 ordering rows
+    ordering_row = ["1", "李文煌", "王", "", "", "123", "Dx", "C"]
     monkeypatch.setattr(fs.sheet_service, "read_range", _stub_read({
         "A2:L3": [
             ["2026/04/20", "", "CV", "李文煌", "I25", "王", "男", "65", "111", "A", "", ""],
             ["2026/04/20", "", "CV", "李文煌", "I25", "林", "女", "70", "222", "B", "", ""],
         ],
         "F8:G9": [["CAD", "LHC"], ["CAD", "LHC"]],
-        "N2:V200": [ordering_empty_v, ordering_empty_v],
+        "N2:U200": [ordering_row, ordering_row],
     }))
     r = fs.check_ready("20260420")
     assert r["ready"] is True
@@ -82,7 +82,7 @@ def test_all_green(monkeypatch):
     assert by_id["main_data"]["ok"] is True
     assert by_id["sub_fg"]["ok"] is True
     assert by_id["ordering"]["ok"] is True
-    assert by_id["reschedule"]["ok"] is True
+    assert "reschedule" not in by_id
 
 
 def test_format_issue_blocks_readiness(monkeypatch):
@@ -116,7 +116,7 @@ def test_main_data_missing_fields(monkeypatch):
             ["", "", "", "", "", "王", "", "", "111", "", "", ""],  # no doctor
             ["", "", "", "李", "", "", "", "", "", "", "", ""],       # no name, no chart
         ],
-        "N2:V200": [],
+        "N2:U200": [],
     }))
     r = fs.check_ready("20260420")
     main = [c for c in r["checks"] if c["id"] == "main_data"][0]
@@ -136,7 +136,7 @@ def test_sub_fg_missing(monkeypatch):
     monkeypatch.setattr(fs.sheet_service, "read_range", _stub_read({
         "A2:L2": [["2026/04/20", "", "", "柯", "", "A", "", "", "1", "", "", ""]],
         "F7:G8": [["", "LHC"], ["CAD", ""]],  # both rows missing something
-        "N2:V200": [],
+        "N2:U200": [],
     }))
     r = fs.check_ready("20260420")
     fg = [c for c in r["checks"] if c["id"] == "sub_fg"][0]
@@ -156,7 +156,7 @@ def test_sub_fg_skips_orphan(monkeypatch):
     })
     monkeypatch.setattr(fs.sheet_service, "read_range", _stub_read({
         "A2:L2": [["2026/04/20", "", "", "柯", "", "A", "", "", "1", "", "", ""]],
-        "N2:V200": [],
+        "N2:U200": [],
     }))
     r = fs.check_ready("20260420")
     fg = [c for c in r["checks"] if c["id"] == "sub_fg"][0]
@@ -172,8 +172,8 @@ def test_ordering_count_mismatch(monkeypatch):
             ["", "", "", "D", "", "N", "", "", "2", "", "", ""],
             ["", "", "", "D", "", "N", "", "", "3", "", "", ""],
         ],
-        "N2:V200": [
-            ["1", "D", "N", "", "", "1", "Dx", "C", "", ""],
+        "N2:U200": [
+            ["1", "D", "N", "", "", "1", "Dx", "C"],
         ],
     }))
     r = fs.check_ready("20260420")
@@ -187,7 +187,7 @@ def test_ordering_missing(monkeypatch):
     _patch_format(monkeypatch, structure={"main_end": 2, "subs": []})
     monkeypatch.setattr(fs.sheet_service, "read_range", _stub_read({
         "A2:L2": [["", "", "", "D", "", "N", "", "", "1", "", "", ""]],
-        "N2:V200": [],
+        "N2:U200": [],
     }))
     r = fs.check_ready("20260420")
     ord_c = [c for c in r["checks"] if c["id"] == "ordering"][0]
@@ -195,45 +195,3 @@ def test_ordering_missing(monkeypatch):
     assert "未寫入" in ord_c["detail"]
 
 
-def test_reschedule_bad_format(monkeypatch):
-    _patch_get_ws(monkeypatch)
-    _patch_format(monkeypatch, structure={"main_end": 2, "subs": []})
-    # 改期 is index 8 in EXPECTED_ORDER_HEADER (the 9th col, V)
-    monkeypatch.setattr(fs.sheet_service, "read_range", _stub_read({
-        "A2:L2": [["", "", "", "D", "", "N", "", "", "1", "", "", ""]],
-        "N2:V200": [
-            ["1", "D", "N", "", "", "1", "Dx", "C", "2026-04-21"],  # bad: has hyphens
-        ],
-    }))
-    r = fs.check_ready("20260420")
-    rs = [c for c in r["checks"] if c["id"] == "reschedule"][0]
-    assert rs["ok"] is False
-    assert "2026-04-21" in rs["detail"]
-
-
-def test_reschedule_valid_yyyymmdd(monkeypatch):
-    _patch_get_ws(monkeypatch)
-    _patch_format(monkeypatch, structure={"main_end": 2, "subs": []})
-    monkeypatch.setattr(fs.sheet_service, "read_range", _stub_read({
-        "A2:L2": [["", "", "", "D", "", "N", "", "", "1", "", "", ""]],
-        "N2:V200": [
-            ["1", "D", "N", "", "", "1", "Dx", "C", "20260421"],  # good
-        ],
-    }))
-    r = fs.check_ready("20260420")
-    rs = [c for c in r["checks"] if c["id"] == "reschedule"][0]
-    assert rs["ok"] is True
-
-
-def test_reschedule_empty_is_ok(monkeypatch):
-    _patch_get_ws(monkeypatch)
-    _patch_format(monkeypatch, structure={"main_end": 2, "subs": []})
-    monkeypatch.setattr(fs.sheet_service, "read_range", _stub_read({
-        "A2:L2": [["", "", "", "D", "", "N", "", "", "1", "", "", ""]],
-        "N2:V200": [
-            ["1", "D", "N", "", "", "1", "Dx", "C", ""],  # empty V (改期)
-        ],
-    }))
-    r = fs.check_ready("20260420")
-    rs = [c for c in r["checks"] if c["id"] == "reschedule"][0]
-    assert rs["ok"] is True

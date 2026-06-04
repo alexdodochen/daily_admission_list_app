@@ -8,18 +8,12 @@ one-look summary of whether the sheet is actually ready:
   2. Main data: every patient row has 主治醫師 / 姓名 / 病歷號.
   3. Sub-tables: every patient has F (術前診斷) + G (預計心導管) filled.
   4. Ordering: N-row count matches main-data row count.
-  5. 改期 column: entries must be empty or YYYYMMDD.
 
 This module READS only — no writes. It's a gate, not a fixer.
 """
 from __future__ import annotations
 
-import re
-
 from . import sheet_service, format_check_service
-
-RESCHEDULE_COL_NAME = "改期"
-DATE_RE = re.compile(r"^\d{8}$")
 
 
 def _check_main_data(ws, main_end: int) -> dict:
@@ -65,51 +59,31 @@ def _check_subtable_fg(ws, subs: list[dict]) -> dict:
             "detail": "; ".join(missing[:5])}
 
 
-def _check_ordering(ws, main_end: int) -> tuple[dict, list[list[str]]]:
-    """N-row patient count must match main-data count. Returns (check, ordering_rows)."""
-    rows = sheet_service.read_range(ws, "N2:V200") or []
+def _check_ordering(ws, main_end: int) -> dict:
+    """N-row patient count must match main-data count."""
+    rows = sheet_service.read_range(ws, "N2:U200") or []
     while rows and not any((c or "").strip() for c in rows[-1]):
         rows.pop()
     order_count = len(rows)
     main_count = max(0, main_end - 1)
 
     if main_count == 0:
-        return ({"id": "ordering",
-                 "label": "入院序人數與主資料一致",
-                 "ok": False, "detail": "主資料為空，無法判斷"}, rows)
+        return {"id": "ordering",
+                "label": "入院序人數與主資料一致",
+                "ok": False, "detail": "主資料為空，無法判斷"}
     if order_count == 0:
-        return ({"id": "ordering",
-                 "label": "入院序人數與主資料一致",
-                 "ok": False,
-                 "detail": f"N-V 未寫入（主資料 {main_count} 位）"}, rows)
+        return {"id": "ordering",
+                "label": "入院序人數與主資料一致",
+                "ok": False,
+                "detail": f"N-U 未寫入（主資料 {main_count} 位）"}
     if order_count != main_count:
-        return ({"id": "ordering",
-                 "label": "入院序人數與主資料一致",
-                 "ok": False,
-                 "detail": f"入院序 {order_count} 位 ≠ 主資料 {main_count} 位"}, rows)
-    return ({"id": "ordering",
-             "label": "入院序人數與主資料一致",
-             "ok": True, "detail": ""}, rows)
-
-
-def _check_reschedule(ordering_rows: list[list[str]]) -> dict:
-    """V column reschedule entries must be empty or YYYYMMDD."""
-    try:
-        idx = format_check_service.EXPECTED_ORDER_HEADER.index(RESCHEDULE_COL_NAME)
-    except ValueError:
-        return {"id": "reschedule",
-                "label": "改期欄格式（空白或 YYYYMMDD）",
-                "ok": True,
-                "detail": "找不到 改期 欄位定義，略過"}
-    bad: list[str] = []
-    for i, r in enumerate(ordering_rows):
-        v = ((r + [""] * (idx + 1))[idx] or "").strip()
-        if v and not DATE_RE.match(v):
-            bad.append(f"入院序第 {i + 2} 列 = {v!r}")
-    return {"id": "reschedule",
-            "label": "改期欄格式（空白或 YYYYMMDD）",
-            "ok": not bad,
-            "detail": "; ".join(bad[:5])}
+        return {"id": "ordering",
+                "label": "入院序人數與主資料一致",
+                "ok": False,
+                "detail": f"入院序 {order_count} 位 ≠ 主資料 {main_count} 位"}
+    return {"id": "ordering",
+            "label": "入院序人數與主資料一致",
+            "ok": True, "detail": ""}
 
 
 def check_ready(date: str) -> dict:
@@ -136,8 +110,6 @@ def check_ready(date: str) -> dict:
 
     checks.append(_check_main_data(ws, main_end))
     checks.append(_check_subtable_fg(ws, structure["subs"]))
-    order_check, ordering_rows = _check_ordering(ws, main_end)
-    checks.append(order_check)
-    checks.append(_check_reschedule(ordering_rows))
+    checks.append(_check_ordering(ws, main_end))
 
     return {"ready": all(c["ok"] for c in checks), "checks": checks}

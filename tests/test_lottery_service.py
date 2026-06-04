@@ -184,7 +184,7 @@ def test_lottery_carries_subtable_note_to_R(monkeypatch):
     monkeypatch.setattr(ls.sheet_service, "ensure_chart_text_format", lambda ws: None)
 
     ls.lottery_with_pins("20260524", weekday="", seed=0)
-    body = next(w for w in writes if w[0].startswith("N2:V"))[1]
+    body = next(w for w in writes if w[0].startswith("N2:U"))[1]
     assert body[0][4] == "不排導管"   # R ← 子表格 H 註記
     assert body[0][3] == ""           # Q empty when sub I (house) absent
 
@@ -215,7 +215,7 @@ def test_lottery_carries_subtable_house_to_Q(monkeypatch):
     monkeypatch.setattr(ls.sheet_service, "ensure_chart_text_format", lambda ws: None)
 
     ls.lottery_with_pins("20260524", weekday="", seed=0)
-    body = next(w for w in writes if w[0].startswith("N2:V"))[1]
+    body = next(w for w in writes if w[0].startswith("N2:U"))[1]
     assert body[0][3] == "V"          # Q ← 子表格 I 備註(住服)
     assert body[0][4] == ""           # R empty when sub H absent
 
@@ -246,7 +246,7 @@ def test_lottery_with_pins_groups_never_interleave(monkeypatch):
                         lambda _ws, rng, body, raw=False: writes.append((rng, body)))
 
     ls.lottery_with_pins("20260525", weekday="週日", seed=0)
-    body = next(w for w in writes if w[0].startswith("N2:V"))[1]
+    body = next(w for w in writes if w[0].startswith("N2:U"))[1]
     names = [r[2] for r in body]  # P col = 病人姓名
 
     last_sched = max(i for i, n in enumerate(names) if not n.startswith("n"))

@@ -741,7 +741,7 @@ async def api_sheet_delete(names_json: str = Form(...)):
 
     HARD GUARDRAIL (irreversible op): only tabs whose name is exactly
     YYYYMMDD (8 digits) are deletable. Config tabs (主治醫師抽籤表 / 下拉選單
-    / 值班總數統計 / 主治醫師導管時段表 / 改期清單 …) and the whole 排班
+    / 值班總數統計 / 主治醫師導管時段表 …) and the whole 排班
     spreadsheet are NEVER touched — any non-date name is rejected 400, even
     if the UI somehow sent it. The last remaining worksheet is never deleted
     (a spreadsheet must keep ≥1).
@@ -826,7 +826,7 @@ async def api_sheet_raw(name: str, source: str = "admission"):
 
 @app.get("/api/sheet/read")
 async def api_sheet_read(date: str):
-    """Read a YYYYMMDD date sheet — A:L main + N:W ordering + sub-tables.
+    """Read a YYYYMMDD date sheet — A:L main + N:U ordering + sub-tables.
 
     Read-only sheet viewer endpoint. Returns the raw cells (so the viewer can
     show exactly what's on the sheet) plus the parsed sub-table structure so
@@ -839,7 +839,7 @@ async def api_sheet_read(date: str):
         ws = sheet_service.get_worksheet(date)
         if ws is None:
             return {"ok": False, "error": f"找不到分頁 {date}"}
-        rows = sheet_service.read_range(ws, "A:W")
+        rows = sheet_service.read_range(ws, "A:U")
         col_a = [(r[0] if r else "") for r in rows]
         structure = format_check_service.parse_structure(col_a)
         main_end = structure["main_end"]
@@ -857,12 +857,12 @@ async def api_sheet_read(date: str):
 
         main_block = slice_block(1, main_end, 1, 12) if main_end >= 1 else []
 
-        # N-V ordering block extent is INDEPENDENT of main_end — the ordered
+        # N-U ordering block extent is INDEPENDENT of main_end — the ordered
         # list can be longer (or shorter) than main A-L (e.g. a patient lives
-        # in the sub-tables / N-V but was dropped from main, or vice versa).
+        # in the sub-tables / N-U but was dropped from main, or vice versa).
         # Walk col N (序號, idx 13) + col P (姓名, idx 15) until both blank so
         # the last 序號 row is never silently truncated. (Field bug 2026-05-21
-        # #4/#5: main had 9, N-V had 10 → 序號 10 vanished from 入院序結果.)
+        # #4/#5: main had 9, N-U had 10 → 序號 10 vanished from 入院序結果.)
         order_end = 1
         for r in range(2, len(rows) + 1):
             row = rows[r - 1] if r - 1 < len(rows) else []
@@ -871,7 +871,7 @@ async def api_sheet_read(date: str):
             if not (n_val or p_val):
                 break
             order_end = r
-        order_block = slice_block(1, max(order_end, main_end), 14, 23)
+        order_block = slice_block(1, max(order_end, main_end), 14, 21)
 
         sub_blocks = []
         for s in structure["subs"]:

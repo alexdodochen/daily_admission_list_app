@@ -4,16 +4,16 @@ Format check — read-back verification + auto-fix for date sheets.
 Ported from the admission-format-check skill. Minimum viable scope:
 
   * main A-L header is the canonical 12-col layout
-  * N-V header is the canonical 9-col ordering layout
+  * N-U header is the canonical 8-col ordering layout
   * sub-table titles `X（N人）` have N matching actual patient count
   * gap ≥ 2 blank rows between main data & first sub-table and between subs
-  * 病歷號 columns (main I / N-V S / sub B) are TEXT format so leading zeros stick
+  * 病歷號 columns (main I / N-U S / sub B) are TEXT format so leading zeros stick
 
 Fixable by this service:
   - gap_too_small            → insertDimension rows
   - subtable_count_mismatch  → rewrite title text
   - main_header_missing      → rewrite A1:L1
-  - order_header_wrong       → rewrite N1:V1 (9-col layout)
+  - order_header_wrong       → rewrite N1:U1 (8-col layout)
   - chart_text_format        → repeatCell numberFormat TEXT
 
 Not fixable here (reported for user action):
@@ -33,7 +33,7 @@ EXPECTED_MAIN_HEADER = [
 ]
 EXPECTED_ORDER_HEADER = [
     "序號", "主治醫師", "病人姓名", "備註(住服)", "備註",
-    "病歷號", "術前診斷", "預計心導管", "改期",
+    "病歷號", "術前診斷", "預計心導管",
 ]
 # Canonical SUB_HEADER row labels — aligned with daily-admission-list-public.
 # Column I (備註(住服)) added 2026-05-25 so the 住服 marker has a per-patient
@@ -358,9 +358,9 @@ def check(date: str) -> dict:
     # Pad to length 12 so comparisons are stable
     main_header = (main_header + [""] * 12)[:12]
 
-    order_row = sheet_service.read_range(ws, "N1:V1")
+    order_row = sheet_service.read_range(ws, "N1:U1")
     order_header = order_row[0] if order_row else []
-    order_header = (order_header + [""] * 9)[:9]
+    order_header = (order_header + [""] * 8)[:8]
 
     structure = parse_structure(col_a)
 
@@ -481,7 +481,7 @@ def fix(date: str, types: Optional[list[str]] = None) -> dict:
         sheet_service.write_range(ws, "A1:L1", [EXPECTED_MAIN_HEADER], raw=False)
         applied.append({"type": "main_header_missing"})
     if any(i["type"] == "order_header_wrong" for i in issues) and want("order_header_wrong"):
-        sheet_service.write_range(ws, "N1:V1", [EXPECTED_ORDER_HEADER], raw=False)
+        sheet_service.write_range(ws, "N1:U1", [EXPECTED_ORDER_HEADER], raw=False)
         applied.append({"type": "order_header_wrong"})
     if want("sub_header_wrong"):
         for issue in [i for i in issues if i["type"] == "sub_header_wrong"]:

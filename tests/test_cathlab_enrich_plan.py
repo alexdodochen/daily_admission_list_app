@@ -1,4 +1,4 @@
-"""More cathlab_service tests — _enrich, _build_json, _read_w_markers,
+"""More cathlab_service tests — _enrich, _build_json,
 plan(), keyin(dry_run=True), get_cathlab_date edge cases."""
 from __future__ import annotations
 
@@ -23,28 +23,6 @@ def test_build_json_preserves_chinese_without_escape():
     assert parsed == [{"name": "術前診斷", "id": "PDI20090908120009"}]
     # ensure_ascii=False means the Chinese bytes appear literally
     assert "術" in result
-
-
-# ---------------- _read_v_markers (post N-V 9-col rename) ----------------
-
-def test_read_v_markers_skips_rows_without_v():
-    # 22-column rows: chart is idx 18 (S), V is idx 21
-    grid = [
-        [""] * 18 + ["12345678"] + [""] * 3,      # has chart, no V
-        [""] * 18 + ["99999999"] + ["", "", "20260420"],  # has V
-        [""] * 18 + ["11111111"] + ["", "", "改期"],       # header-ish, skipped
-    ]
-    markers = cs._read_v_markers(grid)
-    assert markers == {"99999999": "20260420"}
-
-
-def test_read_v_markers_ignores_short_rows():
-    grid = [["x"] * 10]
-    assert cs._read_v_markers(grid) == {}
-
-
-def test_read_v_markers_empty():
-    assert cs._read_v_markers([]) == {}
 
 
 # ---------------- get_cathlab_date — extra weekdays ----------------

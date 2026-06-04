@@ -212,7 +212,7 @@
   if (!link || !modal) return;
 
   const MAIN_HEADER  = ['實際住院日','開刀日','科別','主治醫師','主診斷(ICD)','姓名','性別','年齡','病歷號碼','病床號','入院提示','住急'];
-  const ORDER_HEADER = ['序號','主治醫師','病人姓名','備註(住服)','備註','病歷號','術前診斷','預計心導管','改期'];
+  const ORDER_HEADER = ['序號','主治醫師','病人姓名','備註(住服)','備註','病歷號','術前診斷','預計心導管'];
   const SUB_HEADER   = ['姓名','病歷號','EMR','EMR摘要','手動設定入院序','術前診斷','預計心導管','註記','備註(住服)'];
 
   // Track the currently-loaded sheet name so cell writes know where to land.
@@ -271,8 +271,8 @@
     const mainRows  = (data.main  || []).slice(1);   // strip header row
     const orderRows = (data.ordering || []).slice(1);
     const main  = `<div class="viewer-section"><h3>主資料 A-L（${mainRows.length} 列）</h3>${renderTable(MAIN_HEADER, mainRows, 2, 1)}</div>`;
-    // Ordering block lives at columns N..W = 14..23. Pass colOffset=14.
-    const order = `<div class="viewer-section"><h3>入院序 N-V（${orderRows.length} 列）</h3>${renderTable(ORDER_HEADER, orderRows, 2, 14)}</div>`;
+    // Ordering block lives at columns N..U = 14..21. Pass colOffset=14.
+    const order = `<div class="viewer-section"><h3>入院序（${orderRows.length} 列）</h3>${renderTable(ORDER_HEADER, orderRows, 2, 14)}</div>`;
     const subsHtml = (data.subs && data.subs.length)
       ? `<div class="viewer-section"><h3>子表格（${data.subs.length} 位醫師）</h3>${data.subs.map(renderSub).join('')}</div>`
       : '<div class="viewer-section"><h3>子表格</h3><p class="viewer-empty">（無子表格）</p></div>';
@@ -1083,7 +1083,7 @@ function setupDateInputs() {
 // ---------- Format check ----------
 const FMT_LABELS = {
   main_header_missing:     '主資料 A-L 表頭錯誤',
-  order_header_wrong:      '入院序 N-V 表頭錯誤',
+  order_header_wrong:      '入院序表頭錯誤',
   sub_header_wrong:        '子表格表頭錯誤（A-I 標題列）',
   subtable_count_mismatch: '子表格人數標題與實際不符',
   gap_too_small:           '子表格間空白行不足（< 2）',
@@ -1802,7 +1802,7 @@ function setupStep4() {
   // show it on screen so the user can eyeball the order without opening the
   // Sheet or the 查閱 modal.
   const ORDER_COLS = ['序號','主治醫師','病人姓名','備註(住服)','備註',
-                      '病歷號','術前診斷','預計心導管','改期'];
+                      '病歷號','術前診斷','預計心導管'];
   async function renderOrderResult(date) {
     const box = $('#order-result');
     if (!box) return;
@@ -1872,11 +1872,11 @@ function setupStep4() {
     if (!date) return flash($('#s4-msg'), '請填日期', 'err');
     const { patient_pins, doctor_pins } = pinsForPayload();
     if (!confirm(
-      '這會用主治醫師抽籤表（依星期）+ pin 設定，重寫 N-V。\n' +
-      '原 N-V 內容會被覆蓋（含 Q 住服、V 改期欄）。確定繼續？'
+      '這會用主治醫師抽籤表（依星期）+ pin 設定，重寫入院序。\n' +
+      '原入院序內容會被覆蓋（含 備註(住服)）。確定繼續？'
     )) return;
     await withBusy($('#lottery4-btn'), '抽籤中…', async () => {
-      flash($('#s4-msg'), '抽籤 + 寫入 N-V…', 'ok');
+      flash($('#s4-msg'), '抽籤 + 寫入入院序…', 'ok');
       const fd = new FormData();
       fd.append('date', date);
       fd.append('weekday', weekday);
@@ -2380,7 +2380,7 @@ function noteInput(value, row) {
 }
 
 // 備註(住服) (sub-table col I = 9): same free-text affordance as 註記.
-// Mirrors to N-V Q via propagate_field_edit in /api/step4/cell.
+// Mirrors to 入院序 Q via propagate_field_edit in /api/step4/cell.
 function houseInput(value, row) {
   const esc = s => String(s || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
   if (!row) return `<span class="hint">（無 row，不可填備註(住服)）</span>`;

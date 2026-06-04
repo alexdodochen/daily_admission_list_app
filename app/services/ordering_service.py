@@ -2,15 +2,14 @@
 Step 4 — Ordering.
 
 After the user confirms F (術前診斷) and G (預計心導管) in each doctor
-sub-table, we rebuild the N–V ordered list (9 columns):
+sub-table, we rebuild the N–U ordered list (8 columns):
 
   N=序號 | O=主治醫師 | P=病人姓名 | Q=備註(住服) | R=備註
-  S=病歷號 | T=術前診斷 | U=預計心導管 | V=改期
+  S=病歷號 | T=術前診斷 | U=預計心導管
 
 Hard rules (CLAUDE.md 1, 17, 18 + feedback memories):
   - Q (備註(住服)) never auto-defaults to "V" — preserved verbatim from the
-    existing N-V block; user marks it manually.
-  - V (改期) is a manual YYYYMMDD marker — preserved across re-runs.
+    existing N-U block; user marks it manually.
   - Sub-table E (手動設定入院序) — for multi-patient doctor, if every E
     cell is filled, sort patients by E (no re-asking the user).
   - Sub-tables must be re-read fresh from the Sheet immediately before
@@ -48,7 +47,7 @@ def clean_name(name: str) -> str:
 
 ORDERING_HEADERS = [
     "序號", "主治醫師", "病人姓名", "備註(住服)", "備註",
-    "病歷號", "術前診斷", "預計心導管", "改期",
+    "病歷號", "術前診斷", "預計心導管",
 ]
 
 
@@ -124,14 +123,14 @@ def sort_by_manual_e(patients: list[dict]) -> list[dict]:
 
 def integrate_ordering(date: str) -> dict:
     """
-    Rebuild N2:V{n} from current sub-tables + preserve Q/V manual markers.
+    Rebuild N2:U{n} from current sub-tables + preserve Q manual markers.
 
-    Existing N-V block provides ordered (序號, 主治醫師, 姓名, Q, R, 病歷號)
+    Existing N-U block provides ordered (序號, 主治醫師, 姓名, Q, R, 病歷號)
     rows. We re-fetch sub-table E/F/G/H by chart no and rewrite T/U; Q (住服)
-    and V (改期) are preserved verbatim from existing rows.
+    is preserved verbatim from existing rows when sub-table I is empty.
 
     For multi-patient doctors with fully-filled sub-table E, the **doctor's
-    rows** in the N-V block are reordered to match E (other doctors' rows
+    rows** in the N-U block are reordered to match E (other doctors' rows
     are left alone). This implements feedback_subtable_E_must_read_fresh +
     feedback_subtable_H_to_R_ordering.
     """
@@ -139,7 +138,7 @@ def integrate_ordering(date: str) -> dict:
     if ws is None:
         raise ValueError(f"找不到工作表 {date}")
 
-    existing = sheet_service.read_range(ws, "N2:V200")
+    existing = sheet_service.read_range(ws, "N2:U200")
     tables = read_doctor_subtables(date)
 
     # chart_no → sub-table fields
@@ -156,7 +155,7 @@ def integrate_ordering(date: str) -> dict:
     # Materialize existing rows
     rows: list[list[str]] = []
     for r in existing:
-        r = (r + [""] * 9)[:9]
+        r = (r + [""] * 8)[:8]
         if not r[2].strip() and not r[5].strip():
             break
         rows.append(r)
@@ -184,7 +183,7 @@ def integrate_ordering(date: str) -> dict:
         for slot_idx, p in enumerate(positions):
             reordered[p] = new_rows[slot_idx]
 
-    # Append sub-table patients that never made it into the N-V block.
+    # Append sub-table patients that never made it into the N-U block.
     # integrate previously ONLY patched existing rows, so a patient added to a
     # sub-table after the last lottery silently vanished from 入院序結果.
     # (Field bug 2026-05-21 #4/#5.) Append them in doctor × within-doctor order.
@@ -198,7 +197,7 @@ def integrate_ordering(date: str) -> dict:
             info = lookup.get(ch, {})
             reordered.append([
                 "", doc, info.get("name", ""), "", "",
-                ch, info.get("diagnosis", ""), info.get("cathlab", ""), "",
+                ch, info.get("diagnosis", ""), info.get("cathlab", ""),
             ])
             existing_charts.add(ch)
             appended.append({"chart_no": ch, "doctor": doc,
@@ -207,7 +206,7 @@ def integrate_ordering(date: str) -> dict:
     if not reordered:
         return {"rows": 0, "appended": []}
 
-    # Renumber 序號 + patch T/U + R/Q from sub-tables; preserve V (改期)
+    # Renumber 序號 + patch T/U + R/Q from sub-tables.
     # R (備註) <- sub-table H (註記) when H non-empty; else preserve existing R.
     # Q (備註住服) <- sub-table I (備註住服) when I non-empty; else preserve existing Q.
     # Mirrors daily-admission-list-public + 2026-05-25 I↔Q parity rule.
@@ -218,7 +217,7 @@ def integrate_ordering(date: str) -> dict:
         sub_note  = (info.get("note")  or "").strip()
         sub_house = (info.get("house") or "").strip()
         # P 姓名 ← sub-table (EMR-corrected + OCR-"?"-stripped) when available;
-        # the existing N-V name can be stale (field bug 2026-05-21 #2).
+        # the existing N-U name can be stale (field bug 2026-05-21 #2).
         sub_name = (info.get("name") or "").strip()
         out.append([
             str(seq),                                # N 序號
@@ -229,31 +228,30 @@ def integrate_ordering(date: str) -> dict:
             r[5],                                    # S 病歷號
             info.get("diagnosis", r[6]),             # T 術前診斷
             info.get("cathlab",   r[7]),             # U 預計心導管
-            r[8],                                    # V 改期 — preserve
         ])
 
     # Ensure header is correct
-    sheet_service.write_range(ws, "N1:V1", [ORDERING_HEADERS], raw=False)
+    sheet_service.write_range(ws, "N1:U1", [ORDERING_HEADERS], raw=False)
     end_row = 1 + len(out)
-    sheet_service.write_range(ws, f"N2:V{end_row}", out, raw=False)
-    return {"rows": len(out), "range": f"N2:V{end_row}", "appended": appended}
+    sheet_service.write_range(ws, f"N2:U{end_row}", out, raw=False)
+    return {"rows": len(out), "range": f"N2:U{end_row}", "appended": appended}
 
 
 # ---------------------------- sync after OCR diff ----------------------------
 
 def sync_ordering_after_diff(date: str) -> dict:
     """
-    Reconcile the N-V block with current sub-tables after a Step 1 OCR diff
+    Reconcile the N-U block with current sub-tables after a Step 1 OCR diff
     has added/removed/moved patients.
 
     Behaviour (least-surprise rebuild — never re-randomises existing order):
-      * For every chart already in N-V whose sub-table row is still present:
+      * For every chart already in N-U whose sub-table row is still present:
         keep the row, but refresh O (主治醫師) + T (術前診斷) + U (預計心導管)
-        from the (possibly new) sub-table. Q / R / V manual markers preserved.
+        from the (possibly new) sub-table. Q / R manual markers preserved.
       * Charts no longer in any sub-table → row dropped.
-      * Charts present in sub-tables but never in N-V → appended at the end,
+      * Charts present in sub-tables but never in N-U → appended at the end,
         in main-table doctor-first-appearance order × within-doctor sub-table
-        order, with empty Q / R / V.
+        order, with empty Q / R.
       * 序號 (N col) renumbered 1..n at the end.
 
     Returns {updated, rows, range, added, removed, doctor_changed} so the UI
@@ -285,13 +283,13 @@ def sync_ordering_after_diff(date: str) -> dict:
             }
             fresh_order.append((doc, ch))
 
-    existing = sheet_service.read_range(ws, "N2:V200")
+    existing = sheet_service.read_range(ws, "N2:U200")
     kept: list[list[str]] = []
     removed: list[str] = []
     seen_charts: set[str] = set()
     doctor_changed: list[dict] = []
     for r in existing:
-        r = (r + [""] * 9)[:9]
+        r = (r + [""] * 8)[:8]
         if not (r[2] or "").strip() and not (r[5] or "").strip():
             break
         chart = (r[5] or "").strip()
@@ -317,7 +315,6 @@ def sync_ordering_after_diff(date: str) -> dict:
             chart,             # S
             info["diagnosis"], # T refresh
             info["cathlab"],   # U refresh
-            r[8],              # V preserve
         ])
 
     added: list[dict] = []
@@ -330,7 +327,7 @@ def sync_ordering_after_diff(date: str) -> dict:
             info.get("house", ""),         # Q ← 子表格 I
             info.get("note", ""),          # R ← 子表格 H
             chart,
-            info["diagnosis"], info["cathlab"], "",
+            info["diagnosis"], info["cathlab"],
         ])
         added.append({"chart_no": chart, "doctor": doc, "name": info["name"]})
 
@@ -338,23 +335,23 @@ def sync_ordering_after_diff(date: str) -> dict:
     for i, row in enumerate(kept, start=1):
         row[0] = str(i)
 
-    sheet_service.write_range(ws, "N1:V1", [ORDERING_HEADERS], raw=False)
+    sheet_service.write_range(ws, "N1:U1", [ORDERING_HEADERS], raw=False)
     if kept:
         end_row = 1 + len(kept)
-        sheet_service.write_range(ws, f"N2:V{end_row}", kept, raw=False)
+        sheet_service.write_range(ws, f"N2:U{end_row}", kept, raw=False)
     else:
         end_row = 1
 
     # Clear any leftover rows below the new end (existing block may have been longer)
     old_end = 1 + sum(1 for r in existing
-                      if any((c or "").strip() for c in (r + [""] * 9)[:9]))
+                      if any((c or "").strip() for c in (r + [""] * 8)[:8]))
     if old_end > end_row:
-        sheet_service.clear_range(ws, f"N{end_row + 1}:V{old_end}")
+        sheet_service.clear_range(ws, f"N{end_row + 1}:U{old_end}")
 
     return {
         "updated":        True,
         "rows":           len(kept),
-        "range":          f"N2:V{end_row}",
+        "range":          f"N2:U{end_row}",
         "added":          added,
         "removed":        removed,
         "doctor_changed": doctor_changed,
@@ -378,11 +375,11 @@ def propagate_field_edit(date: str, row: int, col: int, value: str) -> dict:
     """Mirror a single-cell edit on a date sheet to its twin cell.
 
     備註↔註記 / 術前診斷↔術前診斷 / 預計心導管↔預計心導管 are one fact each,
-    stored once in the N-V ordering block and once in the sub-table. Whenever
+    stored once in the N-U ordering block and once in the sub-table. Whenever
     one is edited (any UI / the viewer), copy it to the other, matched by
     病歷號. A column number alone is ambiguous (sub-table F/G/H = cols 6/7/8
     collide with main-table 姓名/性別/年齡), so the edited `row` is checked
-    against the actual N-V / sub-table row maps — a main-table edit never
+    against the actual N-U / sub-table row maps — a main-table edit never
     propagates. Returns {"mirrored": bool, "target": str, "field": str}.
     """
     if col not in _MIRROR_NV_COLS and col not in _MIRROR_SUB_COLS:
@@ -402,17 +399,17 @@ def propagate_field_edit(date: str, row: int, col: int, value: str) -> dict:
                 sub_by_row[p["row"]] = ch
                 sub_by_chart.setdefault(ch, p["row"])
 
-    nv = sheet_service.read_range(ws, "N2:V200")
+    nv = sheet_service.read_range(ws, "N2:U200")
     nv_by_row: dict[int, str] = {}
     nv_by_chart: dict[str, int] = {}
     for i, rr in enumerate(nv, start=2):
-        rr = (rr + [""] * 9)[:9]
+        rr = (rr + [""] * 8)[:8]
         ch = (rr[5] or "").strip()          # S 病歷號 = index 5
         if ch:
             nv_by_row[i] = ch
             nv_by_chart.setdefault(ch, i)
 
-    # N-V cell edited → mirror into the sub-table
+    # N-U cell edited → mirror into the sub-table
     if col in _MIRROR_NV_COLS and row in nv_by_row:
         field = _MIRROR_NV_COLS[col]
         target_row = sub_by_chart.get(nv_by_row[row])
@@ -424,7 +421,7 @@ def propagate_field_edit(date: str, row: int, col: int, value: str) -> dict:
                 "target": f"子表格第 {target_row} 列",
                 "target_row": target_row, "target_col": target_col}
 
-    # sub-table cell edited → mirror into the N-V ordering block
+    # sub-table cell edited → mirror into the N-U ordering block
     if col in _MIRROR_SUB_COLS and row in sub_by_row:
         field = _MIRROR_SUB_COLS[col]
         target_row = nv_by_chart.get(sub_by_row[row])

@@ -234,7 +234,7 @@ def _fake_read_range(col_a_values, main_header=None, order_header=None,
             return [[v] for v in col_a_values]
         if a1 == "A1:L1":
             return [main_header]
-        if a1 == "N1:V1":
+        if a1 == "N1:U1":
             return [order_header]
         # SUB_HEADER row read: "A{n}:I{n}" (was A:H pre-2026-05-25 — col I
         # added for 備註(住服)).

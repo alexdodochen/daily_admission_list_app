@@ -111,10 +111,10 @@
     <summary>📖 流程說明（點開）</summary>
     <p><strong>① 讀取醫師子表格</strong>：把該日所有醫師子表格抓下來顯示，並讓 <strong>術前診斷 / 預計心導管</strong> 可即時編輯（點 ▼ 選或自填）。</p>
     <p><strong>② 首次抽籤 + 寫入入院序</strong>　<span class="badge badge-warn">第一次跑用這個</span><br>
-      重新隨機抽 RR 順位，<u>整段重寫整個入院序區塊</u>（<strong>備註(住服) / 改期 兩欄手動標記也會被清掉</strong>）。<br>
+      重新隨機抽 RR 順位，<u>整段重寫整個入院序區塊</u>（<strong>備註(住服) 手動標記也會被清掉</strong>）。<br>
       用在：當天剛建好子表格、還沒寫過入院序之前。</p>
     <p><strong>③ 更新寫入入院序</strong>　<span class="badge badge-ok">改完診斷/心導管/同醫師排序 後用這個</span><br>
-      <u>保留</u> 現有的 <strong>備註(住服)</strong> 和 <strong>改期</strong>，只用最新子表格的 <strong>術前診斷 / 預計心導管</strong> 補入院序的 <strong>術前診斷 / 預計心導管</strong> 兩欄 + 重套同醫師排序，<strong>不重抽</strong>。<br>
+      <u>保留</u> 現有的 <strong>備註(住服)</strong>，只用最新子表格的 <strong>術前診斷 / 預計心導管</strong> 補入院序的 <strong>術前診斷 / 預計心導管</strong> 兩欄 + 重套同醫師排序，<strong>不重抽</strong>。<br>
       用在：跑完 ② 後又改了診斷/心導管/同醫師排序、或是 Step 1 OCR diff 後想同步入院序。</p>
     <p><strong>三層 pin</strong>（影響 ② 的抽籤結果，不影響 ③）：</p>
     <ul>
@@ -126,8 +126,8 @@
   </details>
   <div class="actions">
     <button id="load4-btn">① 讀取醫師子表格</button>
-    <button id="lottery4-btn" class="btn-warn" disabled title="重新隨機抽籤、整段重寫入院序，會清掉備註(住服)/改期 手動標記">② 首次抽籤 + 寫入入院序 <small>(重新隨機抽順位)</small></button>
-    <button id="integrate4-btn" class="btn-ok" disabled title="醫師排序不重抽，只更新術前診斷/預計心導管 + 重套同醫師排序，保留備註(住服)/改期">③ 更新寫入入院序 <small>(醫師排序不重抽，更新術前診斷/預計心導管/同醫師內排序)</small></button>
+    <button id="lottery4-btn" class="btn-warn" disabled title="重新隨機抽籤、整段重寫入院序，會清掉備註(住服) 手動標記">② 首次抽籤 + 寫入入院序 <small>(重新隨機抽順位)</small></button>
+    <button id="integrate4-btn" class="btn-ok" disabled title="醫師排序不重抽，只更新術前診斷/預計心導管 + 重套同醫師排序，保留備註(住服)">③ 更新寫入入院序 <small>(醫師排序不重抽，更新術前診斷/預計心導管/同醫師內排序)</small></button>
     <span id="s4-msg" class="msg"></span>
   </div>
   <div id="subtables-wrap"></div>

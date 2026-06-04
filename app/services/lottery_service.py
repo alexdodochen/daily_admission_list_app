@@ -294,13 +294,13 @@ def lottery_with_pins(date: str,
             ri += 1
 
     ws = sheet_service.get_worksheet(date)
-    # Read current N-V length BEFORE writing so we can clear any trailing rows
+    # Read current N-U length BEFORE writing so we can clear any trailing rows
     # if the new lottery is shorter than the previous one (re-running lottery
     # after removing a patient should fully overwrite, not leave a phantom row).
-    existing = sheet_service.read_range(ws, "N2:V200")
+    existing = sheet_service.read_range(ws, "N2:U200")
     old_rows = 0
     for r in existing:
-        r = (r + [""] * 9)[:9]
+        r = (r + [""] * 8)[:8]
         if any((c or "").strip() for c in r):
             old_rows += 1
         else:
@@ -317,7 +317,6 @@ def lottery_with_pins(date: str,
             p["chart_no"],
             p["diagnosis"],
             p["cathlab"],
-            "",                     # V 改期
         ])
     end_row = 1 + len(body)
     # TEXT format on chart-no col before write so leading zeros survive
@@ -325,12 +324,12 @@ def lottery_with_pins(date: str,
         sheet_service.ensure_chart_text_format(ws)
     except Exception:
         pass
-    sheet_service.write_range(ws, "N1:V1", [ordering_service.ORDERING_HEADERS], raw=False)
-    sheet_service.write_range(ws, f"N2:V{end_row}", body, raw=False)
-    # Clear leftover rows from the previous (longer) N-V block.
+    sheet_service.write_range(ws, "N1:U1", [ordering_service.ORDERING_HEADERS], raw=False)
+    sheet_service.write_range(ws, f"N2:U{end_row}", body, raw=False)
+    # Clear leftover rows from the previous (longer) N-U block.
     old_end = 1 + old_rows
     if old_end > end_row:
-        sheet_service.clear_range(ws, f"N{end_row + 1}:V{old_end}")
+        sheet_service.clear_range(ws, f"N{end_row + 1}:U{old_end}")
     # Build doctor_groups so the UI can show which doctors landed in 時段組 vs
     # 非時段組. This helps the user spot mis-grouping (e.g. 劉嚴文 wrongly in
     # 時段組 because the wrong weekday was sent).
@@ -340,7 +339,7 @@ def lottery_with_pins(date: str,
     }
     return {
         "rows":             len(body),
-        "range":            f"N2:V{end_row}",
+        "range":            f"N2:U{end_row}",
         "pinned_patients":  len(pinned_patients),
         "pinned_doctors":   len(doctor_pins),
         "doctor_order":     list(doctor_order),

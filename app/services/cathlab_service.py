@@ -497,33 +497,13 @@ def compute_time(session: str, index: int) -> str:
 
 # ---------------------------------- patient reader ----------------------------------
 
-def _read_v_markers(data: list[list[str]]) -> dict[str, str]:
-    """N-V ordering 區塊的 V 欄（改期，YYYYMMDD）— 回傳 {病歷號: V值}.
-
-    New 9-col layout: N=13, O=14, P=15, Q=16, R=17, S=18, T=19, U=20, V=21.
-    """
-    out = {}
-    for row in data:
-        if len(row) < 22:
-            continue
-        chart = (row[18] or "").strip()   # S = index 18
-        v     = (row[21] or "").strip()   # V = index 21
-        if chart and v and v != "改期":
-            out[chart] = v
-    return out
-
-
 def read_patients(date: str) -> list[dict]:
-    """Scan date sheet 子表格 + V-column reschedule skips. Returns patient
-    dicts with fields: seq, doctor, name, chart, diag, cath, note, emr, skip.
-
-    Reschedule marker is now V (col idx 21 in N-V 9-col layout) — index by
-    chart no via _read_v_markers."""
+    """Scan date sheet 子表格. Returns patient dicts with fields:
+    seq, doctor, name, chart, diag, cath, note, emr, skip."""
     ws = sheet_service.get_worksheet(date)
     if not ws:
         raise ValueError(f"找不到工作表：{date}")
     data = ws.get_all_values()
-    reschedules = _read_v_markers(data)
 
     patients: list[dict] = []
     current_doctor = ""
@@ -547,15 +527,11 @@ def read_patients(date: str) -> list[dict]:
             note = r[7].strip()
             diag = r[5].strip()
             cath = r[6].strip()
-            v_mark = reschedules.get(chart, "")
-            should_skip = note_means_skip(note) or bool(v_mark)
-            if v_mark:
-                note = (note + f" [改期→{v_mark}]").strip()
             patients.append({
                 "seq": seq, "doctor": current_doctor,
                 "name": name, "chart": chart, "emr": emr,
                 "diag": diag, "cath": cath, "note": note,
-                "skip": should_skip,
+                "skip": note_means_skip(note),
             })
     return patients
 

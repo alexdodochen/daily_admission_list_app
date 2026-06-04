@@ -327,16 +327,16 @@ def test_sheet_read_slices_main_ordering_subs(client, monkeypatch):
     header_main  = ["實際住院日","開刀日","科別","主治醫師","主診斷(ICD)",
                     "姓名","性別","年齡","病歷號碼","病床號","入院提示","住急"]
     header_order = ["序號","主治醫師","病人姓名","備註(住服)","備註",
-                    "病歷號","術前診斷","預計心導管","每日續等清單","改期"]
+                    "病歷號","術前診斷","預計心導管"]
     row_main_1 = ["2026-04-20","","CV","李文煌","CAD","王小明","M","60","1234","A301","",""]
     row_main_2 = ["2026-04-20","","CV","劉秉彥","AS",  "張小華","F","70","5678","A302","",""]
 
     rows: list[list[str]] = [
         header_main + [""] + header_order,
-        row_main_1 + [""] + ["1","李文煌","王小明","","","1234","CAD","PCI","","" ],
-        row_main_2 + [""] + ["2","劉秉彥","張小華","","","5678","AS", "TAVI","",""],
-        [""] * 23,
-        [""] * 23,
+        row_main_1 + [""] + ["1","李文煌","王小明","","","1234","CAD","PCI"],
+        row_main_2 + [""] + ["2","劉秉彥","張小華","","","5678","AS", "TAVI"],
+        [""] * 21,
+        [""] * 21,
         ["李文煌（1人）"],
         ["姓名"],
         ["王小明","","","","1234","CAD","PCI"],
@@ -355,7 +355,7 @@ def test_sheet_read_slices_main_ordering_subs(client, monkeypatch):
     # main_end should point at the last filled main-data row (row 3 = 1-indexed)
     assert body["main_end_row"] == 3
     assert len(body["main"]) == 3            # header + 2 data
-    assert len(body["ordering"]) == 3        # same row range, columns N-W
+    assert len(body["ordering"]) == 3        # same row range, columns N-U
     assert body["main"][1][5] == "王小明"
     assert body["ordering"][1][1] == "李文煌"
     assert len(body["subs"]) == 1
@@ -365,21 +365,21 @@ def test_sheet_read_slices_main_ordering_subs(client, monkeypatch):
 
 
 def test_sheet_read_ordering_not_truncated_by_main(client, monkeypatch):
-    """N-V 入院序 can be LONGER than main A-L — the trailing 序號 row must not
-    be cut off by main_end (field bug 2026-05-21 #4/#5: main 9 / N-V 10)."""
+    """入院序 can be LONGER than main A-L — the trailing 序號 row must not
+    be cut off by main_end (field bug 2026-05-21 #4/#5: main 9 / 入院序 10)."""
     header_main  = ["實際住院日","開刀日","科別","主治醫師","主診斷(ICD)",
                     "姓名","性別","年齡","病歷號碼","病床號","入院提示","住急"]
     header_order = ["序號","主治醫師","病人姓名","備註(住服)","備註",
-                    "病歷號","術前診斷","預計心導管","改期"]
+                    "病歷號","術前診斷","預計心導管"]
     main_row = ["2026-05-24","","CV","Z","CAD","x","M","60","c","A","",""]
     blank12  = [""] * 12
 
     rows: list[list[str]] = [
-        header_main + [""] + header_order + [""],
-        main_row + [""] + ["1","Z","甲","","","111","CAD","PCI",""] + [""],
-        main_row + [""] + ["2","Z","乙","","","222","AS","TAVI",""] + [""],
-        # main A-L blank here, but N-V still has 序號 3 → must NOT be dropped
-        blank12  + [""] + ["3","Z","丙","","","333","CAD","PCI",""] + [""],
+        header_main + [""] + header_order,
+        main_row + [""] + ["1","Z","甲","","","111","CAD","PCI"],
+        main_row + [""] + ["2","Z","乙","","","222","AS","TAVI"],
+        # main A-L blank here, but 入院序 still has 序號 3 → must NOT be dropped
+        blank12  + [""] + ["3","Z","丙","","","333","CAD","PCI"],
     ]
 
     class FakeWS:
