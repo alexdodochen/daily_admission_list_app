@@ -1,5 +1,6 @@
 # Memory index — daily_admission_list_app
 
+- [LINE auto-push kill switch (PUSH_ENABLED) + cron unreliable](project_line_push_kill_switch.md) — 6/04 still pushed despite "cron disabled 6/02"; code-level PUSH_ENABLED in line-reminder-bot is the reliable off-switch
 - [LINE quota hidden burner = OA Manager auto-reply / Smart Chat](feedback_line_quota_oa_manager_hidden_burner.md) — 5/28 198/200 root cause; check manager.line.biz settings before suspecting code
 - [LINE Messaging API Free tier 2026 = 200/month](reference_line_messaging_api_free_tier_2026.md) — Light 4000 / Standard 25000; per-message detail not in dashboard
 - [EMR visit-link match must NFC + strip whitespace](feedback_visit_match_norm_unicode.md) — 鄭朝允 / 陳淑貞 root cause; raw t.includes() missed fullwidth-space variants; diagnostic now surfaces seen anchor texts

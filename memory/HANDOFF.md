@@ -1,61 +1,65 @@
 ============================================
-  HANDOFF — Last Updated: 2026-05-31
+  HANDOFF — Last Updated: 2026-06-04
 ============================================
 
 [What this session did]
-  1. Cross-machine sync: local had unpushed 9675065 (bottom stepper +
-     EMR reflow + 王思翰/張倉惟 second doctor) that another machine had
-     ALREADY re-done better in 9 pushed commits. User approved hard
-     reset to origin/main (1c40396). Salvaged ONE unique memory the
-     remote never recorded: feedback_long_forms_get_bottom_nav.
-  2. Fixed GitHub issue #8 (updater brick) — see below. Replied to
-     reporter (GregHsu21226) with manual zip-recovery steps; issue
-     left OPEN pending his confirmation.
-  3. Shipped: commit 5088deb pushed → CI Build+Release succeeded →
-     release v20260531-0914-5088deb published with admission-app.zip.
+  Cross-project: disabled the LINE admission auto-push.
+  1. Diagnosed that the 2026-06-02 "cron jobs ALL DISABLED" note
+     was WRONG — user still received an auto-push on 2026-06-04,
+     proving cron-job.org was still firing.
+  2. Added a code-level master kill switch in the sibling
+     line-reminder-bot repo: admission_push.PUSH_ENABLED (default
+     False). Both push_admission_list / push_admission_weekend
+     now return [DISABLED] before any sheet read or LINE send.
+     Env var ADMISSION_PUSH_ENABLED=1 re-enables.
+  3. Updated 4 skip-logic tests to patch PUSH_ENABLED=True; added
+     test_push_disabled_blocks_all_sends. 10/10 pass.
+  4. Committed (3e793ee) + pushed to line-reminder-bot main →
+     Render auto-deploy. /health 200 OK.
+  5. User then MANUALLY disabled the cron-job.org jobs (the real
+     trigger). Both defenses now in place.
+  6. This repo: added memory note + HANDOFF, pushed via rebase.
 
 [Current state]
-  - Branch: main, in sync with origin/main (after this session's push).
-  - Latest commit: 5088deb fix(updater): observable swap + user_data
-    migration + failure breadcrumb (#8).
-  - Latest release: v20260531-0914-5088deb (IS the fixed build).
-  - Tests: 445 passed, 3 pre-existing test_config env failures
-    (real service_account.json on disk — NOT a regression).
-  - line-reminder-bot (sibling repo, prior session): single-source
-    push live @ 460291f; LINE quota resets 2026-06-01.
+  - line-reminder-bot: main @ 3e793ee, pushed, Render deploying.
+  - LINE auto-push: OFF (cron disabled by user + code kill switch).
+  - THIS repo (daily_admission_list_app): memory commit rebased
+    onto origin (updater #8 pulled in). Pre-existing local WIP
+    (revert 改期 column N-V/N-W → N-U across app/services/* + tests/*
+    + CLAUDE.md) is STASHED then restored to the working tree,
+    UNCOMMITTED — it is the user's in-progress work, not this session's.
 
 [Next steps]
-  - 2026-06-01 Mon 07:50: verify line-reminder-bot single-source push
-    fires exactly 1 msg (carried over from 5/29 handoff).
-  - Watch issue #8 for Greg's confirmation that manual recovery worked;
-    close it once confirmed.
-  - admission-line-push SKILL.md still stale (dual-source / GATE_DATE /
-    "Claude push 被硬擋") — edit pending user authorization.
+  - Finish + commit the user's 改期-column revert WIP (working tree).
+    Run pytest before committing (WIP touches many tests/).
+  - To re-enable LINE push later: (a) cron-job.org dashboard
+    re-enable jobs, AND (b) Render env var ADMISSION_PUSH_ENABLED=1
+    + redeploy. Both required.
+  - Watch GitHub issue #8 (updater brick) for reporter GregHsu21226's
+    confirmation that manual zip-recovery worked; close once confirmed.
 
 [Known issues / blockers]
   - issue #8 fix is FORWARD-ONLY: a bricked install can't auto-update,
-    so already-broken users must recover manually once (download zip,
-    copy user_data\ into new folder, run new exe).
-  - Cannot exercise the real frozen Windows swap on a dev box — only
-    PS1 codegen + syntax (PowerShell Parser) + unit tests are verified.
+    so already-broken users recover manually once (carried from 5/31).
+  - admission-line-push SKILL.md (~/.claude/skills/) cleaned this
+    session to single-source / no-GATE_DATE (see below).
 
 [Don't repeat these mistakes]
-  - The 來源有更新 button routes through upstream.sync_source('self'),
-    NOT updater.apply directly (both reach _apply_frozen when frozen).
-  - The detached swap discards all Write-Host and can't Read-Host — any
-    swap change MUST keep the log file + user_data migration + no
-    blocking prompt. See [[updater-swap-must-use-powershell]].
-  - This repo is PUBLIC; memory/ IS tracked here and another machine
-    pushes it. Keep memory PHI-clean. (Skill workflow-docs still says
-    public→claude-skills; reality diverged — flagged to user.)
+  - Do NOT trust a doc note that says "cron disabled" — cron-job.org
+    is external state, unverifiable from code. The reliable off
+    switch is code-level PUSH_ENABLED. (User got a push 6/04 despite
+    the 6/02 "disabled" note.)
+  - Per [[feedback-card1-sync-source-cutover]]: this repo's memory/ IS
+    tracked here; sync stays on daily_admission_list_app. Keep PHI-clean.
+  - When pushing a small memory commit while big unrelated WIP sits in
+    the tree: stash WIP → rebase → push → pop. Never commit the WIP as
+    your own.
 
 [Relevant files]
-  - app/services/updater.py — _write_swap_bat PS1 (log + user_data +
-    breadcrumb)
-  - tests/test_updater.py — 3 new swap tests
-  - CLAUDE.md — Auto-update section rewritten (two-mode)
-  - memory/feedback_updater_swap_must_use_powershell.md — #8 lesson
+  - C:\Users\dr\repos\line-reminder-bot\line_reminder_bot\admission_push.py
+  - C:\Users\dr\repos\line-reminder-bot\tests\test_app.py
+  - C:\Users\dr\repos\line-reminder-bot\CLAUDE.md
+  - this repo: memory/project_line_push_kill_switch.md (new)
 
 [Important memory files]
-  - feedback_updater_swap_must_use_powershell.md (updated, #8)
-  - feedback_long_forms_get_bottom_nav.md (salvaged from dropped commit)
+  - project_line_push_kill_switch.md (NEW)
